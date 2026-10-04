@@ -32,10 +32,10 @@ export function ToolsIndex() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return availableTools;
-    return availableTools.filter((t) =>
-      `${t.tool_name} ${t.label} ${t.description ?? ""}`.toLowerCase().includes(q)
-    );
+    // As do negócio (API, Python) antes das toolkits padrão; a ordem de dentro é a do servidor.
+    const ordered = [...availableTools].sort((a, b) => Number(a.kind === "builtin") - Number(b.kind === "builtin"));
+    if (!q) return ordered;
+    return ordered.filter((t) => `${t.tool_name} ${t.label} ${t.description ?? ""}`.toLowerCase().includes(q));
   }, [availableTools, query]);
 
   function refresh() {

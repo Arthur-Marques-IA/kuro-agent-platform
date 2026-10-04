@@ -572,9 +572,21 @@ def build_server(client: Client) -> MCPServer:
         return detail
 
     @server.tool(annotations=READ)
-    def tool_catalog() -> dict[str, Any]:
-        """Toolkits builtin disponíveis para criar uma tool kind=builtin."""
-        return {"items": _call(client.tool_catalog)}
+    def tool_catalog(builtin_id: str | None = None) -> dict[str, Any]:
+        """Toolkits builtin para criar uma tool kind=builtin. Sem `builtin_id`, a lista
+        resumida (categoria, se está instalada, se tem efeito colateral); com ele, a
+        entrada completa, com os parâmetros que vão em config.params.
+
+        Antes de uma toolkit genérica, veja se o caso não pede uma tool kind=api do
+        próprio negócio."""
+        entries = _call(client.tool_catalog)
+        if builtin_id is not None:
+            entry = next((e for e in entries if e["builtin_id"] == builtin_id), None)
+            if entry is None:
+                raise ToolError(f"builtin_id desconhecido: {builtin_id!r}")
+            return entry
+        keys = ("builtin_id", "label", "category", "available", "side_effect")
+        return {"items": [{k: e.get(k) for k in keys} for e in entries]}
 
     @server.tool(annotations=OVERWRITE)
     def tool_apply(definition: dict[str, Any]) -> dict[str, Any]:

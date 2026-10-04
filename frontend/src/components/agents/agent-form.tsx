@@ -184,6 +184,16 @@ function sameList(a: string[], b: string[]) {
   return a.length === b.length && a.every((value, i) => value === b[i]);
 }
 
+/** As tools feitas para o negócio (API e Python) vêm antes das toolkits padrão do Agno. */
+function toolGroups(tools: ToolSummary[]): { title: string; tools: ToolSummary[] }[] {
+  const custom = tools.filter((t) => t.kind !== "builtin");
+  const builtin = tools.filter((t) => t.kind === "builtin");
+  return [
+    { title: "Suas tools", tools: custom },
+    { title: "Toolkits padrão", tools: builtin },
+  ].filter((group) => group.tools.length > 0);
+}
+
 /** Agrupa as opções de modelo pelo rótulo do provedor, pros `<optgroup>` do seletor. */
 function groupByProvider(models: ModelOption[], providers: ModelProviderSummary[]): Record<string, ModelOption[]> {
   const labelByProvider = new Map(providers.map((p) => [p.provider, p.label]));
@@ -889,8 +899,12 @@ export function AgentForm({
             (toolkit padrão do Agno, API ou Python) e ela aparece aqui.
           </p>
         ) : (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {availableTools.map((tool) => {
+          <div className="flex flex-col gap-4">
+            {toolGroups(availableTools).map((group) => (
+              <div key={group.title} className="flex flex-col gap-2">
+                <p className="text-xs font-medium text-muted-foreground">{group.title}</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+            {group.tools.map((tool) => {
               // Num procedural, efeito só por etapa de ação — depois da confirmação.
               const blocked =
                 values.kind === "procedural" && tool.side_effect === true && !values.tools.includes(tool.tool_name);
@@ -928,6 +942,9 @@ export function AgentForm({
               </label>
               );
             })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </FormSection>

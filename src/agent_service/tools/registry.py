@@ -19,7 +19,7 @@ from typing import Any
 from agent_service.config import get_settings
 from agent_service.tools import store
 from agent_service.tools.api_tool import ApiToolConfigError, build_api_function
-from agent_service.tools.catalog import get_builtin_spec
+from agent_service.tools.catalog import build_builtin, get_builtin_spec
 from agent_service.tools.python_tool import PythonToolConfigError, PythonToolDisabledError, compile_python_tool
 
 _cache: dict[str, tuple[Any, datetime]] = {}
@@ -43,7 +43,7 @@ def _build(row: dict[str, Any]) -> Any:
             spec = get_builtin_spec(config.get("builtin_id", ""))
             if spec is None:
                 raise ToolBuildError(f"Tool {row['tool_name']!r}: builtin_id {config.get('builtin_id')!r} não existe mais no catálogo.")
-            return spec.factory(config.get("params", {}), row["tool_name"])
+            return build_builtin(spec, config.get("params", {}), row["tool_name"])
         if kind == "api":
             return build_api_function(tool_name=row["tool_name"], description=row.get("description"), config=config)
         if kind == "python":

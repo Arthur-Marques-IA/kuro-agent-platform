@@ -481,6 +481,10 @@ export interface BuiltinParam {
   required: boolean;
   secret: boolean;
   default: unknown;
+  /** Valores aceitos; vazio = texto livre. */
+  choices?: string[];
+  /** Endereço que a toolkit chama — o servidor exige que seja público. */
+  url?: boolean;
 }
 
 /** `GET /tools/catalog` — toolkits padrão do Agno disponíveis para `kind: "builtin"`. */
@@ -488,6 +492,13 @@ export interface BuiltinCatalogEntry {
   builtin_id: string;
   label: string;
   description: string;
+  /** Já vem na ordem de apresentação (categoria a categoria). */
+  category: string;
+  /** Os pacotes da toolkit estão instalados no serviço. */
+  available: boolean;
+  unavailable_reason: string | null;
+  /** Envia, cria ou agenda algo fora do serviço — simulado em dry_run. */
+  side_effect: boolean;
   params: BuiltinParam[];
 }
 

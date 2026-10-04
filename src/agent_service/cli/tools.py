@@ -171,11 +171,17 @@ def delete_tool(
 def catalog(ctx: typer.Context) -> None:
     """Catálogo de toolkits builtin disponíveis e seus parâmetros."""
     st = state(ctx)
-    emit(
-        st,
-        call(st, st.client.tool_catalog),
-        lambda entries: [console.print(f"[cyan]{e['builtin_id']}[/] — {e['label']}: {e['description']}") for e in entries],
-    )
+
+    def show(entries: list[dict[str, Any]]) -> None:
+        category = None
+        for e in entries:
+            if e.get("category") != category:
+                category = e.get("category")
+                console.print(f"\n[bold]{category}[/]")
+            note = "" if e.get("available", True) else " [yellow](não instalada)[/]"
+            console.print(f"  [cyan]{e['builtin_id']}[/] — {e['label']}{note}: {e['description']}")
+
+    emit(st, call(st, st.client.tool_catalog), show)
 
 
 @app.command("invoke")

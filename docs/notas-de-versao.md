@@ -74,8 +74,32 @@ timeout menor que isso, ajuste um dos dois, ou use `QUEUE_MAX_WAIT_SECONDS=0` pa
 - Tool `kind="api"`: um parâmetro de header que não vem do modelo (`source` `dependency` ou
   `const`) aceita nome de header HTTP com hífen, como `Idempotency-Key` ou `X-Request-Id`. Antes só
   identificadores passavam, e não havia como mandar a `idempotency_key` no header esperado.
+- Catálogo de toolkits prontas (`kind="builtin"`) ampliado e organizado por categoria: Tavily,
+  Serper (Google), Jina Reader, Wikipédia, YouTube, Yahoo Finance, Jira, Confluence, Notion,
+  Linear, Zendesk, Cal.com, GitHub, GitLab, Slack, WhatsApp, Telegram, Twilio (SMS) e Resend.
+  `GET /tools/catalog` passa a trazer `category`, `available`, `unavailable_reason`,
+  `side_effect` e, por parâmetro, `choices` e `url`. A maioria precisa do extra `tools`
+  (`KURO_EXTRAS="--extra tools" docker compose build agent-service`); sem ele, a entrada aparece
+  como não instalada e criar uma tool com ela dá 422 dizendo isso.
+  - Funções que enviam, criam ou agendam não rodam em `dry_run`: o modelo recebe o que teriam
+    feito. Vale também para a builtin `email`, que antes mandava o e-mail mesmo em teste.
+  - Uma tool builtin criada sem `side_effect` já nasce classificada pelo catálogo.
+  - `read_only` tira as funções de escrita (Jira, Confluence, Notion, Linear, Cal.com, GitHub,
+    Slack). O GitHub vem somente leitura, e apagar repositório ou arquivo nunca fica disponível.
+  - Endereço configurável (Jira, Confluence, GitHub Enterprise, GitLab) precisa ser público, como
+    o de uma tool `api`: apontar para a rede interna dá 422.
+- MCP: `tool_catalog` devolve a lista resumida; com `builtin_id`, a entrada completa com os parâmetros.
+- Console: na escolha de tools do agente e na lista de tools, as do negócio (API e Python) vêm
+  antes das toolkits prontas; uma tool nova começa no tipo API.
 
 ### Corrigido
+
+- `kuro ... -f -` com JSON vindo do PowerShell 5.1 (`Get-Content x.json | kuro agents apply -f -`)
+  falhava com "Unexpected UTF-8 BOM". A CLI agora ignora o BOM em tudo que lê de stdin e nos
+  arquivos JSON/JSONL, o que também evita o BOM no começo de um documento indexado por
+  `kuro collections add` ou de uma chave lida por stdin.
+- A imagem do serviço levava junto o cache de download do uv (~200 MB). Agora ele fica num cache
+  do BuildKit, fora da imagem: 1,1 GB em vez de 1,37 GB, e o próximo build continua rápido.
 
 - Falha do provedor do modelo (ex.: Gemini 503) chegava no `detail` do 502 e no evento `error` do
   stream como o JSON inteiro da resposta dele, em várias linhas. Agora é uma frase: "Falha no modelo: o
@@ -96,6 +120,10 @@ timeout menor que isso, ajuste um dos dois, ou use `QUEUE_MAX_WAIT_SECONDS=0` pa
 
 - A migração `0007` roda sozinha no startup: acrescenta `agent_definitions.stages` e cria a
   tabela `procedure_runs`. Nada muda nos agentes que já existem, nem a versão da configuração deles.
+- Para oferecer as novas toolkits prontas, construa a imagem com o extra `tools`:
+  `KURO_EXTRAS="--extra tools" docker compose build agent-service` (soma cerca de 400 MB à imagem;
+  o grosso é o pandas do Yahoo Finance e o SDK da Twilio).
+  Sem isso, tudo continua funcionando, e elas aparecem como não instaladas.
 
 ---
 

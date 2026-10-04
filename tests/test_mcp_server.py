@@ -102,6 +102,25 @@ async def test_lists_tools_with_annotations_and_hides_confirmation_from_schema(a
     assert not any(name.startswith("credential") and name != "credentials_list" for name in tools)
 
 
+async def test_tool_catalog_lists_summary_and_details_one_entry(api):
+    server, routes, _ = api
+    entry = {
+        "builtin_id": "slack", "label": "Slack", "description": "...", "category": "Comunicação",
+        "available": True, "unavailable_reason": None, "side_effect": True,
+        "params": [{"name": "token", "type": "string", "required": True, "secret": True}],
+    }
+    routes[("GET", "/tools/catalog")] = httpx.Response(200, json=[entry])
+    async with McpClient(server) as mcp:
+        summary = _data(await mcp.call_tool("tool_catalog", {}))
+        detail = _data(await mcp.call_tool("tool_catalog", {"builtin_id": "slack"}))
+        unknown = await mcp.call_tool("tool_catalog", {"builtin_id": "nada"})
+    assert summary["items"] == [{
+        "builtin_id": "slack", "label": "Slack", "category": "Comunicação", "available": True, "side_effect": True,
+    }]
+    assert detail["params"][0]["name"] == "token"
+    assert unknown.is_error and "nada" in _text(unknown)
+
+
 @MODES
 async def test_delete_runs_only_after_user_confirms(api, mode):
     server, routes, calls = api

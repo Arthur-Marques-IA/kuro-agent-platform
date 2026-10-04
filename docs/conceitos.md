@@ -205,9 +205,34 @@ uv run kuro agents set suporte tools='["cep"]'          # liga ao agente
 Segredos (token, senha) voltam mascarados nas leituras, e editar sem mexer no
 campo mascarado preserva o valor salvo. Uma tool em uso por algum agente não
 pode ser excluída. O seed cria `calculator`, `hackernews` e `cat_fact`.
-A builtin `web_search` precisa do extra `tools` (`uv sync --extra tools`); as
-demais do catálogo (`calculator`, `hackernews`, `reasoning`, `email`, `files`,
-`pubmed`, `openweather`, `file_generation`, `sleep`) funcionam sem instalar nada.
+
+**Toolkits prontas (`kind="builtin"`).** O ponto de partida de um agente são as
+tools do próprio negócio (`api` e `python`); o catálogo cobre o que se repete
+entre empresas, e por isso é curto. `kuro tools catalog` lista tudo:
+
+| Categoria | Toolkits |
+|---|---|
+| Pesquisa | `web_search` (DuckDuckGo), `tavily`, `serper` (Google), `jina_reader` (ler uma página), `wikipedia`, `youtube`, `pubmed`, `hackernews` |
+| Dados | `yfinance` (cotações; na B3, `PETR4.SA`), `openweather` |
+| Trabalho em equipe | `jira`, `confluence`, `notion`, `linear`, `zendesk`, `calcom` (agenda), `github`, `gitlab` |
+| Comunicação | `slack`, `whatsapp`, `telegram`, `twilio` (SMS), `resend`, `email` (Gmail SMTP) |
+| Utilidades | `calculator`, `reasoning`, `files`, `file_generation`, `sleep` |
+
+Boa parte delas precisa de pacotes do extra `tools`, que a imagem padrão não
+instala: `KURO_EXTRAS="--extra tools" docker compose build agent-service` (fora do
+Docker, `uv sync --extra tools`). Sem eles, o catálogo mostra a toolkit como não
+instalada e criar uma tool com ela dá 422 com esse comando.
+
+- **Chave é sempre obrigatória.** Sem ela na config, a toolkit do Agno usaria a
+  variável de ambiente do container (`OPENAI_API_KEY`, `GITHUB_ACCESS_TOKEN`...).
+- **Efeito colateral.** Enviar mensagem, abrir issue, agendar: essas funções não
+  rodam num `dry_run` — o modelo recebe o que elas teriam feito e é instruído a
+  dizer que foi um teste. A tool já nasce com `side_effect` marcado.
+- **Somente leitura.** Jira, Confluence, Notion, Linear, Cal.com, GitHub e Slack
+  têm `read_only`, que tira as funções de escrita. O GitHub já vem assim, e apagar
+  repositório ou arquivo nunca fica disponível.
+- **Endereço configurável** (Jira, Confluence, GitHub Enterprise, GitLab) precisa
+  ser público, como o de uma tool `api`; é conferido ao salvar e ao montar a tool.
 
 **Para onde uma tool pode falar.** Dentro do container, `http://postgres:5432`,
 os outros serviços do compose e o metadata da nuvem (`http://169.254.169.254/`) estão a um pulo de
@@ -223,9 +248,11 @@ TOOL_EGRESS_ALLOWLIST=faturamento.interno,10.0.0.5
 
 Salvar uma tool apontando para um destino interno falha com 422, e uma chamada
 recusada devolve o motivo ao modelo em vez de estourar. Toolkits do Agno que
-buscam uma URL escolhida na hora (`CustomApiTools`, `WebsiteTools`) ficam fora
-do catálogo de propósito: elas têm cliente HTTP próprio e passariam por cima
-dessa trava — quem cobre esse caso são as tools `kind="api"`.
+buscam uma URL escolhida na hora (`CustomApiTools`, `WebsiteTools`, Crawl4ai,
+Playwright) ficam fora do catálogo de propósito: elas têm cliente HTTP próprio e
+passariam por cima dessa trava — quem cobre esse caso são as tools `kind="api"`,
+e ler uma página pública é o `jina_reader`, que a busca do lado da Jina. O que
+mais ficou de fora, e por quê, está no topo de `tools/catalog.py`.
 
 ## Base de conhecimento (RAG)
 

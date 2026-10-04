@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from agent_service.agents.store import create_definition, delete_definition
 from agent_service.config import get_settings
-from agent_service.tools import api_tool, registry, store
+from agent_service.tools import api_tool, catalog, registry, store
 from agent_service.tools.api_tool import ApiToolConfigError, build_api_function, validate_api_config
 from agent_service.tools.catalog import BuiltinConfigError, get_builtin_spec, list_builtin_catalog, validate_builtin_config
 from agent_service.tools.python_tool import (
@@ -92,6 +92,142 @@ def test_validate_builtin_config_rejects_wrong_type():
 def test_validate_builtin_config_applies_defaults_and_keeps_valid_values():
     normalized = validate_builtin_config({"builtin_id": "web_search", "params": {"max_results": 5}})
     assert normalized == {"builtin_id": "web_search", "params": {"max_results": 5, "enable_news": True}}
+
+
+def test_catalogo_tem_categoria_e_nenhuma_credencial_opcional():
+    """Sem a chave na config, a toolkit do Agno cairia no `getenv` e gastaria a
+    chave que o container tivesse."""
+    for spec in list_builtin_catalog():
+        assert spec.category in catalog.CATEGORIES, spec.builtin_id
+        for p in spec.params:
+            if p.secret:
+                assert p.required, f"{spec.builtin_id}.{p.name}"
+    categorias = [s.category for s in list_builtin_catalog()]
+    assert categorias == sorted(categorias, key=catalog.CATEGORIES.index)
+
+
+# Toolkits que constroem sem pacote extra e sem rede: dá para conferir que os
+# nomes em `writes` existem de verdade (um erro de digitação deixaria a escrita
+# fora da trava de dry_run).
+_SEM_PACOTE = {
+    "linear": {"api_key": "k"},
+    "whatsapp": {"access_token": "k", "phone_number_id": "1"},
+    "serper": {"api_key": "k"},
+    "jina_reader": {"api_key": "k"},
+    "zendesk": {"company_name": "acme", "username": "u", "password": "p"},
+    "email": {"receiver_email": "a@b.com", "sender_email": "c@d.com", "sender_passkey": "x"},
+}
+
+
+@pytest.mark.parametrize("builtin_id", sorted(_SEM_PACOTE))
+def test_escritas_declaradas_existem_na_toolkit(builtin_id):
+    spec = get_builtin_spec(builtin_id)
+    assert spec.requires == ()
+    params = validate_builtin_config({"builtin_id": builtin_id, "params": _SEM_PACOTE[builtin_id]})["params"]
+    built = catalog.build_builtin(spec, params, builtin_id)
+    assert spec.writes <= set(built.functions) | set(built.async_functions)
+
+
+def test_escrita_e_simulada_em_dry_run():
+    from agent_service.tools.context import dependencies_scope
+
+    spec = get_builtin_spec("email")
+    built = catalog.build_builtin(spec, _SEM_PACOTE["email"], "email")
+    with patch("smtplib.SMTP_SSL") as smtp, dependencies_scope({}, dry_run=True):
+        out = built.functions["email_user"].entrypoint(subject="Oi", body="Teste")
+    smtp.assert_not_called()
+    assert out.startswith("[dry_run] email_user não foi executada")
+    assert '"subject": "Oi"' in out
+
+
+def test_escrita_travada_mantem_o_schema_que_o_modelo_ve():
+    spec = get_builtin_spec("linear")
+    built = catalog.build_builtin(spec, {"api_key": "k"}, "linear")
+    fn = built.functions["create_issue"].model_copy(deep=True)
+    fn.process_entrypoint()
+    assert {"title", "team_id"} <= set(fn.parameters["properties"])
+    assert fn.description
+
+
+def test_escrita_async_tambem_e_simulada():
+    from agent_service.tools.context import dependencies_scope
+
+    async def send(text: str) -> str:
+        raise AssertionError("não deveria enviar")
+
+    guarded = catalog._dry_run_guard("send", send)
+    with dependencies_scope({}, dry_run=True):
+        assert asyncio.run(guarded(text="oi")).startswith("[dry_run] send")
+
+
+def test_somente_leitura_tira_as_escritas():
+    spec = get_builtin_spec("linear")
+    params = validate_builtin_config({"builtin_id": "linear", "params": {"api_key": "k", "read_only": True}})["params"]
+    built = catalog.build_builtin(spec, params, "linear")
+    assert not spec.writes & set(built.functions)
+    assert "get_issue_details" in built.functions
+
+
+def test_never_some_mesmo_sem_somente_leitura(monkeypatch):
+    from dataclasses import replace
+
+    spec = replace(get_builtin_spec("calculator"), never=frozenset({"factorial"}))
+    built = catalog.build_builtin(spec, {}, "calc")
+    assert "factorial" not in built.functions
+    assert "add" in built.functions
+
+
+@pytest.mark.parametrize("url, match", [
+    ("ftp://jira.acme.com", "http"),
+    ("http://127.0.0.1:8080", "server_url"),
+    ("http://169.254.169.254", "server_url"),
+])
+def test_endereco_configuravel_precisa_ser_publico(url, match):
+    with pytest.raises(BuiltinConfigError, match=match):
+        validate_builtin_config({
+            "builtin_id": "jira",
+            "params": {"server_url": url, "username": "u", "token": "t"},
+        })
+
+
+def test_valor_fora_das_opcoes_e_recusado():
+    with pytest.raises(BuiltinConfigError, match="metric"):
+        validate_builtin_config({"builtin_id": "openweather", "params": {"api_key": "k", "units": "kelvin"}})
+
+
+def test_toolkit_sem_pacote_e_recusada_ao_criar_mas_editavel_depois(monkeypatch):
+    create_tool(ToolIn(tool_name="clima", kind="builtin", label="Clima",
+                       config={"builtin_id": "openweather", "params": {"api_key": "k"}}))
+    monkeypatch.setattr(catalog, "is_available", lambda _builtin_id: False)
+
+    with pytest.raises(HTTPException) as exc:
+        create_tool(ToolIn(tool_name="clima-2", kind="builtin", label="Clima",
+                           config={"builtin_id": "openweather", "params": {"api_key": "k"}}))
+    assert exc.value.status_code == 422
+    assert "--extra tools" in exc.value.detail
+
+    # A tool que já existe continua editável (desligar não pode depender do pacote).
+    updated = update_tool("clima", ToolUpdateIn(config={"builtin_id": "openweather", "params": {"api_key": "k", "units": "imperial"}}))
+    assert updated["config"]["params"]["units"] == "imperial"
+
+
+def test_side_effect_vem_do_catalogo_ao_criar():
+    linear = create_tool(ToolIn(tool_name="linear-rw", kind="builtin", label="L",
+                                config={"builtin_id": "linear", "params": {"api_key": "k"}}))
+    leitura = create_tool(ToolIn(tool_name="linear-ro", kind="builtin", label="L",
+                                 config={"builtin_id": "linear", "params": {"api_key": "k", "read_only": True}}))
+    marcado = create_tool(ToolIn(tool_name="linear-x", kind="builtin", label="L", side_effect=False,
+                                 config={"builtin_id": "linear", "params": {"api_key": "k"}}))
+    assert (linear["side_effect"], leitura["side_effect"], marcado["side_effect"]) == (True, False, False)
+
+
+def test_rota_do_catalogo_traz_categoria_disponibilidade_e_somente_leitura():
+    entries = {e["builtin_id"]: e for e in get_builtin_catalog()}
+    assert entries["calculator"]["available"] is True
+    assert entries["linear"]["side_effect"] is True
+    assert "read_only" in {p["name"] for p in entries["linear"]["params"]}
+    assert entries["openweather"]["params"][1]["choices"] == ["metric", "imperial", "standard"]
+    assert entries["jira"]["params"][0]["url"] is True
 
 
 # -- tools kind="api" ------------------------------------------------------
@@ -417,18 +553,20 @@ def test_invoke_builtin_tool_requires_function_name_then_succeeds():
     assert result["ok"] is True
 
 
-def test_invoke_tool_that_fails_to_build_reports_error_not_500():
+def test_invoke_tool_that_fails_to_build_reports_error_not_500(monkeypatch):
     create_tool(
         ToolIn(
             tool_name="broken_builtin",
             kind="builtin",
             label="broken",
-            config={"builtin_id": "web_search", "params": {}},  # ddgs não está instalado neste ambiente de teste
+            config={"builtin_id": "calculator", "params": {}},
         )
     )
+    # Pacote da toolkit desinstalado depois de a tool ser criada (imagem sem o extra `tools`).
+    monkeypatch.setattr(catalog, "is_available", lambda _builtin_id: False)
     result = invocar("broken_builtin", ToolInvokeIn())
     assert result["ok"] is False
-    assert result["error"]
+    assert "--extra tools" in result["error"]
 
 
 def test_update_tool_masks_and_preserves_secret_when_echoed_back():
@@ -472,10 +610,11 @@ def test_delete_tool_blocked_when_seeded_or_in_use():
     assert store.get_tool("in_use_tool") is None
 
 
-def test_get_tool_reports_build_error_for_missing_optional_dependency():
-    create_tool(ToolIn(tool_name="web_search_probe", kind="builtin", label="x", config={"builtin_id": "web_search", "params": {}}))
+def test_get_tool_reports_build_error_for_missing_optional_dependency(monkeypatch):
+    create_tool(ToolIn(tool_name="web_search_probe", kind="builtin", label="x", config={"builtin_id": "calculator", "params": {}}))
+    monkeypatch.setattr(catalog, "is_available", lambda _builtin_id: False)
     detail = get_tool("web_search_probe")
-    assert detail.get("build_error")  # ddgs não instalado neste ambiente de teste
+    assert "--extra tools" in detail.get("build_error")
 
 
 def test_get_tool_lists_functions_for_working_builtin():

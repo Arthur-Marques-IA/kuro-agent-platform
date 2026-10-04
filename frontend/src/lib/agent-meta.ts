@@ -63,9 +63,10 @@ export const REASONING_LEVELS: { value: "" | "off" | "low" | "medium" | "high"; 
 ];
 
 export const TOOL_KIND_META: Record<ToolKind, { label: string; description: string }> = {
-  builtin: { label: "Padrão", description: "Uma toolkit pronta do Agno (busca, calculadora...)." },
+  // A ordem é a do seletor de tipo: as do negócio primeiro.
   api: { label: "API", description: "Chama uma API HTTP existente, descrita em JSON — sem código." },
   python: { label: "Python", description: "Uma função Python enviada por você, executada num namespace restrito." },
+  builtin: { label: "Padrão", description: "Uma toolkit pronta (busca, Slack, Jira, calculadora...)." },
 };
 
 /** Valida o JSON do campo `dependencies` do chat. */

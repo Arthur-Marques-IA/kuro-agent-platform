@@ -112,7 +112,8 @@ export function ToolEditorDialog({
 
   const [toolName, setToolName] = useState(tool?.tool_name ?? "");
   const [nameTouched, setNameTouched] = useState(isEdit);
-  const [kind, setKind] = useState<ToolKind>(tool?.kind ?? "builtin");
+  // Tool nova começa em API: a do próprio negócio é o caso comum; a toolkit padrão é o complemento.
+  const [kind, setKind] = useState<ToolKind>(tool?.kind ?? "api");
   const [label, setLabel] = useState(tool?.label ?? "");
   const [description, setDescription] = useState(tool?.description ?? "");
   const [enabled, setEnabled] = useState(tool?.enabled ?? true);
@@ -139,7 +140,8 @@ export function ToolEditorDialog({
     requestJson<BuiltinCatalogEntry[]>("/api/tools/catalog", { fallbackError: "Falha ao carregar o catálogo" })
       .then((data) => {
         setCatalog(data);
-        if (!isEdit && !builtinId && data.length > 0) setBuiltinId(data[0].builtin_id);
+        const first = data.find((entry) => entry.available);
+        if (!isEdit && !builtinId && first) setBuiltinId(first.builtin_id);
       })
       .catch(() => setCatalog([]));
     requestJson<{ enabled: boolean }>("/api/tools/python-config", { fallbackError: "" })
@@ -158,7 +160,14 @@ export function ToolEditorDialog({
         ? "Já existe uma tool com este nome."
         : null;
   const labelError = label.trim() ? null : "Dê um rótulo pra exibir na lista.";
-  const builtinError = kind === "builtin" && !builtinId ? "Escolha uma toolkit." : null;
+  const builtinError =
+    kind !== "builtin"
+      ? null
+      : !builtinId
+        ? "Escolha uma toolkit."
+        : !isEdit && builtinSpec && !builtinSpec.available
+          ? "Esta toolkit não está instalada no serviço."
+          : null;
   const apiUrlError = kind === "api" && !/^https?:\/\//.test(apiDraft.url.trim()) ? "Informe uma URL http(s)://..." : null;
   const pythonError =
     kind === "python" && (!pythonDraft.code.trim() || !pythonDraft.entrypoint.trim())
@@ -252,7 +261,11 @@ export function ToolEditorDialog({
                 <button
                   key={k}
                   type="button"
-                  onClick={() => setKind(k)}
+                  onClick={() => {
+                    setKind(k);
+                    // A toolkit sabe se age fora do serviço; API e Python, só quem as escreveu.
+                    setSideEffect(k === "builtin" && builtinSpec ? builtinSideEffect(builtinSpec, builtinParams) : "");
+                  }}
                   className={cn(
                     "flex flex-col gap-0.5 rounded-lg border px-3 py-2 text-left text-[13px] transition-colors",
                     kind === k ? "border-primary bg-primary-soft" : "border-input hover:bg-accent/50"
@@ -330,10 +343,17 @@ export function ToolEditorDialog({
               onBuiltinIdChange={(id) => {
                 setBuiltinId(id);
                 setBuiltinParams({});
+                const entry = catalog?.find((c) => c.builtin_id === id);
+                if (entry) setSideEffect(builtinSideEffect(entry, {}));
               }}
               spec={builtinSpec}
               params={builtinParams}
-              onParamsChange={setBuiltinParams}
+              onParamsChange={(next) => {
+                setBuiltinParams(next);
+                if (builtinSpec && next.read_only !== builtinParams.read_only) {
+                  setSideEffect(builtinSideEffect(builtinSpec, next));
+                }
+              }}
               disabled={isEdit}
             />
           )}
@@ -359,6 +379,20 @@ export function ToolEditorDialog({
 }
 
 // -- kind="builtin" ----------------------------------------------------
+
+/** O catálogo já vem na ordem de apresentação; agrupa preservando-a. */
+function catalogGroups(catalog: BuiltinCatalogEntry[]): [string, BuiltinCatalogEntry[]][] {
+  const groups = new Map<string, BuiltinCatalogEntry[]>();
+  for (const entry of catalog) groups.set(entry.category, [...(groups.get(entry.category) ?? []), entry]);
+  return [...groups.entries()];
+}
+
+/** Mesma regra do servidor ao criar: tem escrita e não está em somente leitura. */
+function builtinSideEffect(entry: BuiltinCatalogEntry, params: Record<string, unknown>): "yes" | "no" {
+  const readOnlyParam = entry.params.find((p) => p.name === "read_only");
+  const readOnly = Boolean(params.read_only ?? readOnlyParam?.default ?? false);
+  return entry.side_effect && !readOnly ? "yes" : "no";
+}
 
 function BuiltinFields({
   catalog,
@@ -386,12 +420,39 @@ function BuiltinFields({
   }
   return (
     <div className="flex flex-col gap-4">
-      <Field label="Toolkit" htmlFor="builtin-id" hint={spec?.description}>
+      <Field
+        label="Toolkit"
+        htmlFor="builtin-id"
+        hint={
+          spec && !spec.available ? (
+            <span className="text-warning">{spec.unavailable_reason}</span>
+          ) : spec ? (
+            <>
+              {spec.description}
+              {spec.side_effect && (
+                <span className="mt-1 block">
+                  Age fora do serviço (envia, cria ou agenda). Nos testes em dry_run essas funções não rodam: o
+                  modelo recebe o que elas teriam feito.
+                </span>
+              )}
+            </>
+          ) : undefined
+        }
+      >
         <Select id="builtin-id" value={builtinId} disabled={disabled} onChange={(e) => onBuiltinIdChange(e.target.value)}>
-          {catalog.map((entry) => (
-            <option key={entry.builtin_id} value={entry.builtin_id}>
-              {entry.label}
-            </option>
+          {catalogGroups(catalog).map(([category, entries]) => (
+            <optgroup key={category} label={category}>
+              {entries.map((entry) => (
+                <option
+                  key={entry.builtin_id}
+                  value={entry.builtin_id}
+                  disabled={!entry.available && entry.builtin_id !== builtinId}
+                >
+                  {entry.label}
+                  {entry.available ? "" : " (não instalada)"}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </Select>
       </Field>
@@ -410,6 +471,18 @@ function BuiltinFields({
                   />
                   {p.description || "Ativado"}
                 </label>
+              ) : p.choices && p.choices.length > 0 ? (
+                <Select
+                  id={`param-${p.name}`}
+                  value={String(params[p.name] ?? p.default ?? p.choices[0])}
+                  onChange={(e) => onParamsChange({ ...params, [p.name]: e.target.value })}
+                >
+                  {p.choices.map((choice) => (
+                    <option key={choice} value={choice}>
+                      {choice}
+                    </option>
+                  ))}
+                </Select>
               ) : (
                 <Input
                   id={`param-${p.name}`}

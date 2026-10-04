@@ -28,7 +28,14 @@ from agent_service.agents.store import list_definitions as list_agent_definition
 from agent_service.config import get_settings
 from agent_service.tools import registry, store
 from agent_service.tools.api_tool import ApiToolConfigError, required_dependencies, validate_api_config
-from agent_service.tools.catalog import BuiltinConfigError, list_builtin_catalog, validate_builtin_config
+from agent_service.tools.catalog import (
+    BuiltinConfigError,
+    get_builtin_spec,
+    is_available,
+    list_builtin_catalog,
+    unavailable_reason,
+    validate_builtin_config,
+)
 from agent_service.tools.invoke import ToolUnavailableError
 from agent_service.tools.invoke import invoke_tool as run_tool
 from agent_service.tools.python_tool import PythonToolConfigError, validate_python_config
@@ -44,10 +51,10 @@ ToolKind = Literal["builtin", "api", "python"]
 # -- validação/normalização por kind, e mascaramento de segredos -----------
 
 
-def _validate_config(kind: str, config: dict[str, Any]) -> dict[str, Any]:
+def _validate_config(kind: str, config: dict[str, Any], *, check_available: bool = True) -> dict[str, Any]:
     try:
         if kind == "builtin":
-            return validate_builtin_config(config)
+            return validate_builtin_config(config, check_available=check_available)
         if kind == "api":
             return validate_api_config(config)
         if kind == "python":
@@ -167,12 +174,22 @@ class BuiltinParamOut(BaseModel):
     required: bool
     secret: bool
     default: Any
+    choices: list[str] = Field(default_factory=list)
+    """Valores aceitos; vazio = texto livre."""
+    url: bool = False
+    """Endereço que a toolkit chama — precisa ser público."""
 
 
 class BuiltinCatalogEntryOut(BaseModel):
     builtin_id: str
     label: str
     description: str
+    category: str
+    available: bool
+    """Os pacotes da toolkit estão instalados neste serviço."""
+    unavailable_reason: str | None = None
+    side_effect: bool
+    """Tem funções que agem fora do serviço (enviar, criar, agendar) — simuladas em dry_run."""
     params: list[BuiltinParamOut]
 
 
@@ -227,6 +244,10 @@ def get_builtin_catalog() -> list[dict[str, Any]]:
             "builtin_id": spec.builtin_id,
             "label": spec.label,
             "description": spec.description,
+            "category": spec.category,
+            "available": is_available(spec.builtin_id),
+            "unavailable_reason": None if is_available(spec.builtin_id) else unavailable_reason(spec),
+            "side_effect": spec.side_effect,
             "params": [
                 {
                     "name": p.name,
@@ -236,8 +257,10 @@ def get_builtin_catalog() -> list[dict[str, Any]]:
                     "required": p.required,
                     "secret": p.secret,
                     "default": p.default,
+                    "choices": list(p.choices),
+                    "url": p.url,
                 }
-                for p in spec.params
+                for p in spec.all_params
             ],
         }
         for spec in list_builtin_catalog()
@@ -257,6 +280,10 @@ def create_tool(body: ToolIn) -> dict[str, Any]:
     if store.get_tool(body.tool_name) is not None:
         raise HTTPException(status_code=409, detail=f"Tool {body.tool_name!r} já existe")
     config = _validate_config(body.kind, body.config)
+    side_effect = body.side_effect
+    if side_effect is None and body.kind == "builtin" and (spec := get_builtin_spec(config["builtin_id"])):
+        # A toolkit sabe se age fora do serviço; somente leitura não age.
+        side_effect = spec.side_effect and not config["params"].get("read_only", False)
     created = store.create_tool(
         tool_name=body.tool_name,
         kind=body.kind,
@@ -264,7 +291,7 @@ def create_tool(body: ToolIn) -> dict[str, Any]:
         description=body.description,
         config=config,
         enabled=body.enabled,
-        side_effect=body.side_effect,
+        side_effect=side_effect,
     )
     return _row_out(created)
 
@@ -293,7 +320,9 @@ def update_tool(tool_name: str, body: ToolUpdateIn) -> dict[str, Any]:
     config = None
     if body.config is not None:
         merged = _unmask_config(current["kind"], body.config, current["config"])
-        config = _validate_config(current["kind"], merged)
+        # Editar uma tool que já existe não depende do pacote dela; trocar de toolkit, sim.
+        same_toolkit = merged.get("builtin_id") == (current["config"] or {}).get("builtin_id")
+        config = _validate_config(current["kind"], merged, check_available=not same_toolkit)
         if current["kind"] == "api":
             _check_agents_declare_dependencies(tool_name, config)
 

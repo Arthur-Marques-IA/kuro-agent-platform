@@ -54,9 +54,24 @@ mem0 = [
     "mem0ai>=2.0.20",
 ]
 tools = [
-    # A tool builtin "Busca na web" (agent_service/tools/catalog.py) precisa
-    # disso; as demais builtins do catálogo já funcionam sem instalar nada.
+    # Pacotes das toolkits do catálogo de builtins (agent_service/tools/catalog.py).
+    # Sem este extra, o catálogo mostra essas entradas como indisponíveis; as
+    # demais (calculadora, Linear, WhatsApp, Zendesk...) já funcionam sem ele.
     "ddgs>=9.0.0",
+    "tavily-python>=0.8.4",
+    "wikipedia>=1.4.0",
+    "youtube-transcript-api>=1.2.4",
+    "yfinance>=1.7.0",
+    "pygithub>=2.10.0",
+    "python-gitlab>=8.6.0",
+    "jira>=3.10.5",
+    "atlassian-python-api>=5.0.5",
+    "notion-client>=3.1.0",
+    "pytz>=2026.3",
+    "slack-sdk>=3.45.0",
+    "pytelegrambotapi>=4.37.0",
+    "twilio>=9.11.2",
+    "resend>=2.49.1",
 ]
 # Só na máquina de quem opera: o servidor MCP (`kuro-mcp`) e a TUI (`kuro dash`)
 # são clientes da API, como a CLI. A imagem do serviço não precisa de nenhum dos dois.

@@ -31,6 +31,13 @@ LANGFUSE_ENABLED=true docker compose --profile ui --profile observability up -d 
 > Com o profile `observability` fora, `LANGFUSE_ENABLED` fica `false` por padrão.
 > Ligado com o Langfuse fora do ar, cada execução pagaria o timeout do exportador.
 
+As toolkits prontas do catálogo (Slack, Jira, Tavily, Yahoo Finance...) também vêm de um extra,
+o `tools` (~400 MB a mais na imagem). Os extras se combinam:
+
+```bash
+KURO_EXTRAS="--extra tools --extra observability" docker compose build agent-service
+```
+
 | Serviço | Endereço | Profile | Para quê |
 |---|---|---|---|
 | API | http://127.0.0.1:58000 | (núcleo) | contrato de integração; `/docs` tem o OpenAPI |
