@@ -36,6 +36,11 @@ docker compose exec agent-service kuro mcp-config --url https://kuro.suaempresa.
 Ele devolve o `claude mcp add ...` e o `.mcp.json`. Os dois rodam o `kuro-mcp` com o
 [uv](https://docs.astral.sh/uv/) direto do GitHub (`uvx --from "agent-service[mcp] @ git+..."`),
 sem clonar o repositório: na sua máquina só precisa do `uv` e de acesso de leitura ao repositório.
+O `uvx` guarda o pacote em cache e instala a `master` do momento em que rodou pela primeira vez.
+Quando o servidor for atualizado, atualize o cliente uma vez para as tools baterem com a API:
+`uvx --refresh --from "agent-service[mcp] @ git+https://github.com/Arthur-Marques-IA/microservice_agents" kuro-mcp`
+(ele sobe e fica esperando; feche com Ctrl+C). Quando o projeto tiver tags de versão, o
+`mcp-config` passará a fixar a mesma versão do servidor.
 Sem `--show-key` a chave sai mascarada, para não ficar no histórico do terminal por descuido; sem
 `--url` ele avisa que o endereço que enxerga de dentro do container não serve para a sua máquina.
 
