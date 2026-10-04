@@ -408,6 +408,12 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
         _add_extra_spans(record, run.extra_spans)
         record.ended_at = datetime.now(timezone.utc)
         run_store.record_run(record)
+        if record.status == "success" and run.endpoint.startswith("chat"):
+            # Depois do run: o Agno já gravou a sessão. O título leva só o texto da
+            # pessoa — sem isto o AgentOS usaria a mensagem com as dependencies.
+            from agent_service.agents.session_names import ensure_session_name_later
+
+            ensure_session_name_later(agent, run.session_id, run.user_id, run.message)
 
 
 def _add_extra_spans(record: Any, spans: tuple[Any, ...]) -> None:

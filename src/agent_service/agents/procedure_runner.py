@@ -41,6 +41,7 @@ from pydantic import BaseModel
 from agent_service.agents import procedural, procedure_store
 from agent_service.agents.base import build_agent
 from agent_service.agents.procedure_store import ProcedureConflictError
+from agent_service.agents.session_names import title_from
 from agent_service.models.crypto import EncryptionNotConfiguredError
 from agent_service.models.errors import friendly_model_error
 from agent_service.models.provider import ProviderNotConfiguredError
@@ -271,7 +272,7 @@ def _append_to_session(agent: Agent, run: RunContext, reply: str) -> None:
                 session_id=run.session_id,
                 agent_id=agent.id,
                 user_id=run.user_id,
-                session_data={},
+                session_data={"session_name": title} if (title := title_from(run.message)) else {},
                 created_at=now,
                 updated_at=now,
             )
