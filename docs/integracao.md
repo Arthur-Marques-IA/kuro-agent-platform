@@ -218,6 +218,10 @@ decide o que simular. Ele avisa as tools, e a API de cada uma decide:
   não tem efeito: vale o flag da requisição;
 - o run fica com `metadata.dry_run = "true"` (`kuro runs list --meta dry_run=true`).
 
+A exceção são as toolkits prontas (`kind="builtin"`: Slack, Jira, WhatsApp, e-mail...). Elas falam
+com serviços de terceiros, que não conhecem o header, então quem simula é o Kuro: as funções que
+enviam, criam ou agendam não rodam, e o modelo recebe o que elas teriam feito.
+
 O Playground do console manda `dry_run` ligado por padrão. Na CLI, use `--dry-run` em `kuro chat`,
 `kuro analyze`, `kuro eval` e `kuro tools invoke`. Tool com efeito colateral (cobrança, acordo,
 mensagem) deve tratar o header e, nesse caso, só registrar a intenção.

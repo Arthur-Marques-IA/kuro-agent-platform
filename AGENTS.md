@@ -63,6 +63,8 @@ kuro --json chat suporte -m "fecha o acordo" --dry-run   # teste: tools recebem 
 # `dry_run: true` no /chat e no /analyze (também `--dry-run` em analyze, eval e tools invoke):
 # as tools recebem o header e `dependencies.dry_run` (sem declarar em dependency_fields);
 # o run fica com metadata.dry_run=true. Quem implementa a tool decide o que simular.
+# Toolkit pronta (kind="builtin": Slack, Jira, e-mail...) é a exceção: o próprio Kuro não roda
+# as funções que enviam/criam/agendam, e o modelo recebe o que elas fariam.
 
 # Anexos: imagem, áudio, vídeo ou arquivo (PDF, DOCX, CSV, TXT...) direto ao modelo
 kuro --json chat suporte -m "o que tem nessa foto?" --attach foto.png       # -a, repetível

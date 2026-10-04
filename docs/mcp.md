@@ -123,8 +123,10 @@ pede permissão antes de chamar.
 ## Diferenças em relação à CLI, de propósito
 
 - **Testes são `dry_run` por padrão.** `chat`, `analyze`, `tool_invoke` e `eval` mandam
-  `dry_run: true`, e as tools do agente recebem `X-Kuro-Dry-Run: true`. Um agente testando outro
-  não deveria fechar um acordo de verdade por engano. Passe `dry_run=false` quando quiser o efeito.
+  `dry_run: true`, e as tools do agente recebem `X-Kuro-Dry-Run: true`. Nas toolkits prontas
+  (Slack, Jira, e-mail...), o próprio Kuro não roda as funções que enviam ou criam. Um agente
+  testando outro não deveria fechar um acordo de verdade por engano. Passe `dry_run=false` quando
+  quiser o efeito.
 - **Chave de modelo não passa pelo MCP.** Cadastrar ou trocar uma credencial colocaria a chave no
   contexto do modelo. Use `kuro credentials add` ou o console; `credentials_list` só lista.
 - **A sessão de chat é explícita.** A CLI guarda a conversa por agente em `~/.kuro/sessions.json`;
