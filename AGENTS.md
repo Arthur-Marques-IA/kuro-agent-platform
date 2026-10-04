@@ -23,7 +23,8 @@ tipadas, e o guia está em `docs/mcp.md` (`kuro mcp-config`, no servidor, imprim
 para conectá-lo). Diferenças que importam:
 - `chat`, `analyze`, `tool_invoke` e `eval` rodam em `dry_run` por padrão;
 - `chat` não reaproveita a sessão da CLI, então repasse o `session_id` que ele devolve;
-- remover, restaurar e promover pedem confirmação à pessoa. Não tente contornar: se o
+- remover, restaurar, promover e editar um agente em produção (execuções reais nos últimos 7
+  dias) pedem confirmação à pessoa — edite um draft. Não tente contornar: se o
   cliente não suportar, a tool devolve o comando da CLI para a pessoa rodar.
 
 ## Convenções

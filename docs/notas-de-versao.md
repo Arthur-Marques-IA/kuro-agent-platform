@@ -65,6 +65,9 @@ timeout menor que isso, ajuste um dos dois, ou use `QUEUE_MAX_WAIT_SECONDS=0` pa
   - Quando a ação falha, a resposta é do servidor: avisa que não deu certo e mostra a confirmação
     de novo, com os dados. Tentar outra vez exige um novo "sim" sobre os dados à vista. O erro
     técnico fica no trace e em `state.actions`, não no texto da conversa.
+- MCP: `agent_set` e `agent_apply` pedem confirmação ao usuário quando o agente está em produção
+  (execuções reais, fora de `dry_run`, nos últimos 7 dias). Draft, agente novo e `dry_run=true`
+  seguem sem pergunta. Na CLI nada muda.
 - `kuro mcp-config`: rodado no servidor (`docker compose exec agent-service kuro mcp-config --url
   https://... --show-key`), imprime o `claude mcp add ...` e o `.mcp.json` prontos para conectar o
   servidor MCP. Eles instalam o `kuro-mcp` com `uvx` direto do GitHub, sem clone na máquina de quem opera.

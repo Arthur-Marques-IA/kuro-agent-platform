@@ -102,9 +102,15 @@ Não existe parâmetro que o modelo possa preencher para se autoconfirmar. Se o 
 suporta elicitation, a tool falha e devolve o comando equivalente da CLI (ex.:
 `kuro agents delete suporte --yes`), para a própria pessoa rodar no terminal.
 
-Editar um agente (`agent_set`, `agent_apply`), uma tool (`tool_apply`) ou as regras de feedback não
-pede confirmação, como na CLI: tem histórico e versão para voltar. Isso inclui editar direto o
-agente de produção, sem passar pelo draft. Essas tools levam `destructiveHint`, porque sobrescrevem
+**Editar um agente em produção também pede confirmação.** `agent_set` e `agent_apply` perguntam à
+pessoa quando o agente atendeu execuções reais (fora de `dry_run`) nos últimos 7 dias: o agente
+de IA não edita produção sozinho, e a pergunta lembra do caminho seguro, que é editar um draft e
+promover depois do eval. Draft, agente novo e `dry_run=true` (só validar) seguem sem pergunta,
+então o fluxo draft → eval → promote não fica mais lento. Na CLI não muda nada: lá quem roda o
+comando já é a pessoa.
+
+Editar uma tool (`tool_apply`) ou as regras de feedback não pede confirmação: tem histórico e
+versão para voltar. As tools que sobrescrevem levam `destructiveHint`, porque sobrescrevem
 o que existia. As de leitura levam `readOnlyHint`, e só `run_score` e `collection_add`, que apenas
 acrescentam, ficam sem nenhuma das duas. É por essas anotações que o cliente MCP decide o que
 pede permissão antes de chamar.

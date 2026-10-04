@@ -90,6 +90,8 @@ async def test_lists_tools_with_annotations_and_hides_confirmation_from_schema(a
     # Não existe parâmetro que o modelo preencha para se autoconfirmar.
     assert set(tools["agent_delete"].input_schema["properties"]) == {"agent_type"}
     assert set(tools["agent_promote"].input_schema["properties"]) == {"source", "to"}
+    assert set(tools["agent_set"].input_schema["properties"]) == {"agent_type", "changes", "dry_run"}
+    assert set(tools["agent_apply"].input_schema["properties"]) == {"definition", "dry_run"}
     assert tools["agents_list"].annotations.read_only_hint is True
     # `destructive_hint=False` significa "só acrescenta": quem sobrescreve ou apaga é True.
     for name in ("agent_delete", "agent_promote", "agent_set", "agent_apply", "tool_apply", "feedback_send"):
@@ -279,7 +281,80 @@ async def test_apply_rejects_non_editable_field(api):
     async with McpClient(server) as mcp:
         result = await mcp.call_tool("agent_apply", {"definition": {"agent_type": "x", "prompt_version": 3}})
     assert result.is_error and "prompt_version" in _text(result)
-    assert calls == []
+    assert _mutations(calls) == []
+
+
+# -- editar agente em produção pede confirmação ----------------------------------
+
+
+def _em_producao(routes, ultima="2026-10-03T12:00:00Z"):
+    routes[("GET", "/observability/runs")] = httpx.Response(
+        200, json={"items": [{"run_id": "r1", "started_at": ultima}] if ultima else [], "next_cursor": None}
+    )
+    routes[("PUT", "/agents/suporte")] = httpx.Response(200, json={**AGENT, "num_history_runs": 5})
+
+
+@MODES
+async def test_set_em_producao_pede_confirmacao(api, mode):
+    server, routes, calls = api
+    _em_producao(routes)
+    callback, asked = _answer("accept")
+    async with McpClient(server, mode=mode, elicitation_callback=callback) as mcp:
+        result = await mcp.call_tool("agent_set", {"agent_type": "suporte", "changes": {"num_history_runs": 5}})
+    assert not result.is_error, _text(result)
+    assert len(asked) == 1 and "produção" in asked[0] and "draft" in asked[0]
+    assert _mutations(calls) == ["PUT /agents/suporte"]
+    # a consulta só olha execuções reais, dos últimos dias
+    consulta = next(r for r in calls if r.url.path == "/observability/runs")
+    assert consulta.url.params["include_dry_run"] == "false" and "since" in consulta.url.params
+
+
+@MODES
+async def test_set_em_producao_recusado_nao_grava(api, mode):
+    server, routes, calls = api
+    _em_producao(routes)
+    callback, _ = _answer("accept", confirmar=False)
+    async with McpClient(server, mode=mode, elicitation_callback=callback) as mcp:
+        result = await mcp.call_tool("agent_set", {"agent_type": "suporte", "changes": {"num_history_runs": 5}})
+    assert _data(result) == {"cancelled": True}
+    assert _mutations(calls) == []
+
+
+@MODES
+async def test_draft_sem_uso_real_nao_pergunta(api, mode):
+    server, routes, calls = api
+    _em_producao(routes, ultima=None)
+    callback, asked = _answer("accept")
+    async with McpClient(server, mode=mode, elicitation_callback=callback) as mcp:
+        result = await mcp.call_tool("agent_set", {"agent_type": "suporte", "changes": {"num_history_runs": 5}})
+    assert not result.is_error and asked == []
+    assert _mutations(calls) == ["PUT /agents/suporte"]
+
+
+async def test_producao_sem_elicitation_devolve_o_comando_da_cli(api):
+    server, routes, calls = api
+    _em_producao(routes)
+    async with McpClient(server) as mcp:
+        try:
+            result = await mcp.call_tool("agent_set", {"agent_type": "suporte", "changes": {"num_history_runs": 5}})
+            failure = _text(result) if result.is_error else None
+        except Exception as exc:  # noqa: BLE001
+            failure = str(exc)
+    assert failure and "kuro agents set suporte" in failure
+    assert _mutations(calls) == []
+
+
+async def test_apply_em_producao_pede_confirmacao_e_dry_run_nao(api):
+    server, routes, calls = api
+    _em_producao(routes)
+    routes[("GET", "/agents")] = httpx.Response(200, json=[AGENT])
+    callback, asked = _answer("accept")
+    definicao = {"agent_type": "suporte", "name": "Suporte", "num_history_runs": 5}
+    async with McpClient(server, elicitation_callback=callback) as mcp:
+        await mcp.call_tool("agent_apply", {"definition": definicao, "dry_run": True})
+        assert asked == []  # só validar não pergunta
+        await mcp.call_tool("agent_apply", {"definition": definicao})
+    assert len(asked) == 1
 
 
 async def test_unauthorized_points_to_api_key(api):

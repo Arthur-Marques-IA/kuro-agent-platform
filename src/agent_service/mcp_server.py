@@ -24,6 +24,7 @@ da CLI): `chat` devolve o `session_id`, e quem chama o repassa para continuar.
 import json
 import os
 import uuid
+from datetime import UTC, datetime, timedelta
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -77,6 +78,15 @@ class NadaAFazer(Confirmacao):
     """O resolver viu que a ação não mudaria nada e não perguntou. Não autoriza
     escrita: se o estado mudou até o corpo da tool rodar, ela recusa em vez de
     gravar sem ninguém ter confirmado."""
+
+
+class Dispensada(Confirmacao):
+    """O resolver viu que não precisava perguntar (agente novo, sem uso real, ou só
+    validação). Diferente de `NadaAFazer`, autoriza a escrita."""
+
+
+PRODUCTION_WINDOW_DAYS = 7
+"""Atendeu execuções reais (sem `dry_run`) nesse período = está em produção."""
 
 
 def _ask(ctx: Context, cli: str, message: str) -> Elicit[Confirmacao]:
@@ -224,12 +234,55 @@ def build_server(client: Client) -> MCPServer:
         definition = _call(client.get_agent, agent_type)
         return agent_editable(definition) if editable else definition
 
+    def _in_production(agent_type: str) -> str | None:
+        """Quando foi a última execução real (sem `dry_run`) nos últimos dias, ou `None`."""
+        since = (datetime.now(UTC) - timedelta(days=PRODUCTION_WINDOW_DAYS)).isoformat()
+        try:
+            page = client.list_runs(agent_type=agent_type, include_dry_run=False, since=since, limit=1)
+        except ApiError:
+            return None
+        except ServiceUnavailable as exc:
+            raise _tool_error(exc) from exc
+        items = page.get("items") or []
+        return str(items[0].get("started_at"))[:16].replace("T", " ") if items else None
+
+    def _confirm_production_edit(
+        ctx: Context, agent_type: str, dry_run: bool, cli: str
+    ) -> Elicit[Confirmacao] | Confirmacao:
+        if dry_run or not agent_type:
+            return Dispensada()
+        last = _in_production(agent_type)
+        if last is None:
+            return Dispensada()  # draft, agente novo ou sem uso real: o fluxo segue sem pergunta
+        return _ask(
+            ctx,
+            cli,
+            f"O agente {agent_type!r} está em produção: atendeu execuções reais nos últimos "
+            f"{PRODUCTION_WINDOW_DAYS} dias (a última em {last} UTC). A edição vale na próxima mensagem. "
+            "O caminho seguro é editar um draft e promover depois do eval. Editar direto mesmo assim?",
+        )
+
+    def _confirm_apply(definition: dict[str, Any], ctx: Context, dry_run: bool = False) -> Elicit[Confirmacao] | Confirmacao:
+        agent_type = definition.get("agent_type") if isinstance(definition, dict) else None
+        if not isinstance(agent_type, str):
+            return Dispensada()  # o corpo da tool recusa a definição inválida
+        return _confirm_production_edit(ctx, agent_type, dry_run, f"kuro agents apply -f {agent_type}.json")
+
+    def _confirm_set(agent_type: str, ctx: Context, dry_run: bool = False) -> Elicit[Confirmacao] | Confirmacao:
+        return _confirm_production_edit(ctx, agent_type, dry_run, f"kuro agents set {agent_type} campo=valor")
+
     @server.tool(annotations=OVERWRITE)
-    def agent_apply(definition: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
+    def agent_apply(
+        definition: dict[str, Any], ok: Annotated[Confirmacao, Resolve(_confirm_apply)], dry_run: bool = False
+    ) -> dict[str, Any]:
         """Cria o agente se não existir; senão envia só os campos que mudaram. Mesmo formato
         de `kuro agents apply`: agent_type, name, instructions, tools, model_provider,
         model_id, kind, response_schema, dependency_fields... `dry_run=true` valida no
-        servidor sem gravar. Mudar `instructions` gera uma versão nova do prompt."""
+        servidor sem gravar. Mudar `instructions` gera uma versão nova do prompt.
+        Editar um agente em produção (com execuções reais nos últimos dias) pede
+        confirmação ao usuário — prefira editar um draft e promover."""
+        if not isinstance(ok, Dispensada) and not ok.confirmar:
+            return {"cancelled": True}
         agent_type = definition.get("agent_type")
         if not isinstance(agent_type, str) or not agent_type:
             raise ToolError("a definição precisa do campo agent_type")
@@ -245,9 +298,14 @@ def build_server(client: Client) -> MCPServer:
         return {"action": "update", "dry_run": dry_run, "changed": sorted(changes), "agent": agent}
 
     @server.tool(annotations=OVERWRITE)
-    def agent_set(agent_type: str, changes: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
+    def agent_set(
+        agent_type: str, changes: dict[str, Any], ok: Annotated[Confirmacao, Resolve(_confirm_set)], dry_run: bool = False
+    ) -> dict[str, Any]:
         """Altera só os campos informados, ex.: {"num_history_runs": 5, "tools": ["calculator"]}.
-        `instructions` aceita lista de strings (ou uma string só)."""
+        `instructions` aceita lista de strings (ou uma string só). Num agente em produção
+        (execuções reais nos últimos dias) pede confirmação ao usuário."""
+        if not isinstance(ok, Dispensada) and not ok.confirmar:
+            return {"cancelled": True}
         _fields_only(changes, AGENT_FIELDS)
         if isinstance(changes.get("instructions"), str):
             changes = {**changes, "instructions": [changes["instructions"]]}
