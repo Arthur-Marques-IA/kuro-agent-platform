@@ -29,6 +29,7 @@ from agent_service.cli.common import (
     parse_json_object,
     parse_pairs,
     print_json,
+    read_stdin,
     state,
 )
 
@@ -252,7 +253,7 @@ def run_chat(
 ) -> None:
     definition = call(st, st.client.get_agent, agent_type)
     if message is None and not stdin_is_tty():
-        message = sys.stdin.read().strip()
+        message = read_stdin().strip()
         if not message:
             fail(st, "mensagem vazia: use -m ou envie texto por stdin", EXIT_USAGE)
 

@@ -38,7 +38,7 @@ import typer
 from rich.table import Table
 
 from agent_service.cli.client import ApiError, Client, ServiceUnavailable
-from agent_service.cli.common import EXIT_FAILED, EXIT_USAGE, console, emit, fail, fail_from, state
+from agent_service.cli.common import BOM, EXIT_FAILED, EXIT_USAGE, console, emit, fail, fail_from, state
 from agent_service.evaluation import check_rules, compare, flatten, summarize, validate_rules
 
 
@@ -51,7 +51,7 @@ class EvalInputError(ValueError):
 
 def parse_cases(text: str, source: str) -> list[dict[str, Any]]:
     cases = []
-    for number, line in enumerate(text.splitlines(), start=1):
+    for number, line in enumerate(text.lstrip(BOM).splitlines(), start=1):
         if not line.strip():
             continue
         try:
@@ -235,7 +235,7 @@ def eval_command(
         cases = parse_cases(text, file)
         if rules_file:
             try:
-                raw_rules = json.loads(open(rules_file, encoding="utf-8").read())
+                raw_rules = json.loads(open(rules_file, encoding="utf-8").read().lstrip(BOM))
             except (OSError, ValueError) as exc:
                 raise EvalInputError(f"não consegui ler as regras de {rules_file}: {exc}") from exc
             rules = check_rules_spec(raw_rules)

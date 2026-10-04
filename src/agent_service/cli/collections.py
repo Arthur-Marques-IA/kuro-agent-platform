@@ -11,7 +11,7 @@ from typing import Any
 import typer
 from rich.table import Table
 
-from agent_service.cli.common import EXIT_USAGE, call, console, emit, fail, parse_pairs, state
+from agent_service.cli.common import EXIT_USAGE, call, console, emit, fail, parse_pairs, read_stdin, state
 
 app = typer.Typer(help="Collections de documentos (RAG): listar, criar, alimentar, buscar.")
 
@@ -189,7 +189,7 @@ def add_document(
         emit(st, result, lambda r: console.print(f"[green]✓[/] {caminho.name} indexado ({r['content_id']})"))
         return
     if text is None:
-        text = "" if sys.stdin.isatty() else sys.stdin.read()
+        text = "" if sys.stdin.isatty() else read_stdin()
         if not text.strip():
             fail(st, "sem texto: use --text ou envie o conteúdo por stdin", EXIT_USAGE)
     result = call(st, st.client.add_document, name, {"text": text, "name": title})

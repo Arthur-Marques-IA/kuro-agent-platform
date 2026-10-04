@@ -427,6 +427,27 @@ def test_tools_apply_creates_then_updates(api, tmp_path):
     assert calls[-1].method == "PUT" and json.loads(calls[-1].content) == {"label": "Calculadora"}
 
 
+def test_apply_aceita_json_com_bom_do_powershell(api, tmp_path):
+    """`Get-Content x.json | kuro tools apply -f -` no PowerShell 5.1 chega com BOM."""
+    routes, calls = api
+    routes[("GET", "/tools")] = httpx.Response(200, json=[])
+    routes[("POST", "/tools")] = httpx.Response(201, json=TOOL)
+    body = json.dumps({"tool_name": "calc", "kind": "api", "label": "Calculadora"})
+    assert _run("tools", "apply", "-f", "-", input="﻿" + body).exit_code == 0
+    spec = tmp_path / "tool.json"
+    spec.write_text(body, encoding="utf-8-sig")
+    assert _run("tools", "apply", "-f", str(spec)).exit_code == 0
+    assert [c.method for c in calls if c.method == "POST"] == ["POST", "POST"]
+
+
+def test_texto_por_stdin_chega_sem_bom(api):
+    """Senão o BOM ia parar no documento indexado (e numa chave de API lida por stdin)."""
+    routes, calls = api
+    routes[("POST", "/collections/manuais/documents")] = httpx.Response(200, json={"content_id": "c1"})
+    assert _run("collections", "add", "manuais", input="﻿Prazo de garantia: 12 meses").exit_code == 0
+    assert json.loads(calls[-1].content)["text"] == "Prazo de garantia: 12 meses"
+
+
 def test_tools_apply_new_without_kind_is_usage_error(api, tmp_path):
     routes, _ = api
     spec = tmp_path / "tool.json"

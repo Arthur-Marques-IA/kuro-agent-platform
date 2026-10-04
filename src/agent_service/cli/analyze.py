@@ -3,13 +3,12 @@ one-shot — sem sessão, devolve o objeto estruturado (response_schema).
 """
 
 import json
-import sys
 from typing import Any
 
 import typer
 
 from agent_service.cli.chat import read_attachments, resolve_dependencies, stdin_is_tty
-from agent_service.cli.common import EXIT_USAGE, call, console, emit, fail, parse_pairs, state
+from agent_service.cli.common import EXIT_USAGE, call, console, emit, fail, parse_pairs, read_stdin, state
 
 DEFAULT_ATTACHMENT_PROMPT = "Analise o(s) anexo(s)."
 
@@ -48,11 +47,11 @@ def analyze(
         document = text
     elif file:
         try:
-            document = open(file, encoding="utf-8").read()
+            document = open(file, encoding="utf-8-sig").read()
         except OSError as exc:
             fail(st, f"não consegui ler {file}: {exc}", EXIT_USAGE)
     elif not stdin_is_tty():
-        document = sys.stdin.read()
+        document = read_stdin()
     elif not attachments:
         fail(st, "sem documento: use --text/-m, --file/-f, --attach/-a ou envie por stdin", EXIT_USAGE)
 

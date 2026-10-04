@@ -31,6 +31,7 @@ from agent_service.cli.common import (
     err_console,
     fail,
     print_json,
+    read_stdin,
     state,
 )
 from agent_service.cli.connection import DEFAULT_URL
@@ -371,7 +372,7 @@ def _read_api_key(st: State, *, from_env: str | None, from_stdin: bool, prompt: 
             fail(st, f"a variável de ambiente {from_env} está vazia", EXIT_USAGE)
         return value.strip()
     if from_stdin or not st.interactive:
-        value = "" if sys.stdin.isatty() else sys.stdin.read()
+        value = "" if sys.stdin.isatty() else read_stdin()
         if not value.strip():
             fail(
                 st,

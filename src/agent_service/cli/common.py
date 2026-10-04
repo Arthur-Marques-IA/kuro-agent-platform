@@ -106,9 +106,19 @@ def parse_pairs(st: State, pairs: list[str], option: str) -> dict[str, Any]:
     return result
 
 
+BOM = "\N{ZERO WIDTH NO-BREAK SPACE}"
+"""O PowerShell 5.1 põe isto no início do que manda por pipe e do que grava com `Out-File`."""
+
+
+def read_stdin() -> str:
+    """Todo texto vindo de stdin passa por aqui: sem o BOM, que viraria parte de uma
+    chave de API, de um documento indexado ou da mensagem."""
+    return sys.stdin.read().lstrip(BOM)
+
+
 def parse_json_object(st: State, raw: str, option: str) -> dict[str, Any]:
     try:
-        value = json.loads(raw)
+        value = json.loads(raw.lstrip(BOM))
     except ValueError as exc:
         fail(st, f"{option} não é JSON válido: {exc}", EXIT_USAGE)
     if not isinstance(value, dict):
@@ -119,7 +129,7 @@ def parse_json_object(st: State, raw: str, option: str) -> dict[str, Any]:
 def read_json_file(st: State, path: str) -> dict[str, Any]:
     """Lê um objeto JSON de um arquivo, ou de stdin com `-`."""
     try:
-        raw = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+        raw = read_stdin() if path == "-" else Path(path).read_text(encoding="utf-8")
     except OSError as exc:
         fail(st, f"não consegui ler {path}: {exc}", EXIT_USAGE)
     return parse_json_object(st, raw, path)
