@@ -35,6 +35,7 @@ from agent_service.agents.procedure_runner import (
 from agent_service.agents.registry import UnknownAgentTypeError, get_agent_with_definition, list_agent_types
 from agent_service.config import get_settings
 from agent_service.documents.collections import EmbedderError
+from agent_service.models.errors import friendly_model_error
 from agent_service.observability.tracing import RUN_FAILED, RunContext, RunTimeoutError, traced_run_events
 from agent_service.tools.registry import ToolBuildError, UnknownToolError
 
@@ -307,7 +308,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
                 elif event.event == RunEvent.run_completed.value and isinstance(event.content, str):
                     final_content = event.content
                 elif event.event == RunEvent.run_error.value:
-                    raise HTTPException(status_code=502, detail=event.content or RUN_FAILED)
+                    raise HTTPException(status_code=502, detail=friendly_model_error(event.content or RUN_FAILED))
         except RunTimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
 
@@ -442,7 +443,7 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
                 if event.event == RunEvent.run_completed.value:
                     final_content = event.content
                 elif event.event == RunEvent.run_error.value:
-                    raise HTTPException(status_code=502, detail=event.content or RUN_FAILED)
+                    raise HTTPException(status_code=502, detail=friendly_model_error(event.content or RUN_FAILED))
         except RunTimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
 
@@ -518,7 +519,7 @@ async def chat_stream(request: ChatRequest) -> EventSourceResponse:
                     elif event.event == RunEvent.run_completed.value and event.metrics:
                         yield {"event": "usage", "data": json.dumps(event.metrics.to_dict())}
                     elif event.event == RunEvent.run_error.value:
-                        yield {"event": "error", "data": json.dumps({"message": event.content or RUN_FAILED})}
+                        yield {"event": "error", "data": json.dumps({"message": friendly_model_error(event.content or RUN_FAILED)})}
         except HTTPException as exc:  # sem vaga: o status já saiu (200), então vira evento
             yield {"event": "error", "data": json.dumps({"message": exc.detail, "status": exc.status_code})}
         except RunTimeoutError as exc:

@@ -42,6 +42,7 @@ from agent_service.agents import procedural, procedure_store
 from agent_service.agents.base import build_agent
 from agent_service.agents.procedure_store import ProcedureConflictError
 from agent_service.models.crypto import EncryptionNotConfiguredError
+from agent_service.models.errors import friendly_model_error
 from agent_service.models.provider import ProviderNotConfiguredError
 from agent_service.observability.run_store import SpanRecord
 from agent_service.observability.tracing import (
@@ -134,7 +135,9 @@ async def extract(
     agent = await run_in_threadpool(_extractor_agent, definition)
     output = await agent.arun(prompt, stream=False)
     if str(getattr(output, "status", "")).lower().endswith("error"):
-        raise ProcedureModelError(f"A extração falhou no modelo: {getattr(output, 'content', None) or RUN_FAILED}")
+        raise ProcedureModelError(
+            friendly_model_error(getattr(output, "content", None) or RUN_FAILED, prefix="A extração falhou no modelo")
+        )
     content = getattr(output, "content", None)
     extracted = content.model_dump() if isinstance(content, BaseModel) else {}
     spans = _model_spans(getattr(output, "metrics", None), started) or [
@@ -337,7 +340,11 @@ async def run_procedural_turn(agent: Agent, run: RunContext) -> AsyncIterator[tu
         except (RunTimeoutError, ProviderNotConfiguredError, EncryptionNotConfiguredError):
             raise
         except Exception as exc:  # noqa: BLE001 - falha do provedor: o run fica registrado como erro
-            message = exc.args[0] if isinstance(exc, ProcedureModelError) else f"A extração falhou no modelo: {exc}"
+            message = (
+                exc.args[0]
+                if isinstance(exc, ProcedureModelError)
+                else friendly_model_error(exc, prefix="A extração falhou no modelo")
+            )
             await run_in_threadpool(
                 lambda: record_run_without_model(run, None, status="error", status_message=message)
             )
@@ -432,7 +439,7 @@ async def run_procedural_turn(agent: Agent, run: RunContext) -> AsyncIterator[tu
                     if event.metrics:
                         yield "usage", event.metrics.to_dict()
                 elif event.event == RunEvent.run_error.value:
-                    yield "error", event.content or RUN_FAILED
+                    yield "error", friendly_model_error(event.content or RUN_FAILED)
         reply = final if final is not None else "".join(chunks)
         if final is not None and not chunks:
             yield "message", final

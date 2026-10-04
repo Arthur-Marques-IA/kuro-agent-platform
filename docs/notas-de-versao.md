@@ -74,6 +74,10 @@ timeout menor que isso, ajuste um dos dois, ou use `QUEUE_MAX_WAIT_SECONDS=0` pa
 
 ### Corrigido
 
+- Falha do provedor do modelo (ex.: Gemini 503) chegava no `detail` do 502 e no evento `error` do
+  stream como o JSON inteiro da resposta dele, em várias linhas. Agora é uma frase: "Falha no modelo: o
+  provedor respondeu 503 (UNAVAILABLE): ... — costuma ser passageiro, tente de novo em instantes". O
+  original continua no trace do run.
 - O título de uma conversa com `dependencies` mostrava os dados do cliente: sem nome definido, o
   AgentOS usa a primeira mensagem como título, e o Agno junta a ela o bloco
   `<additional context>{...}` (CPF, nome...). O console, a CLI (`kuro sessions list`) e o MCP
