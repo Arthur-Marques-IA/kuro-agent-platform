@@ -16,12 +16,16 @@ ENV UV_COMPILE_BYTECODE=1 \
 # incluir o exportador do Langfuse. Vazio = imagem enxuta.
 ARG KURO_EXTRAS=""
 
-# Instala dependências primeiro (cache separado do código-fonte)
+# Instala dependências primeiro (cache separado do código-fonte). O cache do uv
+# fica num mount do BuildKit: acelera o próximo build sem entrar na imagem, onde
+# ocupava o mesmo tanto que os pacotes instalados.
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-install-project --no-dev $KURO_EXTRAS
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev $KURO_EXTRAS
 
 COPY src ./src
-RUN uv sync --frozen --no-dev $KURO_EXTRAS
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev $KURO_EXTRAS
 
 ENV PATH="/app/.venv/bin:$PATH"
 
