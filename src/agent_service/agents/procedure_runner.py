@@ -348,6 +348,7 @@ async def run_procedural_turn(agent: Agent, run: RunContext) -> AsyncIterator[tu
 
     # 4. ações: reservar, executar e gravar antes de responder
     action_error: str | None = None
+    failed_action: str | None = None
     while (
         not finished
         and (index := procedural.current_index(stages, state)) is not None
@@ -370,6 +371,7 @@ async def run_procedural_turn(agent: Agent, run: RunContext) -> AsyncIterator[tu
             )
             row = await _save(row, state, stages)
             action_error = state["actions"][stage["id"]]["error"]
+            failed_action = stage["id"]
             break
         # O prazo antes da reserva: estourar depois dela deixaria a ação `running` sem dono.
         remaining = deadline.remaining("ação")
@@ -380,6 +382,7 @@ async def run_procedural_turn(agent: Agent, run: RunContext) -> AsyncIterator[tu
         spans.append(span)
         if not outcome.get("ok"):
             action_error = state["actions"][stage["id"]]["error"]
+            failed_action = stage["id"]
             break
 
     view = procedural.state_view(stages, state, finished=finished)
@@ -392,8 +395,15 @@ async def run_procedural_turn(agent: Agent, run: RunContext) -> AsyncIterator[tu
     # 5. resposta
     index = None if finished else procedural.current_index(stages, state)
     reply: str
-    if index is not None and stages[index]["type"] == "confirm" and not state.get("declined") and not action_error:
-        reply = procedural.confirmation_text(stages, state, index)
+    at_confirm = index is not None and stages[index]["type"] == "confirm"
+    if at_confirm and (failed_action or not state.get("declined")):
+        # Na confirmação o texto é do servidor; depois de uma falha, também: o aviso
+        # e os dados de novo, para a pessoa ver o que vai ser repetido.
+        reply = (
+            procedural.failure_text(stages, state, failed_action, index)
+            if failed_action
+            else procedural.confirmation_text(stages, state, index)
+        )
         await run_in_threadpool(record_run_without_model, turn, reply)
         try:
             await run_in_threadpool(_append_to_session, agent, turn, reply)

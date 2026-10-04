@@ -417,6 +417,22 @@ def confirmation_text(stages: list[dict[str, Any]], state: dict[str, Any], index
     return f"{head}\n\n" + "\n".join(lines) + "\n\nEstá tudo certo? Responda sim para confirmar ou diga o que corrigir."
 
 
+def failure_text(stages: list[dict[str, Any]], state: dict[str, Any], action_id: str, confirm_index: int) -> str:
+    """Depois de uma ação que falhou: o aviso e a confirmação de novo, sem modelo.
+
+    Tentar outra vez é repetir um efeito colateral, então a pessoa vê os dados antes —
+    um "tenta de novo" sobre uma resposta livre do modelo repetiria a ação às cegas.
+    O erro técnico fica no trace e em `state.actions`, não na conversa."""
+    stage = next(s for s in stages if s["id"] == action_id)
+    error = (state["actions"].get(action_id) or {}).get("error") or ""
+    what = stage["goal"].strip().rstrip(".").lower() if stage["goal"] else "concluir a ação"
+    if "tempo limite" in error or "interrompida" in error:
+        head = f"Não tive confirmação de que deu certo ({what}). Antes de tentar de novo, confira os dados."
+    else:
+        head = f"Não consegui {what} agora: o sistema não respondeu como esperado. Para tentar de novo, confira os dados."
+    return f"{head}\n\n{confirmation_text(stages, state, confirm_index)}"
+
+
 def reply_context(
     stages: list[dict[str, Any]],
     state: dict[str, Any],

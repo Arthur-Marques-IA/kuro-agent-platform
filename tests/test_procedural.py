@@ -158,6 +158,16 @@ def test_confirmacao_e_montada_dos_dados(stages):
     assert "- CPF: 12345678901" in texto and "- Categoria: tv" in texto
 
 
+def test_falha_da_acao_avisa_e_mostra_os_dados_de_novo(stages):
+    state, _ = apply_extraction(stages, _ate_a_confirmacao(stages), {"confirmacao": "sim"})
+    falhou = finish_action(stages, start_action(state, "abrir"), "abrir", {"ok": False, "error": "HTTP 500: {...}"})
+    texto = procedural.failure_text(stages, falhou, "abrir", 2)
+    assert texto.startswith("Não consegui") and "- CPF: 12345678901" in texto and "HTTP 500" not in texto
+    sem_resposta = finish_action(stages, start_action(state, "abrir"), "abrir",
+                                 {"ok": False, "error": "a ação passou do tempo limite — confira"})
+    assert procedural.failure_text(stages, sem_resposta, "abrir", 2).startswith("Não tive confirmação")
+
+
 def test_state_view(stages):
     view = state_view(stages, new_state(stages, {"cpf": "12345678901"}))
     assert view["stage"] == "identificacao" and view["stage_index"] == 0 and view["stages_total"] == 4
@@ -391,7 +401,10 @@ def test_acao_que_falha_nao_avanca_e_nao_repete_sozinha(agente, monkeypatch):
     r = _chat(agente, "sim", sessao="s-falha")
     assert len(chamadas) == 1
     assert r.state["stage"] == "confirmacao" and r.state["actions"]["abrir"]["status"] == "failed"
-    assert "acao_falhou" in modelo.contextos[-1]
+    # Depois da falha, o servidor avisa e mostra os dados de novo — sem o modelo redigir.
+    assert "Não consegui" in r.content and "- CPF: 12345678901" in r.content
+    assert "HTTP 500" not in r.content  # o erro técnico fica no trace, não na conversa
+    assert modelo.contextos == []
     modelo.responde()
     r = _chat(agente, "e aí?", sessao="s-falha")
     assert len(chamadas) == 1  # sem confirmar de novo, não tenta de novo
