@@ -33,6 +33,11 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
 
 ### Novo
 
+- **Gemini 3 em diante: sem `temperature`, `top_p` e `thinking_budget`.** O Google passou a
+  recusar esses campos nos modelos novos (`400 INVALID_ARGUMENT`). Em agentes `google` com modelo
+  Gemini 3+ (ou `-latest`) o Kuro deixa de enviá-los; o cadastro continua aceitando, então nada
+  quebra, mas o valor não tem efeito. Para controlar o raciocínio use `reasoning`
+  (`off`/`low`/`medium`/`high` → `thinking_level`). Gemini 2.x não muda.
 - **Gráfico dos Logs: volume e taxa de falha separados.** Na aba Volume, as barras empilham as
   falhas na base, junto ao eixo (antes ficavam no topo, um fio invisível num dia de muito volume),
   e um segundo gráfico, alinhado ao primeiro, mostra a taxa de falha e a de tool falhando de cada

@@ -101,6 +101,18 @@ def test_reasoning_validation_and_explicit_budget_wins():
     assert provider_kwargs("google", params, "gemini-2.5-flash") == {"thinking_budget": 0}
 
 
+def test_gemini3_drops_sampling_and_thinking_budget():
+    params = validate_model_params(
+        {"temperature": 0.3, "top_p": 0.9, "max_tokens": 512, "thinking_budget": 0, "reasoning": "high"}, "google"
+    )
+    assert provider_kwargs("google", params, "gemini-3.5-flash") == {"max_output_tokens": 512, "thinking_level": "high"}
+    assert provider_kwargs("google", params, "gemini-flash-latest") == {"max_output_tokens": 512, "thinking_level": "high"}
+    # Gemini 2.x segue aceitando os três
+    assert provider_kwargs("google", params, "gemini-2.5-flash") == {
+        "temperature": 0.3, "top_p": 0.9, "max_output_tokens": 512, "thinking_budget": 0,
+    }
+
+
 def test_memory_tool_success_is_not_shown_as_an_error():
     ok = SimpleNamespace(tool_name="update_user_memory", result="No response from model")
     other = SimpleNamespace(tool_name="consulta", result="No response from model")
