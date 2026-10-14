@@ -60,7 +60,9 @@ kuro --json agents delete suporte --yes
 kuro --json chat suporte -m "meu wifi caiu" -d cpf=12345678900
 kuro --json chat suporte -m "recomeçar" --new-session
 echo "mensagem longa" | kuro --json chat suporte
-# retorna {content, run_id, trace_id, session_id, usage, error}
+# retorna {content, run_id, trace_id, session_id, usage, error, sources}
+# `sources`: documentos da base que as buscas do run devolveram (título, source_url, content_id,
+# score, chunk_ids) — também no /chat, no /analyze e no evento `sources` do /chat/stream.
 kuro --json chat suporte -m "fecha o acordo" --dry-run   # teste: tools recebem X-Kuro-Dry-Run: true
 # `dry_run: true` no /chat e no /analyze (também `--dry-run` em analyze, eval e tools invoke):
 # as tools recebem o header e `dependencies.dry_run` (sem declarar em dependency_fields);

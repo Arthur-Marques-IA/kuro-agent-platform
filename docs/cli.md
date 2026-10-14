@@ -132,6 +132,9 @@ mesma conversa. Use `--new-session` para recomeçar. Com um agente procedural, o
 `[2/4 problema] faltando: descricao`, e `kuro agents procedures <agente> [sessão]` mostra o
 funil ou o estado de uma conversa.
 
+Com um agente que consulta uma base de conhecimento, o rodapé de `chat` e de `analyze` lista as
+fontes (`[1] Política de trocas — https://...  (0.91)`); com `--json`, elas vêm em `sources`.
+
 **Ensinar com feedback**
 
 ```bash

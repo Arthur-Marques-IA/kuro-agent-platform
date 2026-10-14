@@ -281,6 +281,45 @@ def test_feedback_without_saved_session_fails(api):
     assert result.exit_code == 2
 
 
+def test_chat_mostra_as_fontes_consultadas(api):
+    routes, calls = api
+    routes[("GET", "/agents/suporte")] = httpx.Response(200, json={**AGENT, "dependency_fields": []})
+    fontes = [
+        {"title": "Trocas", "source_url": "https://docs.ex.com/troca", "content_id": "pg-1", "score": 0.91,
+         "chunk_ids": ["c1"]},
+        {"title": "Manual de garantia", "source_url": None, "content_id": "doc-1", "score": 0.72, "chunk_ids": ["c3"]},
+        {"title": "Busca [beta]", "source_url": "https://ex.com/?filtro[]=1", "content_id": "pg-2", "score": None,
+         "chunk_ids": ["c7"]},
+    ]
+    routes[("POST", "/chat/stream")] = httpx.Response(
+        200,
+        content=_sse(("run", {"run_id": "r1"}), ("message", {"content": "12 meses"}),
+                     ("sources", {"sources": fontes}), ("done", {})),
+        headers={"content-type": "text/event-stream"},
+    )
+    humano = _run("chat", "suporte", "-m", "garantia?")
+    assert humano.exit_code == 0
+    assert "fontes:" in humano.stderr
+    assert "[1] Trocas — https://docs.ex.com/troca" in humano.stderr
+    assert "[2] Manual de garantia" in humano.stderr
+    assert "[3] Busca [beta] — https://ex.com/?filtro[]=1" in humano.stderr  # colchetes não viram markup
+
+    out = json.loads(_run("--json", "chat", "suporte", "-m", "garantia?").stdout)
+    assert out["sources"] == fontes
+
+
+def test_chat_sem_fontes_devolve_lista_vazia(api):
+    routes, _ = api
+    routes[("GET", "/agents/suporte")] = httpx.Response(200, json={**AGENT, "dependency_fields": []})
+    routes[("POST", "/chat/stream")] = httpx.Response(
+        200, content=_sse(("run", {"run_id": "r1"}), ("message", {"content": "oi"}), ("done", {})),
+        headers={"content-type": "text/event-stream"},
+    )
+    result = _run("chat", "suporte", "-m", "oi")
+    assert result.exit_code == 0 and "fontes:" not in result.stderr
+    assert json.loads(_run("--json", "chat", "suporte", "-m", "oi").stdout)["sources"] == []
+
+
 def test_feedback_uses_saved_chat_session(api):
     routes, calls = api
     routes[("GET", "/agents/suporte")] = httpx.Response(200, json={**AGENT, "dependency_fields": []})

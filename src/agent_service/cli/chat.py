@@ -153,6 +153,7 @@ def collect_stream(
         "usage": None,
         "error": None,
         "state": None,
+        "sources": [],
     }
     chunks: list[str] = []
     for event, data in client.chat_stream(body):
@@ -169,6 +170,8 @@ def collect_stream(
             result["error"] = data.get("message") or "falha na execução do agente"
         elif event == "state":  # só agente procedural: etapa, coletado, faltando
             result["state"] = data
+        elif event == "sources":  # documentos da base que as buscas do run devolveram
+            result["sources"] = data.get("sources") or []
     result["content"] = "".join(chunks)
     return result
 
@@ -186,7 +189,29 @@ def send(st: State, body: dict[str, Any], *, live: bool) -> dict[str, Any]:
     return result
 
 
+def sources_lines(sources: list[dict[str, Any]]) -> list[Any]:
+    """As fontes consultadas, uma por linha: título, URL (clicável) e score. Monta
+    `Text` em vez de markup: uma URL com colchetes quebraria a tag `[link=...]`."""
+    from rich.style import Style
+    from rich.text import Text
+
+    lines = []
+    for i, source in enumerate(sources, 1):
+        title = source.get("title") or source.get("document") or source.get("content_id") or "?"
+        line = Text(f"  [{i}] {title}")
+        if url := source.get("source_url"):
+            line.append(" — ").append(url, style=Style(link=url))
+        if source.get("score") is not None:
+            line.append(f" ({source['score']:.2f})", style="dim")
+        lines.append(line)
+    return lines
+
+
 def _footer(result: dict[str, Any]) -> None:
+    if result.get("sources"):
+        err_console.print("[dim]fontes:[/]", highlight=False)
+        for line in sources_lines(result["sources"]):
+            err_console.print(line, highlight=False)
     if result.get("state"):
         from agent_service.cli.agents import procedure_line
 

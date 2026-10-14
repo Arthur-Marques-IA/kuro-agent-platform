@@ -66,13 +66,40 @@ Resposta 200:
   "run_id": "5b1e…",
   "trace_id": "3f0c…",
   "agent_version": 7,
-  "config_hash": "62e6a369f9ea"
+  "config_hash": "62e6a369f9ea",
+  "sources": []
 }
 ```
 
 Guarde `run_id`, `agent_version` e `config_hash` junto com a decisão no seu banco. O `run_id` é o
 id da decisão na trilha de auditoria (decisão → validação → efeito), e
 `kuro runs show <run_id>` mostra tudo o que aconteceu naquela execução.
+
+### Fontes consultadas (`sources`)
+
+Um agente com `knowledge_collection` consulta a base durante o run. A resposta do `/chat` e do
+`/analyze` traz em `sources` os documentos que essas buscas devolveram — as citações da resposta.
+No `/chat/stream`, o mesmo campo chega no evento `sources` (`{"sources": [...]}`), logo antes do
+`done`, só quando o run terminou sem erro.
+
+```json
+"sources": [
+  {"title": "Política de trocas", "document": "docs.exemplo.com", "source_url": "https://docs.exemplo.com/trocas",
+   "content_id": "a1b2…", "collection": "manuais", "score": 0.91, "chunk_ids": ["c9…", "d4…"]},
+  {"title": "Manual de garantia", "document": "Manual de garantia", "source_url": null,
+   "content_id": "e5f6…", "collection": "manuais", "score": 0.72, "chunk_ids": ["7a…"]}
+]
+```
+
+- Um item por documento (ou página de site): os trechos do mesmo documento vêm juntos em
+  `chunk_ids`, mesmo que o modelo tenha buscado mais de uma vez. A ordem é do melhor `score` para o
+  pior.
+- `title` é o título da página num site e o nome do documento num arquivo. `source_url` só existe
+  quando o conteúdo veio de uma URL — é o link para mostrar ao usuário.
+- É o que o agente **leu**, não necessariamente o que ele citou no texto. Sem busca, `[]`; num
+  agente procedural, sempre `[]`.
+- O texto de cada trecho não vem na resposta: está no trace (`kuro runs show <run_id>`, span
+  `search_knowledge_base`, `metadata.references`).
 
 ## 4. Erros e fallback
 

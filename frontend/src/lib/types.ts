@@ -115,6 +115,19 @@ export interface ChatMessage {
   runId?: string;
   /** Anexos da mensagem do usuário — só nome e tipo, para mostrar o chip. */
   attachments?: AttachmentInfo[];
+  /** Documentos da base que as buscas do run devolveram (evento `sources` do stream). */
+  sources?: ChatSource[];
+}
+
+/** Uma fonte citada na resposta: um documento ou página da base, com os trechos usados. */
+export interface ChatSource {
+  title?: string | null;
+  document?: string | null;
+  source_url?: string | null;
+  content_id?: string | null;
+  collection?: string | null;
+  score?: number | null;
+  chunk_ids: string[];
 }
 
 /** O que se mostra de um anexo: nunca o conteúdo. */

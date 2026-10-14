@@ -143,3 +143,38 @@ def make_retriever(collection_name: str, knowledge: Knowledge) -> Callable[..., 
         return coro
 
     return retriever
+
+
+def sources_from(searches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """As fontes de um run, para a resposta da API: um item por documento (ou página).
+
+    `searches` são as buscas que o run fez (o `metadata.references` de cada span de
+    busca). Trechos do mesmo documento viram uma fonte só — a chave é o
+    `content_id`, depois a `source_url`, depois o nome —, com o melhor score e os
+    trechos usados na ordem em que apareceram. O texto dos trechos fica de fora:
+    está no trace (`/runs/{run_id}`)."""
+    by_key: dict[str, dict[str, Any]] = {}
+    for search in searches:
+        for hit in search.get("results") or []:
+            key = hit.get("content_id") or hit.get("source_url") or hit.get("document")
+            if not key:
+                continue
+            source = by_key.get(key)
+            if source is None:
+                source = by_key[key] = {
+                    "title": hit.get("page_title") or hit.get("document"),
+                    "document": hit.get("document"),
+                    "source_url": hit.get("source_url"),
+                    "content_id": hit.get("content_id"),
+                    "collection": search.get("collection"),
+                    "score": hit.get("score"),
+                    "chunk_ids": [],
+                }
+            score = hit.get("score")
+            if score is not None and (source["score"] is None or score > source["score"]):
+                source["score"] = score
+            chunk_id = hit.get("chunk_id")
+            if chunk_id and chunk_id not in source["chunk_ids"]:
+                source["chunk_ids"].append(chunk_id)
+    # Mais relevante primeiro; sem score (busca sem similaridade) vai para o fim.
+    return sorted(by_key.values(), key=lambda s: -s["score"] if s["score"] is not None else float("inf"))

@@ -38,6 +38,13 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
   `document`, `content_id`, `chunk_id`, `chunk`, `content` e, de sites, `source_url`/`page_title`).
   `GET /collections/{nome}/search` devolve esses mesmos campos ao lado de `content` e `metadata`.
   O que o modelo recebe não muda. Ver [o que o agente leu](conceitos.md#o-que-o-agente-leu).
+- **Fontes na resposta.** `/chat` e `/analyze` passam a devolver `sources`: um item por documento
+  ou página da base que as buscas do run devolveram, com `title`, `source_url`, `content_id`,
+  `collection`, o melhor `score` e os `chunk_ids`. No `/chat/stream`, chega o evento novo `sources`
+  antes do `done` — um cliente que ignora eventos desconhecidos não precisa mudar. `kuro chat`
+  e `kuro analyze` listam as fontes no rodapé, e o console mostra um chip por fonte abaixo da
+  resposta, com o link da página e o atalho para os trechos no trace. Ver
+  [fontes consultadas](integracao.md#fontes-consultadas-sources).
 - **Sites como fonte de uma collection.** `POST /collections/{nome}/sources` (`url`, `mode`
   `crawl`/`sitemap`/`page`, `max_pages`, `max_depth`, `include`, `exclude`, `format`, `refresh`)
   coleta o site em background (202), com a trava de egress das tools em cada salto, `robots.txt`

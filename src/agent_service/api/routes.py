@@ -35,6 +35,7 @@ from agent_service.agents.procedure_runner import (
 from agent_service.agents.registry import UnknownAgentTypeError, get_agent_with_definition, list_agent_types
 from agent_service.config import get_settings
 from agent_service.documents.collections import EmbedderError
+from agent_service.documents.retrieval import sources_from
 from agent_service.observability.tracing import RUN_FAILED, RunContext, RunTimeoutError, traced_run_events
 from agent_service.tools.registry import ToolBuildError, UnknownToolError
 
@@ -145,6 +146,25 @@ class ChatRequest(BaseModel):
         return value
 
 
+class Source(BaseModel):
+    """Um documento (ou página de site) da base de conhecimento que o agente
+    consultou no run — a citação da resposta. Os trechos do mesmo documento vêm
+    juntos; o texto de cada um está no trace (`GET /observability/runs/{run_id}`)."""
+
+    title: str | None = None
+    """O título da página (fonte de site) ou o nome do documento."""
+    document: str | None = None
+    source_url: str | None = None
+    """Só em fonte de site (ou documento que veio de uma URL)."""
+    content_id: str | None = None
+    """O documento na collection (`GET /collections/{nome}/docs`)."""
+    collection: str | None = None
+    score: float | None = None
+    """O melhor score entre os trechos deste documento (similaridade 0–1 ou o do reranker)."""
+    chunk_ids: list[str] = []
+    """Os trechos do documento que a busca devolveu, na ordem em que apareceram."""
+
+
 class ChatResponse(BaseModel):
     agent_type: str
     session_id: str
@@ -156,6 +176,10 @@ class ChatResponse(BaseModel):
     agent_version: int | None = None
     """Versão da configuração inteira que respondeu (`GET /agents/{t}/revisions`)."""
     config_hash: str | None = None
+    sources: list[Source] = []
+    """Os documentos da base de conhecimento que as buscas do run devolveram,
+    deduplicados e do mais relevante para o menos (`[]` sem busca). É o que o
+    agente leu, não necessariamente o que ele citou no texto."""
     state: dict[str, Any] | None = None
     """Só em agente `kind="procedural"`: a etapa atual, o que foi coletado, o que
     falta e, quando `done`, o `result`. Quem integra sabe quando acabou sem
@@ -319,6 +343,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         trace_id=run.trace_id,
         agent_version=run.agent_version,
         config_hash=run.config_hash,
+        sources=sources_from(run.knowledge_searches),
     )
 
 
@@ -387,6 +412,8 @@ class AnalyzeResponse(BaseModel):
     agent_version: int | None = None
     """Versão da configuração inteira que decidiu (`GET /agents/{t}/revisions`)."""
     config_hash: str | None = None
+    sources: list[Source] = []
+    """Ver `ChatResponse.sources`."""
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
@@ -466,6 +493,7 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         trace_id=run.trace_id,
         agent_version=run.agent_version,
         config_hash=run.config_hash,
+        sources=sources_from(run.knowledge_searches),
     )
 
 
@@ -478,7 +506,9 @@ async def chat_stream(request: ChatRequest) -> EventSourceResponse:
 
     Eventos: `run` ({run_id, trace_id}, antes de tudo), `message` ({content}, a
     cada trecho), `usage` (métricas do run), `error` ({message}), `state` (só em
-    agente procedural: o mesmo `state` do `/chat`, antes do `done`) e `done`.
+    agente procedural: o mesmo `state` do `/chat`, antes do `done`), `sources`
+    ({sources}: o mesmo `sources` do `/chat`, antes do `done`, só quando o run
+    terminou sem erro) e `done`.
     """
     agent, run = await run_in_threadpool(_resolve, request, "chat.stream")
     trace_id = run.trace_id
@@ -511,6 +541,7 @@ async def chat_stream(request: ChatRequest) -> EventSourceResponse:
                         yield item
                 yield {"event": "done", "data": "{}"}
                 return
+            failed = False
             async with _run_slot(), aclosing(traced_run_events(agent, run)) as events:
                 async for event in events:
                     if event.event == RunEvent.run_content.value and event.content:
@@ -518,7 +549,11 @@ async def chat_stream(request: ChatRequest) -> EventSourceResponse:
                     elif event.event == RunEvent.run_completed.value and event.metrics:
                         yield {"event": "usage", "data": json.dumps(event.metrics.to_dict())}
                     elif event.event == RunEvent.run_error.value:
+                        failed = True
                         yield {"event": "error", "data": json.dumps({"message": event.content or RUN_FAILED})}
+            if not failed:
+                sources = sources_from(run.knowledge_searches)
+                yield {"event": "sources", "data": json.dumps({"sources": sources}, default=str)}
         except HTTPException as exc:  # sem vaga: o status já saiu (200), então vira evento
             yield {"event": "error", "data": json.dumps({"message": exc.detail, "status": exc.status_code})}
         except RunTimeoutError as exc:

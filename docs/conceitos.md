@@ -308,6 +308,11 @@ No console, a span mostra os trechos em cartões ("Trechos consultados"), com a 
 para a origem; `collections search` devolve o mesmo formato. As referências ficam no trace store
 local (o padrão); com `TRACE_STORE_BACKEND=langfuse`, os spans vêm do Langfuse e não as trazem.
 
+A resposta do `/chat`, do `/chat/stream` (evento `sources`) e do `/analyze` traz o resumo disso em
+`sources`: um item por documento ou página consultada, com o título, a `source_url`, o
+`content_id`, o melhor `score` e os `chunk_ids` — as citações, como num chatbot de documentação.
+O texto dos trechos fica só no trace. Formato em [integração](integracao.md#fontes-consultadas-sources).
+
 ### Quem gera os vetores
 
 Cada collection escolhe o seu embedder **na criação**, entre `google` (padrão),
@@ -397,9 +402,9 @@ uv run kuro agents integrate suporte       # ou GET /agents/suporte/integration
 
 | Endpoint | Uso |
 |---|---|
-| `POST /chat` | resposta completa: `{content, run_id, trace_id, session_id}`, e `state` num agente procedural |
-| `POST /chat/stream` | SSE via POST. Eventos: `run` (ids), `message` (trechos), `usage` (tokens), `error`, `state` (só procedural), `done` |
-| `POST /analyze` | agente `analysis`, sem sessão: `{result: {...}}` |
+| `POST /chat` | resposta completa: `{content, run_id, trace_id, session_id, sources}`, e `state` num agente procedural |
+| `POST /chat/stream` | SSE via POST. Eventos: `run` (ids), `message` (trechos), `usage` (tokens), `error`, `state` (só procedural), `sources` (fontes consultadas), `done` |
+| `POST /analyze` | agente `analysis`, sem sessão: `{result: {...}, sources}` |
 | `POST /observability/scores` | feedback de um run: `{run_id, name: "feedback", value: 1, user_id}` |
 
 O streaming é POST porque a mensagem vai no corpo e não na URL. No navegador,

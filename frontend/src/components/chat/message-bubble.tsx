@@ -1,6 +1,7 @@
-import { CircleAlert, FileText, Film, Image as ImageIcon, Music, RotateCcw } from "lucide-react";
+import Link from "next/link";
+import { CircleAlert, FileText, Film, Globe, Image as ImageIcon, Music, RotateCcw, Waypoints } from "lucide-react";
 import { formatDuration, formatNumber } from "@/lib/format";
-import type { AttachmentInfo, ChatMessage } from "@/lib/types";
+import type { AttachmentInfo, ChatMessage, ChatSource } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
 import { AgentAvatar } from "@/components/agents/agent-avatar";
@@ -68,6 +69,64 @@ export function AttachmentChips({ attachments }: { attachments: AttachmentInfo[]
   );
 }
 
+/** As fontes da resposta: um chip por documento ou página consultada, do mais relevante
+ *  para o menos. Página de site abre a URL; o trace mostra o texto exato de cada trecho. */
+function SourceChips({ sources, runId }: { sources: ChatSource[]; runId?: string }) {
+  const chip =
+    "inline-flex max-w-64 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs";
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5" aria-label="Fontes consultadas">
+      <span className="text-xs text-muted-foreground">Fontes:</span>
+      {sources.map((source, index) => {
+        const label = source.title || source.document || source.content_id || "documento";
+        const Icon = source.source_url ? Globe : FileText;
+        const tooltip = [
+          label,
+          source.source_url,
+          source.collection && `base ${source.collection}`,
+          source.score != null && `score ${source.score.toFixed(2)}`,
+          `${source.chunk_ids.length} ${source.chunk_ids.length === 1 ? "trecho" : "trechos"}`,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        const body = (
+          <>
+            <span className="shrink-0 tabular-nums text-muted-foreground">{index + 1}</span>
+            <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{label}</span>
+          </>
+        );
+        const key = source.content_id ?? source.source_url ?? `${label}-${index}`;
+        return source.source_url ? (
+          <a
+            key={key}
+            href={source.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={tooltip}
+            className={`${chip} transition-colors hover:bg-muted`}
+          >
+            {body}
+          </a>
+        ) : (
+          <span key={key} title={tooltip} className={chip}>
+            {body}
+          </span>
+        );
+      })}
+      {runId && (
+        <Link
+          href={`/runs/${encodeURIComponent(runId)}`}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          title="Ver no trace o texto exato de cada trecho"
+        >
+          <Waypoints className="size-3.5" /> trechos no trace
+        </Link>
+      )}
+    </div>
+  );
+}
+
 export function MessageBubble({
   message,
   agentType,
@@ -111,6 +170,10 @@ export function MessageBubble({
         <p className="mb-1 text-[13px] font-medium">{agentName ?? agentType}</p>
 
         {message.pending && !message.content ? <TypingIndicator /> : message.content ? <MessageContent content={message.content} /> : null}
+
+        {!message.pending && message.sources && message.sources.length > 0 && (
+          <SourceChips sources={message.sources} runId={message.runId} />
+        )}
 
         {message.stopped && <p className="mt-1.5 text-xs text-muted-foreground">Resposta interrompida.</p>}
 

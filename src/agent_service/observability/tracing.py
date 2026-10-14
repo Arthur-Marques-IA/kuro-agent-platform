@@ -106,6 +106,13 @@ class RunContext:
     """Spans que aconteceram fora do run do Agno e fazem parte da mesma execução
     (a extração e a ação de um agente procedural), gravados junto no run."""
 
+    knowledge_searches: list[dict[str, Any]] = field(default_factory=list, compare=False, repr=False)
+    """As buscas na base de conhecimento que o run fez (o `metadata.references` de
+    cada span de busca), preenchidas enquanto os eventos passam. É uma lista do
+    próprio contexto — e não o ContextVar de `documents/retrieval.py` — porque com
+    o Langfuse o run roda noutra task, e a rota precisa ler isso no fim para
+    montar as `sources` da resposta."""
+
     @property
     def attachment_counts(self) -> dict[str, int]:
         """Quantos anexos de cada tipo — vai pro Langfuse no lugar do conteúdo."""
@@ -390,7 +397,10 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
                 record.status_message = event.content or RUN_FAILED
             elif event.event in (RunEvent.tool_call_completed.value, RunEvent.tool_call_error.value):
                 if getattr(event, "tool", None) is not None:
-                    record.spans.append(_tool_span(event, datetime.now(timezone.utc)))
+                    span = _tool_span(event, datetime.now(timezone.utc))
+                    record.spans.append(span)
+                    if "references" in span.metadata:
+                        run.knowledge_searches.append(span.metadata["references"])
             if record.model is None and isinstance(getattr(event, "model", None), str):
                 record.model = event.model or None
             yield event
