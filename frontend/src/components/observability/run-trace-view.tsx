@@ -21,7 +21,7 @@ import {
 import { cn } from "@/lib/cn";
 import { ApiError, errorMessage, requestJson } from "@/lib/http";
 import { formatCost, formatDateTime, formatMs, formatNumber } from "@/lib/format";
-import type { RunTrace, TraceScore, TraceSpan } from "@/lib/types";
+import type { RetrievalReferences, RunTrace, TraceScore, TraceSpan } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { CodeBlock } from "@/components/ui/code-block";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -29,6 +29,7 @@ import { Card } from "@/components/ui/card";
 import { CopyButton } from "@/components/ui/copy-button";
 import { EmptyState, RelativeTime, SectionHeading, Skeleton, Spinner } from "@/components/ui/primitives";
 import { AgentAvatar } from "@/components/agents/agent-avatar";
+import { ChunkList } from "@/components/knowledge/chunk-list";
 import { FeedbackCount, RunStatusBadge } from "@/components/observability/run-status";
 import { PageBody, PageHeader } from "@/components/workspace/page-header";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
@@ -384,8 +385,10 @@ function Waterfall({
 // -- detalhe do span -------------------------------------------------------
 
 function SpanDetail({ span }: { span: TraceSpan }) {
-  const { icon: Icon, label } = spanType(span.type);
-  const metadata = Object.entries(span.metadata);
+  const references = asReferences(span.metadata?.references);
+  const { icon: Icon, label } = references ? { icon: Search, label: "Busca" } : spanType(span.type);
+  // As referências têm seção própria; nos metadados elas seriam um JSON ilegível.
+  const metadata = Object.entries(span.metadata).filter(([key]) => !(references && key === "references"));
 
   return (
     <Card className="flex min-w-0 flex-col">
@@ -423,7 +426,7 @@ function SpanDetail({ span }: { span: TraceSpan }) {
       </div>
       <div className="flex flex-col gap-4 p-4">
         <IoSection title="Entrada" value={span.input} />
-        <IoSection title="Saída" value={span.output} />
+        {references ? <ReferencesSection references={references} output={span.output} /> : <IoSection title="Saída" value={span.output} />}
         {metadata.length > 0 && (
           <section className="flex flex-col gap-2">
             <h3 className="text-xs font-medium text-muted-foreground">Metadados</h3>
@@ -441,6 +444,40 @@ function SpanDetail({ span }: { span: TraceSpan }) {
         )}
       </div>
     </Card>
+  );
+}
+
+function asReferences(value: unknown): RetrievalReferences | null {
+  const refs = value as RetrievalReferences | null | undefined;
+  return refs && typeof refs === "object" && Array.isArray(refs.results) ? refs : null;
+}
+
+function ReferencesSection({ references, output }: { references: RetrievalReferences; output: unknown }) {
+  const [raw, setRaw] = useState(false);
+  const { results } = references;
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-xs font-medium text-muted-foreground">
+          Trechos consultados · {results.length} {results.length === 1 ? "trecho" : "trechos"} de{" "}
+          <Link href={`/knowledge?collection=${encodeURIComponent(references.collection)}`} className="font-mono hover:underline">
+            {references.collection}
+          </Link>
+        </h3>
+        <button type="button" onClick={() => setRaw((v) => !v)} className="text-[11px] text-muted-foreground hover:text-foreground">
+          {raw ? "Ver trechos" : "Ver texto enviado ao modelo"}
+        </button>
+      </div>
+      {raw ? (
+        <IoSection title="Saída" value={output} />
+      ) : results.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-[13px] text-muted-foreground">
+          A busca não encontrou nada — o agente respondeu sem trechos da base.
+        </p>
+      ) : (
+        <ChunkList chunks={results} label="Trechos consultados" />
+      )}
+    </section>
   );
 }
 

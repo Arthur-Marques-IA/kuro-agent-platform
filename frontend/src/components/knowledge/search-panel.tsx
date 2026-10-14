@@ -2,7 +2,6 @@
 
 import { FormEvent, useId, useState } from "react";
 import { ArrowRight, Search } from "lucide-react";
-import { cn } from "@/lib/cn";
 import { errorMessage, requestJson } from "@/lib/http";
 import type { SearchResult } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -10,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { EmptyState, Spinner } from "@/components/ui/primitives";
+import { ChunkList } from "@/components/knowledge/chunk-list";
 
 type SearchState =
   | { status: "idle" }
@@ -22,14 +22,12 @@ export function SearchPanel({ collection }: { collection: string }) {
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState("5");
   const [state, setState] = useState<SearchState>({ status: "idle" });
-  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const q = query.trim();
     if (!q) return;
     setState({ status: "loading" });
-    setExpanded(new Set());
     try {
       const results = await requestJson<SearchResult[]>(
         `/api/collections/${encodeURIComponent(collection)}/search?${new URLSearchParams({ query: q, limit })}`,
@@ -39,15 +37,6 @@ export function SearchPanel({ collection }: { collection: string }) {
     } catch (err) {
       setState({ status: "error", message: errorMessage(err) });
     }
-  }
-
-  function toggle(index: number) {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
   }
 
   return (
@@ -109,38 +98,7 @@ export function SearchPanel({ collection }: { collection: string }) {
         )}
 
         {state.status === "done" && state.results.length > 0 && (
-          <ol className="flex flex-col gap-2" aria-label="Resultados da busca">
-            {state.results.map((result, index) => {
-              const isOpen = expanded.has(index);
-              const metadata = Object.entries(result.metadata ?? {})
-                .filter(([, value]) => value !== null && typeof value !== "object")
-                .slice(0, 4);
-              return (
-                <li key={index} className="rounded-lg border border-border bg-surface p-3">
-                  <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
-                    <span className="font-medium">#{index + 1}</span>
-                    {result.content.length > 280 && (
-                      <button type="button" onClick={() => toggle(index)} className="hover:text-foreground">
-                        {isOpen ? "Mostrar menos" : "Mostrar tudo"}
-                      </button>
-                    )}
-                  </div>
-                  <p className={cn("whitespace-pre-wrap break-words text-[13px] leading-relaxed", !isOpen && "line-clamp-5")}>
-                    {result.content}
-                  </p>
-                  {metadata.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {metadata.map(([key, value]) => (
-                        <span key={key} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                          {key}: {String(value)}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
+          <ChunkList chunks={state.results} label="Resultados da busca" />
         )}
       </CardContent>
     </Card>

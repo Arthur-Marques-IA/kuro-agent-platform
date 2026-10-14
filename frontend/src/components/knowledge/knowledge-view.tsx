@@ -63,12 +63,23 @@ function contentKind(type?: string | null) {
   return { label: type.split("/").pop()?.toUpperCase() ?? type, icon: FileText };
 }
 
-export function KnowledgeView({ openAddInitially }: { openAddInitially: boolean }) {
+export function KnowledgeView({
+  openAddInitially,
+  initialCollection,
+}: {
+  openAddInitially: boolean;
+  /** Vem do link "Trechos consultados" do trace. */
+  initialCollection?: string;
+}) {
   const toast = useToast();
   const router = useRouter();
   const confirm = useConfirm();
   const { collections, backendReachable } = useWorkspace();
-  const [collection, setCollection] = useState(collections[0]?.name ?? "general");
+  const [collection, setCollection] = useState(
+    (initialCollection && collections.some((c) => c.name === initialCollection) ? initialCollection : null) ??
+      collections[0]?.name ??
+      "general"
+  );
   const [newOpen, setNewOpen] = useState(false);
   const current = collections.find((c) => c.name === collection);
   const [addOpen, setAddOpen] = useState(openAddInitially);

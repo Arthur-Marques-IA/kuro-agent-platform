@@ -33,6 +33,11 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
 
 ### Novo
 
+- **Trechos consultados no trace.** A span `search_knowledge_base` de um run passa a trazer
+  `metadata.references`: a pergunta, a collection e cada trecho recuperado (`rank`, `score`,
+  `document`, `content_id`, `chunk_id`, `chunk`, `content` e, de sites, `source_url`/`page_title`).
+  `GET /collections/{nome}/search` devolve esses mesmos campos ao lado de `content` e `metadata`.
+  O que o modelo recebe não muda. Ver [o que o agente leu](conceitos.md#o-que-o-agente-leu).
 - **Gemini 3 em diante: sem `temperature`, `top_p` e `thinking_budget`.** O Google passou a
   recusar esses campos nos modelos novos (`400 INVALID_ARGUMENT`). Em agentes `google` com modelo
   Gemini 3+ (ou `-latest`) o Kuro deixa de enviá-los; o cadastro continua aceitando, então nada

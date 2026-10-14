@@ -8,6 +8,8 @@ export default async function KnowledgePage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { add } = await searchParams;
-  return <KnowledgeView openAddInitially={add === "1"} />;
+  const { add, collection } = await searchParams;
+  return (
+    <KnowledgeView openAddInitially={add === "1"} initialCollection={typeof collection === "string" ? collection : undefined} />
+  );
 }

@@ -126,9 +126,31 @@ export interface AttachmentInfo {
   url?: string | null;
 }
 
-export interface SearchResult {
+/** Um trecho recuperado da base — na busca da collection e em `metadata.references` da span de busca. */
+export interface RetrievedChunk {
   content: string;
+  rank?: number | null;
+  /** Similaridade 0–1 (ou o score do reranker). */
+  score?: number | null;
+  document?: string | null;
+  content_id?: string | null;
+  chunk_id?: string | null;
+  chunk?: number | null;
+  page?: number | null;
+  section?: string | null;
+  source_url?: string | null;
+  page_title?: string | null;
+}
+
+export interface SearchResult extends RetrievedChunk {
   metadata: Record<string, unknown> | null;
+}
+
+/** O que a span `search_knowledge_base` registra da busca que o agente fez. */
+export interface RetrievalReferences {
+  query: string;
+  collection: string;
+  results: RetrievedChunk[];
 }
 
 export type ContentStatus = "processing" | "completed" | "partial" | "failed";

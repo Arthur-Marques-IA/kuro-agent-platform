@@ -36,6 +36,7 @@ from agno.agent import Agent
 from agno.run.agent import RunEvent, RunOutputEvent
 
 from agent_service.config import get_settings
+from agent_service.documents import retrieval
 from agent_service.tools import failures
 from agent_service.tools.context import set_dependencies, set_dry_run
 
@@ -199,6 +200,7 @@ def _agent_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOutputEvent
     set_dependencies(run.dependencies)
     set_dry_run(run.dry_run)
     failures.start_run()
+    retrieval.start_run()
     return agent.arun(
         run.message,
         user_id=run.user_id,
@@ -301,12 +303,18 @@ def _tool_span(event: Any, now: datetime) -> Any:
     elif raised:
         metadata = {"failure": "exception"}
         status_message = getattr(event, "error", None) or str(getattr(tool, "result", "") or "")[:500] or None
+    if name == retrieval.SEARCH_TOOL:
+        # Os trechos que a busca devolveu, com documento, posição e score — o
+        # texto cru continua no `output`, que é o que o modelo leu.
+        search = retrieval.take_search((getattr(tool, "tool_args", None) or {}).get("query"))
+        if search is not None:
+            metadata["references"] = search
     return SpanRecord(
         type="TOOL",
         name=name,
         started_at=_utc(getattr(tool_metrics, "start_time", None)) or now,
         ended_at=_utc(getattr(tool_metrics, "end_time", None)),
-        level=failures.span_level(metadata["failure"]) if metadata else "DEFAULT",
+        level=failures.span_level(metadata["failure"]) if "failure" in metadata else "DEFAULT",
         status_message=status_message,
         input=getattr(tool, "tool_args", None),
         output=output,

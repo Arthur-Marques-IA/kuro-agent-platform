@@ -245,6 +245,22 @@ Arquivo e texto valem em qualquer coleção, pelo console ou pela CLI
 do AgentOS, que não aceita escolher a coleção — só alimenta a padrão
 (`general`).
 
+### O que o agente leu
+
+Cada busca que o agente faz vira uma span `search_knowledge_base` no trace do run, e ela guarda,
+em `metadata.references`, a pergunta que o modelo mandou e cada trecho que voltou: posição no
+ranking, `score` (similaridade 0–1, ou o do reranker), documento, `content_id`, `chunk_id`, o
+número do trecho e, quando o documento veio de um site, `source_url` e `page_title`. O texto é o
+mesmo que o modelo recebeu — a saída da span continua sendo o texto cru.
+
+```bash
+uv run kuro --json runs show <run_id>    # spans[].metadata.references
+```
+
+No console, a span mostra os trechos em cartões ("Trechos consultados"), com a relevância e o link
+para a origem; `collections search` devolve o mesmo formato. As referências ficam no trace store
+local (o padrão); com `TRACE_STORE_BACKEND=langfuse`, os spans vêm do Langfuse e não as trazem.
+
 ### Quem gera os vetores
 
 Cada collection escolhe o seu embedder **na criação**, entre `google` (padrão),

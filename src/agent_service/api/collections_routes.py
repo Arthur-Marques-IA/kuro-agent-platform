@@ -26,10 +26,12 @@ from agent_service.documents.collections import (
     add_file,
     add_text,
     default_collection_name,
+    get_collection,
     list_documents,
     remove_document,
     search,
 )
+from agent_service.documents.retrieval import describe_hits
 from agent_service.documents.embedder import (
     DEFAULT_EMBEDDER_PROVIDER,
     EMBEDDERS,
@@ -86,8 +88,20 @@ class AddTextRequest(BaseModel):
 
 
 class SearchResult(BaseModel):
+    """Um trecho encontrado — o mesmo formato de `metadata.references` na span
+    da busca do agente (`documents/retrieval.py`)."""
+
     content: str
     metadata: dict[str, Any] | None = None
+    rank: int | None = None
+    score: float | None = Field(default=None, description="Similaridade (0–1) ou o score do reranker")
+    document: str | None = None
+    content_id: str | None = None
+    chunk_id: str | None = None
+    chunk: int | None = None
+    section: str | None = None
+    source_url: str | None = None
+    page_title: str | None = None
 
 
 def _agents_using(name: str) -> list[str]:
@@ -330,4 +344,8 @@ async def delete_collection_document(collection_name: str, content_id: str) -> N
 async def search_collection(collection_name: str, query: str, limit: int = 5) -> list[SearchResult]:
     _row_or_404(collection_name)
     documents = await search(collection_name, query=query, limit=limit)
-    return [SearchResult(content=doc.content, metadata=doc.meta_data) for doc in documents]
+    hits = await describe_hits(get_collection(collection_name), documents)
+    return [
+        SearchResult(**{k: v for k, v in hit.items() if k in SearchResult.model_fields}, metadata=doc.meta_data)
+        for hit, doc in zip(hits, documents)
+    ]
