@@ -221,3 +221,29 @@ def test_filtros_de_revisao_pela_http(agente):
     assert resposta.status_code == 200
     assert {r["run_id"] for r in resposta.json()["items"]} == {dois, tres}
     assert client.get("/observability/runs", params={"complexity": 4}).status_code == 422
+
+
+def test_coleta_de_sites_entra_no_custo_do_panorama_geral(agente):
+    from agent_service.documents import sources_store
+
+    # Uma janela só deste teste: o panorama geral soma o banco inteiro.
+    inicio = datetime(2033, 5, 1, 12, tzinfo=UTC)
+    gravar(agente, inicio + timedelta(days=1), cost=0.01)
+    sources_store.record_sync_cost(source_id="s1", collection="docs", model="gemini-2.5-flash", input_tokens=200,
+                                   output_tokens=100, cost_usd=0.002, ended_at=inicio + timedelta(days=2))
+    sources_store.record_sync_cost(source_id="s1", collection="docs", model="gemini-2.5-flash", input_tokens=10,
+                                   output_tokens=5, cost_usd=0.004, ended_at=inicio - timedelta(days=3))
+
+    geral = build_overview(since=inicio, until=inicio + timedelta(days=7))
+    assert geral.totals.cost_usd == pytest.approx(0.012)
+    assert (geral.totals.ingestion_cost_usd, geral.totals.ingestion_tokens) == (0.002, 300)
+    assert geral.totals.total_tokens == 100, "tokens do formatador não entram no total dos runs"
+    assert sum(b.cost_usd for b in geral.buckets) == pytest.approx(0.012)
+    assert sum(b.ingestion_cost_usd for b in geral.buckets) == pytest.approx(0.002)
+    # Só a coleta no período anterior: ele existe e tem o custo dela.
+    assert geral.previous is not None and geral.previous.cost_usd == pytest.approx(0.004)
+
+    # Filtrado por agente, a coleta (que não é de agente nenhum) fica de fora.
+    do_agente = painel(agente, inicio, inicio + timedelta(days=7))
+    assert do_agente.totals.cost_usd == pytest.approx(0.01)
+    assert do_agente.totals.ingestion_cost_usd is None

@@ -185,7 +185,8 @@ class _Run:
         self.model = model
         self.previous = {p["url"]: p for p in store.list_pages(source["id"])}
         self.counts = {"discovered": 0, "done": 0, "indexed": 0, "unchanged": 0, "removed": 0, "failed": 0, "skipped": 0,
-                       "format_input_tokens": 0, "format_output_tokens": 0, "format_fallbacks": 0}
+                       "format_input_tokens": 0, "format_output_tokens": 0, "format_fallbacks": 0,
+                       "format_cost_usd": None}
         self.visited: set[str] = set()
         self.kept: set[str] = set()
         self.responded = 0
@@ -254,6 +255,8 @@ class _Run:
         formatted = await format_page(extracted.markdown, title=extracted.title, url=url, model=self.model)
         self.counts["format_input_tokens"] += formatted.input_tokens
         self.counts["format_output_tokens"] += formatted.output_tokens
+        if formatted.cost_usd is not None:
+            self.counts["format_cost_usd"] = round((self.counts["format_cost_usd"] or 0) + formatted.cost_usd, 8)
         if formatted.how == "fallback":
             self.counts["format_fallbacks"] += 1
         try:
@@ -334,6 +337,7 @@ async def sync_source(source_id: str, *, fetcher: web.Fetcher | None = None, mod
     fetcher = fetcher or web.Fetcher()
     warning = None
     beat = asyncio.create_task(_heartbeat(source_id), name=f"web-sync-heartbeat-{source_id}")
+    run: _Run | None = None
     try:
         if model == "default":
             try:
@@ -382,8 +386,29 @@ async def sync_source(source_id: str, *, fetcher: web.Fetcher | None = None, mod
         )
     finally:
         beat.cancel()
+        if run is not None:
+            # Também numa sincronização que falhou ou foi cancelada: o que o
+            # formatador já gastou não volta.
+            _record_cost(run)
         if own_fetcher:
             await fetcher.aclose()
+
+
+def _record_cost(run: _Run) -> None:
+    counts = run.counts
+    if not (counts["format_input_tokens"] or counts["format_output_tokens"]):
+        return
+    try:
+        store.record_sync_cost(
+            source_id=run.source["id"],
+            collection=run.collection,
+            model=getattr(run.model, "id", None),
+            input_tokens=counts["format_input_tokens"],
+            output_tokens=counts["format_output_tokens"],
+            cost_usd=counts["format_cost_usd"],
+        )
+    except Exception:
+        logger.warning("Não gravei o custo da sincronização da fonte %s", run.source["id"], exc_info=True)
 
 
 async def _heartbeat(source_id: str) -> None:

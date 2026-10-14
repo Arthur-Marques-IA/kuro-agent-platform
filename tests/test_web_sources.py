@@ -1,6 +1,7 @@
 """Sites como fonte de uma collection: coleta segura, formatação fiel, sync incremental."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 import httpx
@@ -484,3 +485,89 @@ def test_retriever_tambem_funciona_num_run_sincrono():
     resultado = retrieval.make_retriever("manuais", Base())(query="x")
     assert resultado == [{"name": "Doc", "meta_data": {"similarity_score": 0.8}, "content": "trecho"}]
     assert retrieval.take_search("x")["results"][0]["score"] == 0.8
+
+
+# -- custo do formatador -------------------------------------------------------------
+
+
+class _Resposta:
+    def __init__(self, content, cost=None):
+        self.content = content
+        self.status = None
+        self.metrics = type("M", (), {"input_tokens": 1000, "output_tokens": 500, "cost": cost})()
+
+
+def _agente_formatador(monkeypatch, cost=None):
+    class Agente:
+        def __init__(self, **kwargs):
+            pass
+
+        async def arun(self, prompt):
+            texto = prompt.split("<pagina>\n", 1)[1].rsplit("\n</pagina>", 1)[0]
+            return _Resposta(texto, cost)
+
+    monkeypatch.setattr("agno.agent.Agent", Agente)
+
+
+def test_formatador_estima_o_custo_pela_tabela_de_precos(monkeypatch):
+    from agent_service.documents.web_formatter import format_page
+
+    _agente_formatador(monkeypatch)
+    modelo = type("Modelo", (), {"provider": "Google", "id": "gemini-2.5-flash"})()
+    formatado = asyncio.run(format_page("A garantia é de 12 meses.", title="G", url="https://x.test", model=modelo))
+    assert (formatado.how, formatado.input_tokens, formatado.output_tokens) == ("agent", 1000, 500)
+    assert formatado.cost_usd == pytest.approx((1000 * 0.30 + 500 * 2.50) / 1_000_000)
+
+
+def test_formatador_prefere_o_custo_que_o_provedor_informou(monkeypatch):
+    from agent_service.documents.web_formatter import format_page
+
+    _agente_formatador(monkeypatch, cost=0.5)
+    modelo = type("Modelo", (), {"provider": "Google", "id": "gemini-2.5-flash"})()
+    formatado = asyncio.run(format_page("A garantia é de 12 meses.", title="G", url="https://x.test", model=modelo))
+    assert formatado.cost_usd == 0.5
+
+
+def _custos(source_id: str) -> list[dict]:
+    agora = datetime.now(timezone.utc)
+    return [c for c in store.list_sync_costs(agora - timedelta(hours=1), agora + timedelta(hours=1))
+            if c["source_id"] == source_id]
+
+
+def test_sync_grava_o_custo_do_formatador(colecao, base, monkeypatch):
+    async def formatador(markdown, *, title, url, model):
+        return Formatted(markdown=markdown, how="agent", input_tokens=100, output_tokens=50, cost_usd=0.001)
+
+    monkeypatch.setattr(web_sync, "format_page", formatador)
+    sid = nova_fonte(colecao, "https://site.test/docs/garantia", mode="page")
+    fonte = sincronizar(sid, Site(), model=type("Modelo", (), {"id": "gemini-2.5-flash"})())
+
+    assert fonte["progress"]["format_cost_usd"] == 0.001
+    (custo,) = _custos(sid)
+    assert (custo["collection"], custo["model"], custo["input_tokens"], custo["output_tokens"], custo["cost_usd"]) == (
+        colecao, "gemini-2.5-flash", 100, 50, 0.001)
+
+
+def test_sync_sem_formatador_nao_grava_custo(colecao, base):
+    sid = nova_fonte(colecao, "https://site.test/docs/garantia", mode="page")
+    sincronizar(sid, Site(), model=None)
+    assert _custos(sid) == []
+
+
+def test_sync_cancelado_ainda_grava_o_que_o_formatador_gastou(colecao, base, monkeypatch):
+    chamadas = 0
+
+    async def formatador(markdown, *, title, url, model):
+        nonlocal chamadas
+        chamadas += 1
+        if chamadas > 1:
+            raise asyncio.CancelledError()
+        return Formatted(markdown=markdown, how="agent", input_tokens=100, output_tokens=50, cost_usd=0.001)
+
+    monkeypatch.setattr(web_sync, "format_page", formatador)
+    monkeypatch.setattr(web_sync.get_settings(), "web_source_concurrency", 1)
+    sid = nova_fonte(colecao, "https://site.test/docs")
+    with pytest.raises(asyncio.CancelledError):
+        sincronizar(sid, Site(), model=object())
+    (custo,) = _custos(sid)
+    assert (custo["input_tokens"], custo["cost_usd"]) == (100, 0.001)

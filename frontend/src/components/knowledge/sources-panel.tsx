@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { errorMessage, requestJson } from "@/lib/http";
-import { formatNumber, pluralize } from "@/lib/format";
+import { formatCost, formatNumber, pluralize } from "@/lib/format";
 import type { KnowledgeSource, KnowledgeSourceDetail, KnowledgeSourcePage, SourceStatus } from "@/lib/types";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -280,8 +280,9 @@ function SourceRow({
           </span>
         )}
         {tokens > 0 && (
-          <span title="Tokens gastos pelo agente formatador na última sincronização">
+          <span title="Tokens gastos pelo agente formatador na última sincronização (somados ao custo dos Logs)">
             {formatNumber(tokens)} tokens de formatação
+            {progress.format_cost_usd != null && ` · ${formatCost(progress.format_cost_usd)}`}
           </span>
         )}
         {source.last_synced_at && (

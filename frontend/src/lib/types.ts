@@ -193,6 +193,8 @@ export interface KnowledgeSource {
     format_input_tokens?: number;
     format_output_tokens?: number;
     format_fallbacks?: number;
+    /** Custo do formatador nesta sincronização (também em `knowledge_sync_costs`, somado aos Logs). */
+    format_cost_usd?: number | null;
   } | null;
   pages_indexed: number;
   pages_failed: number;
@@ -888,7 +890,12 @@ export interface OverviewTotals {
   tool_failures: number;
   sessions: number;
   total_tokens: number;
+  /** Runs + (no panorama geral) a coleta de sites. */
   cost_usd: number | null;
+  /** Parte de `cost_usd` gasta pelo formatador das fontes de site. */
+  ingestion_cost_usd?: number | null;
+  /** Tokens do formatador — fora de `total_tokens`. */
+  ingestion_tokens?: number;
   p50_latency_ms: number | null;
   p95_latency_ms: number | null;
   feedback_up: number;
@@ -903,7 +910,9 @@ export interface OverviewBucket {
   tool_failure_runs: number;
   /** `error` + `interrupted`. */
   errors: number;
+  /** Inclui `ingestion_cost_usd`. */
   cost_usd: number;
+  ingestion_cost_usd?: number;
   total_tokens: number;
   p95_latency_ms: number | null;
 }

@@ -59,6 +59,8 @@ class Formatted:
     reason: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0
+    cost_usd: float | None = None
+    """O que o provedor informou; sem isso, a estimativa da tabela de preços."""
 
 
 def _words(text: str) -> list[str]:
@@ -137,6 +139,12 @@ async def format_page(markdown: str, *, title: str, url: str, model: Any | None)
     agent = Agent(name="kuro-web-formatter", model=model, instructions=INSTRUCTIONS, markdown=True, telemetry=False)
     pieces: list[str] = []
     input_tokens = output_tokens = 0
+    reported: list[float] = []
+
+    def spent(**values: Any) -> Formatted:
+        cost = sum(reported) if reported else _estimate(model, input_tokens, output_tokens)
+        return Formatted(**values, input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost)
+
     try:
         for part in segments(markdown):
             response = await agent.arun(f"Página: {title}\nURL: {url}\n\n<pagina>\n{part}\n</pagina>")
@@ -145,18 +153,31 @@ async def format_page(markdown: str, *, title: str, url: str, model: Any | None)
             metrics = getattr(response, "metrics", None)
             input_tokens += getattr(metrics, "input_tokens", 0) or 0
             output_tokens += getattr(metrics, "output_tokens", 0) or 0
+            if isinstance(getattr(metrics, "cost", None), (int, float)):
+                reported.append(float(metrics.cost))
             content = response.content if isinstance(response.content, str) else ""
             pieces.append(_strip_fence(content))
     except Exception as exc:  # o modelo fora do ar não pode impedir a indexação
         logger.warning("Formatador falhou em %s", url, exc_info=True)
-        return Formatted(markdown=markdown, how="fallback", reason=f"erro do formatador: {type(exc).__name__}: {exc}"[:300],
-                         input_tokens=input_tokens, output_tokens=output_tokens)
+        return spent(markdown=markdown, how="fallback", reason=f"erro do formatador: {type(exc).__name__}: {exc}"[:300])
     result = "\n\n".join(p for p in pieces if p)
     problem = fidelity(markdown, result)
     if problem is not None:
-        return Formatted(markdown=markdown, how="fallback", reason=problem,
-                         input_tokens=input_tokens, output_tokens=output_tokens)
-    return Formatted(markdown=result, how="agent", input_tokens=input_tokens, output_tokens=output_tokens)
+        return spent(markdown=markdown, how="fallback", reason=problem)
+    return spent(markdown=result, how="agent")
+
+
+def _estimate(model: Any, input_tokens: int, output_tokens: int) -> float | None:
+    from agent_service.models.pricing import estimate_cost
+
+    if not (input_tokens or output_tokens):
+        return None
+    return estimate_cost(
+        provider=getattr(model, "provider", None),
+        model_id=getattr(model, "id", None),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
 
 
 # -- trechos -------------------------------------------------------------------------

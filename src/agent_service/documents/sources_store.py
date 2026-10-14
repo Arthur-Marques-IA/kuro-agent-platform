@@ -1,6 +1,7 @@
 """Cadastro das fontes de uma collection (sites) e das páginas indexadas de cada uma.
 
-O schema é criado pelo Alembic (`migrations/versions/0008_knowledge_sources.py`);
+O schema é criado pelo Alembic (`migrations/versions/0008_knowledge_sources.py` e
+`0009_knowledge_sync_costs.py`);
 quem coleta e indexa é `documents/web_sync.py`.
 """
 
@@ -12,6 +13,7 @@ from sqlalchemy import (
     JSON,
     Column,
     DateTime,
+    Float,
     Integer,
     MetaData,
     String,
@@ -66,6 +68,21 @@ knowledge_source_pages = Table(
     Column("error", Text, nullable=True),
     Column("fetched_at", DateTime(timezone=True), nullable=True),
 )
+
+knowledge_sync_costs = Table(
+    "knowledge_sync_costs",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("source_id", String, nullable=False),
+    Column("collection", String, nullable=False),
+    Column("model", String, nullable=True),
+    Column("input_tokens", Integer, nullable=False),
+    Column("output_tokens", Integer, nullable=False),
+    Column("cost_usd", Float, nullable=True),
+    Column("ended_at", DateTime(timezone=True), nullable=False),
+)
+"""O que o formatador gastou em cada sincronização. Fica mesmo depois de a fonte
+ser removida: é dinheiro que já saiu, e os Logs somam isso ao custo do período."""
 
 REFRESH_INTERVALS: dict[str, timedelta | None] = {
     "never": None,
@@ -219,6 +236,36 @@ def delete_source(source_id: str) -> None:
     with _engine().begin() as conn:
         conn.execute(delete(knowledge_source_pages).where(knowledge_source_pages.c.source_id == source_id))
         conn.execute(delete(knowledge_sources).where(knowledge_sources.c.id == source_id))
+
+
+# -- custo do formatador -----------------------------------------------------------
+
+
+def record_sync_cost(
+    *, source_id: str, collection: str, model: str | None, input_tokens: int, output_tokens: int,
+    cost_usd: float | None, ended_at: datetime | None = None,
+) -> None:
+    with _engine().begin() as conn:
+        conn.execute(
+            insert(knowledge_sync_costs).values(
+                id=uuid4().hex,
+                source_id=source_id,
+                collection=collection,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost_usd,
+                ended_at=ended_at or _now(),
+            )
+        )
+
+
+def list_sync_costs(since: datetime, until: datetime) -> list[dict[str, Any]]:
+    """As sincronizações que terminaram em `[since, until)`."""
+    c = knowledge_sync_costs.c
+    with _engine().connect() as conn:
+        rows = conn.execute(select(knowledge_sync_costs).where(c.ended_at >= since, c.ended_at < until))
+        return [_row(r) for r in rows]
 
 
 # -- páginas -----------------------------------------------------------------------

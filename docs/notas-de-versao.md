@@ -45,6 +45,13 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
   e `kuro analyze` listam as fontes no rodapé, e o console mostra um chip por fonte abaixo da
   resposta, com o link da página e o atalho para os trechos no trace. Ver
   [fontes consultadas](integracao.md#fontes-consultadas-sources).
+- **Custo da coleta de sites nos Logs.** O que o agente formatador gasta em cada sincronização de
+  uma fonte de site (o custo informado pelo provedor ou, sem ele, a estimativa da tabela de
+  preços) fica gravado e entra no custo do panorama geral: `GET /observability/overview` soma em
+  `totals.cost_usd`, `previous.cost_usd` e `buckets[].cost_usd`, e mostra a parte da coleta em
+  `ingestion_cost_usd` (e os tokens em `totals.ingestion_tokens`, fora de `total_tokens`). Com
+  `agent_type`, nada muda: a coleta não é de agente nenhum. Conta também a sincronização que falhou
+  ou foi cancelada no meio. O `progress` da fonte ganha `format_cost_usd`.
 - **Sites como fonte de uma collection.** `POST /collections/{nome}/sources` (`url`, `mode`
   `crawl`/`sitemap`/`page`, `max_pages`, `max_depth`, `include`, `exclude`, `format`, `refresh`)
   coleta o site em background (202), com a trava de egress das tools em cada salto, `robots.txt`
@@ -173,6 +180,8 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
   andamento renova um heartbeat a cada 30 s; sem sinal por 2 minutos (o processo caiu no meio),
   ele é marcado `failed` e pode ser disparado de novo. A trava no banco impede dois syncs da mesma
   fonte, inclusive entre réplicas; com mais de uma, deixe `WEB_SOURCE_SCHEDULER=true` em uma só.
+- A migração `0009` também roda sozinha: cria `knowledge_sync_costs` (o gasto do formatador de
+  sites por sincronização). Sincronizações anteriores a ela não entram no custo dos Logs.
 
 ---
 

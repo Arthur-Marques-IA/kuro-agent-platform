@@ -176,7 +176,15 @@ function KpiRow({ totals, previous }: { totals: OverviewTotals; previous: Overvi
     {
       label: "Custo",
       value: formatCost(totals.cost_usd),
-      detail: totals.sessions ? `${formatCost((totals.cost_usd ?? 0) / totals.sessions)} por conversa` : "—",
+      // A coleta de sites entra no total, mas não é de conversa nenhuma.
+      detail: [
+        totals.sessions
+          ? `${formatCost(((totals.cost_usd ?? 0) - (totals.ingestion_cost_usd ?? 0)) / totals.sessions)} por conversa`
+          : null,
+        totals.ingestion_cost_usd ? `inclui ${formatCost(totals.ingestion_cost_usd)} da coleta de sites` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || "—",
       delta: <Delta current={totals.cost_usd} previous={previous?.cost_usd ?? null} polarity="neutral" kind="ratio" />,
     },
     {
@@ -748,7 +756,12 @@ function TrendTable({ overview, metric }: { overview: Overview; metric: Metric }
               <td className="px-3 py-1.5 text-right">{formatNumber(b.errors)}</td>
               <td className="px-3 py-1.5 text-right">{formatRate(bucketRate(b, "failed"))}</td>
               <td className="px-3 py-1.5 text-right">{formatRate(bucketRate(b, "tool"))}</td>
-              <td className="px-3 py-1.5 text-right">{formatCost(b.cost_usd)}</td>
+              <td
+                className="px-3 py-1.5 text-right"
+                title={b.ingestion_cost_usd ? `inclui ${formatCost(b.ingestion_cost_usd)} da coleta de sites` : undefined}
+              >
+                {formatCost(b.cost_usd)}
+              </td>
               <td className="px-3 py-1.5 text-right">{formatMs(b.p95_latency_ms)}</td>
             </tr>
           ))}

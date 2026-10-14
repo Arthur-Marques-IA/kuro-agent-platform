@@ -47,6 +47,12 @@ class OverviewTotals(BaseModel):
     sessions: int = 0
     total_tokens: int = 0
     cost_usd: float | None = None
+    """Custo dos runs e, no panorama geral (sem `agent_type`), também o da coleta de sites."""
+    ingestion_cost_usd: float | None = None
+    """Parte de `cost_usd` que foi o agente formatador das fontes de site
+    (`knowledge_sync_costs`). Não é de agente nenhum: some quando há `agent_type`."""
+    ingestion_tokens: int = 0
+    """Tokens do formatador — fora de `total_tokens`, que é só dos runs."""
     p50_latency_ms: float | None = None
     p95_latency_ms: float | None = None
     feedback_up: int = 0
@@ -62,6 +68,8 @@ class OverviewBucket(BaseModel):
     errors: int = 0
     """`error` + `interrupted`."""
     cost_usd: float = 0.0
+    """Inclui `ingestion_cost_usd`."""
+    ingestion_cost_usd: float = 0.0
     total_tokens: int = 0
     p95_latency_ms: float | None = None
 
@@ -239,6 +247,23 @@ def _feedback(conn: Any, conditions: list[Any], group: Any = None) -> Any:
     return votes
 
 
+def _ingestion(since: datetime, until: datetime) -> list[dict[str, Any]]:
+    from agent_service.documents import sources_store
+
+    return sources_store.list_sync_costs(since, until)
+
+
+def _add_ingestion(totals: OverviewTotals, rows: list[dict[str, Any]]) -> None:
+    """Soma o gasto do formatador de sites ao total (o custo) e o mostra à parte."""
+    if not rows:
+        return
+    costs = [r["cost_usd"] for r in rows if r["cost_usd"] is not None]
+    totals.ingestion_tokens = sum(r["input_tokens"] + r["output_tokens"] for r in rows)
+    if costs:
+        totals.ingestion_cost_usd = round(sum(costs), 8)
+        totals.cost_usd = (totals.cost_usd or 0.0) + totals.ingestion_cost_usd
+
+
 def build_overview(
     *,
     since: datetime | None,
@@ -263,6 +288,11 @@ def build_overview(
 
         totals = _totals(conn, conditions)
         previous = _totals(conn, _conditions(since - (until - since), since, agent_type, include_dry_run))
+        # A coleta de sites não é de agente nenhum: só entra no panorama geral.
+        ingestion = [] if agent_type else _ingestion(since, until)
+        _add_ingestion(totals, ingestion)
+        if not agent_type:
+            _add_ingestion(previous, _ingestion(since - (until - since), since))
 
         starts = _bucket_starts(since, until, granularity, tz)
         index = {start: i for i, start in enumerate(starts)}
@@ -331,8 +361,14 @@ def build_overview(
             version_latency[(agent_name, agent_version)].append(latency)
         for position, values in bucket_latency.items():
             buckets[position].p95_latency_ms = _percentile(values, 0.95)
+        for row in ingestion:
+            position = index.get(_bucket_start(_as_utc(row["ended_at"]), granularity, tz))
+            if position is not None and row["cost_usd"] is not None:
+                buckets[position].ingestion_cost_usd += row["cost_usd"]
+                buckets[position].cost_usd += row["cost_usd"]
         for bucket in buckets:
             bucket.cost_usd = round(bucket.cost_usd, 6)
+            bucket.ingestion_cost_usd = round(bucket.ingestion_cost_usd, 6)
 
         version_votes = _feedback(conn, conditions, group=[runs.c.agent_type, runs.c.agent_version])
 
@@ -384,7 +420,7 @@ def build_overview(
         include_dry_run=include_dry_run,
         buckets=buckets,
         totals=totals,
-        previous=previous if previous.runs else None,
+        previous=previous if previous.runs or previous.ingestion_tokens else None,
         agents=agents,
         tool_failures=tool_failures,
     )
