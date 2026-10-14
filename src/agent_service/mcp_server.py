@@ -56,6 +56,9 @@ OVERWRITE = ToolAnnotations(read_only_hint=False, destructive_hint=True, open_wo
 # sistemas de fora — por isso open_world.
 RUN = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=True)
 DESTRUCTIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=False)
+# Coletar um site sai para a web aberta; ressincronizar também troca e remove páginas da base.
+CRAWL = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=True)
+RECRAWL = ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=True)
 
 INSTRUCTIONS = """\
 Opera o Kuro (agent-service): agentes de IA, tools, execuções, bases de conhecimento.
@@ -722,6 +725,51 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             return {"cancelled": True}
         _call(client.delete_collection_document, name, content_id)
         return {"deleted": content_id}
+
+    @server.tool(annotations=CRAWL)
+    def collection_add_site(
+        name: str,
+        url: str,
+        mode: Literal["crawl", "sitemap", "page"] = "crawl",
+        max_pages: int | None = None,
+        max_depth: int | None = None,
+        include: list[str] | None = None,
+        exclude: list[str] | None = None,
+        format: bool = True,
+        refresh: Literal["never", "daily", "weekly", "monthly"] = "never",
+    ) -> dict[str, Any]:
+        """Indexa um site na collection, em background: `crawl` segue links abaixo do caminho
+        da URL, `sitemap` usa o sitemap, `page` só a URL. Cada página passa por um agente que
+        organiza o texto sem reescrever (`format=false` pula). Acompanhe com `collection_sources`."""
+        payload = {"url": url, "mode": mode, "max_pages": max_pages, "max_depth": max_depth,
+                   "include": include, "exclude": exclude, "format": format, "refresh": refresh}
+        return _call(client.create_source, name, {k: v for k, v in payload.items() if v is not None})
+
+    @server.tool(annotations=READ)
+    def collection_sources(name: str, source_id: str | None = None) -> dict[str, Any]:
+        """Sites da collection e o estado da sincronização; com `source_id`, as páginas
+        dele (status, trechos, se o formatador foi usado e o motivo de cada falha)."""
+        if source_id:
+            return _clip(_call(client.get_source, name, source_id), 300)
+        return {"items": _call(client.list_sources, name)}
+
+    @server.tool(annotations=RECRAWL)
+    def collection_sync_site(name: str, source_id: str) -> dict[str, Any]:
+        """Coleta o site de novo agora (só reprocessa as páginas que mudaram)."""
+        return _call(client.sync_source, name, source_id)
+
+    def _confirm_rm_site(name: str, source_id: str, ctx: Context) -> Elicit[Confirmacao]:
+        return _ask(ctx, f"kuro collections rm-site {name} {source_id} --yes", f"Remover o site {source_id!r} e as páginas dele da collection {name!r}?")
+
+    @server.tool(annotations=DESTRUCTIVE)
+    def collection_rm_site(
+        name: str, source_id: str, ok: Annotated[Confirmacao, Resolve(_confirm_rm_site)]
+    ) -> dict[str, Any]:
+        """Remove um site e as páginas dele da collection (pede confirmação)."""
+        if not ok.confirmar:
+            return {"cancelled": True}
+        _call(client.delete_source, name, source_id)
+        return {"deleted": source_id}
 
     return server
 

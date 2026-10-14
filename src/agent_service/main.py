@@ -7,6 +7,9 @@ pelo console e pelo playground em os.agno.com). Ver README para como conectar
 o playground. Cada execução fica no trace store local (`observability/run_store.py`).
 """
 
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+
 from agno.os import AgentOS
 from fastapi import FastAPI
 
@@ -20,11 +23,13 @@ from agent_service.api.model_credentials_routes import router as model_credentia
 from agent_service.api.model_providers_routes import router as model_providers_router
 from agent_service.api.observability_routes import router as observability_router
 from agent_service.api.routes import router
+from agent_service.api.sources_routes import router as sources_router
 from agent_service.api.tools_routes import router as tools_router
 from agent_service.config import get_settings
 from agent_service.db import get_db
 from agent_service.documents.collections import all_collections
 from agent_service.documents.store import seed_default_collection
+from agent_service.documents.web_sync import scheduler_lifespan
 from agent_service.migrations import upgrade_database
 from agent_service.models.listing import warm_up as warm_up_model_listing
 from agent_service.observability.tracing import configure_tracing
@@ -44,11 +49,21 @@ warm_up_model_listing()
 # direto por URL. O lifespan do base_app entra no do AgentOS, que o combina com os dele.
 mcp_route, mcp_lifespan = mcp_routes.build()
 
-base_app = FastAPI(title=settings.app_name, lifespan=mcp_lifespan)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # O MCP e o agendador das fontes de site (`documents/web_sync.py`).
+    async with mcp_lifespan(app), scheduler_lifespan(app):
+        yield
+
+
+base_app = FastAPI(title=settings.app_name, lifespan=lifespan)
 base_app.router.routes.append(mcp_route)
 base_app.include_router(router)
 base_app.include_router(agents_router)
 base_app.include_router(collections_router)
+base_app.include_router(sources_router)
 base_app.include_router(integration_router)
 base_app.include_router(tools_router)
 base_app.include_router(observability_router)

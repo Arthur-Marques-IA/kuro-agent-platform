@@ -35,6 +35,7 @@ import { useWorkspace } from "@/components/workspace/workspace-provider";
 import { AddContentDialog } from "@/components/knowledge/add-content-dialog";
 import { NewCollectionDialog } from "@/components/knowledge/new-collection-dialog";
 import { SearchPanel } from "@/components/knowledge/search-panel";
+import { SourcesPanel } from "@/components/knowledge/sources-panel";
 
 const PAGE_SIZE = 20;
 const POLL_INTERVAL_MS = 3000;
@@ -248,6 +249,8 @@ export function KnowledgeView({
         </div>
 
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="flex min-w-0 flex-col gap-6">
+          <SourcesPanel collection={collection} reloadKey={reloadKey} onChanged={reload} />
           <section className="flex min-w-0 flex-col gap-3">
             <SectionHeading
               title={
@@ -288,7 +291,7 @@ export function KnowledgeView({
                 <EmptyState
                   icon={Library}
                   title="Nenhum documento nesta coleção"
-                  description="Adicione textos, arquivos ou URLs para que os agentes tenham uma base para consultar."
+                  description="Adicione textos, arquivos ou sites para que os agentes tenham uma base para consultar."
                   action={
                     <Button variant="outline" size="sm" onClick={() => setAddOpen(true)}>
                       <Plus /> Adicionar conteúdo
@@ -410,6 +413,7 @@ export function KnowledgeView({
               </div>
             )}
           </section>
+          </div>
 
           <SearchPanel collection={collection} />
         </div>

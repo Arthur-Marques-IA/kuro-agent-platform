@@ -138,7 +138,12 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `MAX_ATTACHMENT_MB` | `20` | limite por anexo |
 | `MAX_INPUT_CHARS` | `200000` | teto do texto de entrada (`message` do `/chat`, `document` do `/analyze`) |
 | `CUSTOM_PYTHON_TOOLS_ENABLED` | `false` | liga a execução de tools `python` |
-| `TOOL_EGRESS_ALLOWLIST` | — | hosts internos que as tools podem alcançar (vazio = só endereços públicos) |
+| `TOOL_EGRESS_ALLOWLIST` | — | hosts internos que as tools podem alcançar (vazio = só endereços públicos) — vale também para a coleta de sites |
+| `WEB_SOURCE_MAX_PAGES` | `500` | teto de páginas por site, qualquer que seja o `max_pages` pedido |
+| `WEB_SOURCE_CONCURRENCY` | `3` | páginas processadas ao mesmo tempo por site (download + formatação) |
+| `WEB_SOURCE_REQUEST_DELAY_MS` | `300` | intervalo mínimo entre requisições ao mesmo site |
+| `WEB_SOURCE_USER_AGENT` | `KuroBot/1.0 (...)` | como o coletor se apresenta (é o nome que o `robots.txt` enxerga) |
+| `WEB_SOURCE_SCHEDULER` | `true` | ressincroniza os sites com `refresh` agendado |
 | `MEM0_ENABLED` / `MEM0_API_KEY` | `false` / — | habilita agentes com `memory_backend: "mem0"` |
 | `LANGFUSE_ENABLED` | `false` | liga o exportador — exige o extra `observability` e o profile de mesmo nome |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` | valores de dev | conexão com o Langfuse |

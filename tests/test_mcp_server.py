@@ -96,6 +96,10 @@ async def test_lists_tools_with_annotations_and_hides_confirmation_from_schema(a
         assert tools[name].annotations.destructive_hint is True, name
     for name in ("run_score", "collection_add"):
         assert tools[name].annotations.destructive_hint is False, name
+    # Coletar site sai para a web; ressincronizar também troca e remove páginas.
+    assert tools["collection_add_site"].annotations.open_world_hint is True
+    assert tools["collection_sync_site"].annotations.destructive_hint is True
+    assert set(tools["collection_rm_site"].input_schema["properties"]) == {"name", "source_id"}
     # Chave de modelo não passa pelo contexto do modelo.
     assert not any(name.startswith("credential") and name != "credentials_list" for name in tools)
 

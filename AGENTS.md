@@ -194,7 +194,15 @@ cat manual.txt | kuro --json collections add manuais --title "Manual v2"
 kuro --json collections add manuais -f manual.pdf             # arquivo (PDF, DOCX, CSV, TXT, MD...)
 kuro --json collections docs manuais                          # o que está indexado, com o status
 kuro --json collections rm-doc manuais <content_id> --yes     # tira um documento da base (não tem volta)
-kuro --json collections search manuais "prazo de garantia"   # o mesmo que o agente enxerga
+kuro --json collections search manuais "prazo de garantia"   # o mesmo que o agente enxerga (score, documento, origem)
+# Sites: coleta em background (crawl | sitemap | page), robots.txt, egress travado, um agente
+# formata cada página sem reescrever (conferido; reprovado = texto extraído), ressincronização incremental.
+kuro --json collections add-site manuais https://docs.exemplo.com/guia --max-pages 100 --refresh weekly --wait
+kuro --json collections sources manuais [<source_id>]        # status; com o id, página a página
+kuro --json collections sync manuais <source_id>             # coleta de novo (só reprocessa o que mudou)
+kuro --json collections rm-site manuais <source_id> --yes    # tira o site e as páginas dele
+# No trace, a span `search_knowledge_base` traz `metadata.references`: query, e cada trecho com
+# rank, score, document, content_id, chunk, section, source_url e o texto exato que o modelo leu.
 kuro --json agents set suporte knowledge_collection=manuais
 
 # Modelos: provedores suportados e credenciais

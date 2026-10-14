@@ -38,6 +38,18 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
   `document`, `content_id`, `chunk_id`, `chunk`, `content` e, de sites, `source_url`/`page_title`).
   `GET /collections/{nome}/search` devolve esses mesmos campos ao lado de `content` e `metadata`.
   O que o modelo recebe não muda. Ver [o que o agente leu](conceitos.md#o-que-o-agente-leu).
+- **Sites como fonte de uma collection.** `POST /collections/{nome}/sources` (`url`, `mode`
+  `crawl`/`sitemap`/`page`, `max_pages`, `max_depth`, `include`, `exclude`, `format`, `refresh`)
+  coleta o site em background (202), com a trava de egress das tools em cada salto, `robots.txt`
+  e um agente formatador conferido contra a página. `GET .../sources[/{id}]` mostra o progresso e
+  cada página; `POST .../sources/{id}/sync` ressincroniza (incremental: substitui o que mudou,
+  remove o que sumiu); `PATCH` muda agendamento e opções; `DELETE` tira o site e as páginas
+  (`?keep_documents=true` deixa as páginas). CLI: `kuro collections add-site|sources|sync|set-site|rm-site`;
+  MCP: `collection_add_site`, `collection_sources`, `collection_sync_site`, `collection_rm_site`.
+  Novas variáveis: `WEB_SOURCE_MAX_PAGES`, `WEB_SOURCE_CONCURRENCY`, `WEB_SOURCE_REQUEST_DELAY_MS`,
+  `WEB_SOURCE_USER_AGENT`, `WEB_SOURCE_SCHEDULER`. Ver [sites como fonte](conceitos.md#sites-como-fonte).
+- **Console: aba Site em qualquer coleção.** Substitui a aba URL, que só funcionava na coleção
+  padrão (pipeline do AgentOS). O `/knowledge/content` do AgentOS continua existindo para quem o usa.
 - **Gemini 3 em diante: sem `temperature`, `top_p` e `thinking_budget`.** O Google passou a
   recusar esses campos nos modelos novos (`400 INVALID_ARGUMENT`). Em agentes `google` com modelo
   Gemini 3+ (ou `-latest`) o Kuro deixa de enviá-los; o cadastro continua aceitando, então nada
@@ -149,6 +161,11 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
   preenchidas, e a porta 58443 precisa estar liberada no firewall do provedor.
 - A migração `0007` roda sozinha no startup: acrescenta `agent_definitions.stages` e cria a
   tabela `procedure_runs`. Nada muda nos agentes que já existem, nem a versão da configuração deles.
+- A migração `0008` também roda sozinha: cria `knowledge_sources` e `knowledge_source_pages`
+  (os sites das collections). O agendador de ressincronização liga no startup. Um sync em
+  andamento renova um heartbeat a cada 30 s; sem sinal por 2 minutos (o processo caiu no meio),
+  ele é marcado `failed` e pode ser disparado de novo. A trava no banco impede dois syncs da mesma
+  fonte, inclusive entre réplicas; com mais de uma, deixe `WEB_SOURCE_SCHEDULER=true` em uma só.
 
 ---
 

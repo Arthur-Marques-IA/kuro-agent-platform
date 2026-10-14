@@ -146,6 +146,63 @@ export interface SearchResult extends RetrievedChunk {
   metadata: Record<string, unknown> | null;
 }
 
+export type SourceMode = "crawl" | "sitemap" | "page";
+export type SourceRefresh = "never" | "daily" | "weekly" | "monthly";
+export type SourceStatus = "pending" | "running" | "ready" | "partial" | "failed";
+
+/** Um site que alimenta a coleção (`/collections/{nome}/sources`). */
+export interface KnowledgeSource {
+  id: string;
+  collection: string;
+  url: string;
+  label?: string | null;
+  mode: SourceMode;
+  options: {
+    max_pages?: number;
+    max_depth?: number;
+    include?: string[];
+    exclude?: string[];
+    format?: boolean;
+    formatter_provider?: string | null;
+    formatter_model_id?: string | null;
+  };
+  refresh: SourceRefresh;
+  status: SourceStatus;
+  status_message?: string | null;
+  progress?: {
+    discovered?: number;
+    done?: number;
+    indexed?: number;
+    unchanged?: number;
+    removed?: number;
+    failed?: number;
+    skipped?: number;
+    format_input_tokens?: number;
+    format_output_tokens?: number;
+    format_fallbacks?: number;
+  } | null;
+  pages_indexed: number;
+  pages_failed: number;
+  last_synced_at?: string | null;
+  next_sync_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface KnowledgeSourcePage {
+  url: string;
+  title?: string | null;
+  status: "indexed" | "failed" | "skipped" | string;
+  error?: string | null;
+  formatted?: "agent" | "fallback" | "none" | null;
+  chunks: number;
+  content_id?: string | null;
+  fetched_at?: string | null;
+}
+
+export interface KnowledgeSourceDetail extends KnowledgeSource {
+  pages: KnowledgeSourcePage[];
+}
+
 /** O que a span `search_knowledge_base` registra da busca que o agente fez. */
 export interface RetrievalReferences {
   query: string;

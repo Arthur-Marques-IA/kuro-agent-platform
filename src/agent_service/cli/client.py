@@ -320,6 +320,30 @@ class Client:
     def search_collection(self, name: str, query: str, limit: int) -> list[dict[str, Any]]:
         return self._request("GET", f"/collections/{name}/search", params={"query": query, "limit": limit})
 
+    # -- fontes de site (documents/web_sync.py) ------------------------------
+
+    def list_sources(self, name: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/collections/{name}/sources")
+
+    def create_source(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", f"/collections/{name}/sources", json=payload)
+
+    def get_source(self, name: str, source_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/collections/{name}/sources/{source_id}")
+
+    def update_source(self, name: str, source_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("PATCH", f"/collections/{name}/sources/{source_id}", json=payload)
+
+    def sync_source(self, name: str, source_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/collections/{name}/sources/{source_id}/sync")
+
+    def delete_source(self, name: str, source_id: str, keep_documents: bool = False) -> None:
+        self._request(
+            "DELETE",
+            f"/collections/{name}/sources/{source_id}",
+            params={"keep_documents": str(keep_documents).lower()},
+        )
+
     # -- observabilidade -----------------------------------------------------
 
     def list_runs(self, **params: Any) -> dict[str, Any]:

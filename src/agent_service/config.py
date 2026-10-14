@@ -114,6 +114,20 @@ class Settings(BaseSettings):
     públicos, que é o padrão: sem isso uma tool alcança o Postgres, o Redis e o
     metadata da nuvem a partir de dentro do container."""
 
+    # Sites como fonte de uma collection (ver agent_service/documents/web_sync.py)
+    web_source_max_pages: int = 500
+    """Teto de páginas por fonte, qualquer que seja o `max_pages` pedido."""
+    web_source_concurrency: int = 3
+    """Páginas processadas ao mesmo tempo por fonte (download + formatação)."""
+    web_source_request_delay_ms: int = 300
+    """Intervalo mínimo entre duas requisições ao mesmo site — educação com quem hospeda."""
+    web_source_user_agent: str = "KuroBot/1.0 (+https://github.com/Arthur-Marques-IA)"
+    """Como o crawler se apresenta; é este nome que o `robots.txt` do site enxerga."""
+    web_source_scheduler: bool = True
+    """Ressincroniza as fontes com `refresh` diário/semanal/mensal. Desligue em
+    réplicas extras se houver mais de uma (a trava no banco evita sync duplo, mas
+    não precisa de todas olhando)."""
+
     # Tools — kind="python" (ver agent_service/tools/python_tool.py)
     custom_python_tools_enabled: bool = False
     """Desligado por padrão: tools Python rodam num namespace restrito, mas

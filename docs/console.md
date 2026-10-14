@@ -6,7 +6,7 @@
 | **Análise** `/analyze` | roda um agente analista: documento (ou anexo) entra, o objeto do `response_schema` sai |
 | **Agentes** `/agents` | configuração (só os campos alterados vão no `PUT`), tipo do agente, parâmetros de geração e tempo limite, editor da saída estruturada com valores permitidos (`enum`); **Versões** (configuração inteira e prompt com diff) e **Promover**; **Aprendizado** (as regras vindas de feedback, editáveis, com histórico e rollback); execuções, com a concordância do shadow nos analistas; conversas e a aba Integração com o contrato vindo do backend |
 | **Tools** `/tools` | criação e edição dos três tipos, com formulário próprio por tipo, campos de dentro de parâmetros `object`/`array`, botão **Testar** (com `dependencies`) e origem de cada parâmetro |
-| **Conhecimento** `/knowledge` | documentos com status, escolha do embedder na criação, upload por texto ou arquivo em qualquer coleção (URL só na padrão), teste de busca semântica |
+| **Conhecimento** `/knowledge` | documentos com status, escolha do embedder na criação, texto, arquivo ou site em qualquer coleção (sites com progresso, páginas e ressincronização), teste de busca semântica com score e origem |
 | **Modelos** `/models` | credenciais por provedor, teste de chave |
 | **Logs** `/logs` | sessões e execuções de todos os agentes; o panorama do período (KPIs contra o período anterior, a série no tempo, tools falhando, custo e versões por agente); cada sessão e cada run abrem em detalhe |
 | **Trace** `/runs/[id]` | cascata de spans (agente → modelo → tools), versão da configuração, tokens, custo, avaliações, metadata de quem chamou e a referência do shadow |

@@ -241,6 +241,12 @@ def delete_collection(collection_name: str) -> None:
             status_code=409,
             detail=f"Coleção em uso por: {', '.join(using)}. Tire-a desses agentes primeiro.",
         )
+    # As fontes de site saem junto: o agendador não pode seguir coletando para
+    # uma collection que não existe mais.
+    from agent_service.documents import sources_store
+
+    for source in sources_store.list_sources(collection_name):
+        sources_store.delete_source(source["id"])
     store.delete_collection(collection_name)
 
 
@@ -338,6 +344,18 @@ async def delete_collection_document(collection_name: str, content_id: str) -> N
         raise HTTPException(
             status_code=404, detail=f"Documento {content_id!r} não encontrado em {collection_name!r}"
         )
+    # Página de um site: sem o registro dela, o próximo sync acharia a página
+    # "igual" e não a indexaria de novo — ficaria contada como indexada sem estar.
+    # Apagando o registro, ela volta no próximo sync (para tirar de vez, use
+    # `exclude` na fonte).
+    from agent_service.documents import sources_store
+
+    page = sources_store.source_of_content(content_id)
+    if page is not None:
+        sources_store.delete_page(page["source_id"], page["url"])
+        source = sources_store.get_source(page["source_id"])
+        if source is not None:
+            sources_store.update_source(page["source_id"], pages_indexed=max(source["pages_indexed"] - 1, 0))
 
 
 @router.get("/{collection_name}/search", response_model=list[SearchResult])

@@ -240,10 +240,56 @@ uv run kuro collections search manuais "prazo de garantia"      # o mesmo que o 
 uv run kuro agents set suporte knowledge_collection=manuais
 ```
 
-Arquivo e texto valem em qualquer coleção, pelo console ou pela CLI
-(`collections add -f manual.pdf`). Já a ingestão por **URL** passa pelo pipeline
-do AgentOS, que não aceita escolher a coleção — só alimenta a padrão
-(`general`).
+Arquivo, texto e site valem em qualquer coleção, pelo console, pela CLI ou pelo MCP
+(`collections add -f manual.pdf`, `collections add-site`).
+
+### Sites como fonte
+
+Um site cadastrado numa collection é coletado, formatado e indexado pelo próprio Kuro, e pode
+ser ressincronizado sozinho:
+
+```bash
+uv run kuro collections add-site manuais https://docs.exemplo.com/guia --max-pages 100 --refresh weekly --wait
+uv run kuro collections sources manuais              # sites, status e progresso
+uv run kuro collections sources manuais <id>         # página a página: status, trechos, formatação
+uv run kuro collections sync manuais <id>            # coleta de novo agora
+uv run kuro collections rm-site manuais <id> --yes   # tira o site e as páginas dele da base
+```
+
+| `--mode` | O que coleta |
+|---|---|
+| `crawl` (padrão) | a URL e os links do mesmo site **abaixo do caminho dela** (`/guia/...`), até `--max-depth` saltos |
+| `sitemap` | as páginas do sitemap: a URL dada, o anunciado no `robots.txt` ou `/sitemap.xml` |
+| `page` | só a URL |
+
+`--include`/`--exclude` filtram por glob de caminho (`/blog/*`), e `--max-pages` (padrão 50) tem
+o teto de `WEB_SOURCE_MAX_PAGES`. Cada página passa por:
+
+1. **Download seguro**: a mesma trava de egress das tools, conferida a cada salto de redirect (uma
+   fonte não alcança a rede interna nem o metadata da nuvem); o `robots.txt` é respeitado com o
+   `User-Agent` de `WEB_SOURCE_USER_AGENT`; só HTML/texto, até 5 MB; intervalo mínimo entre
+   requisições ao mesmo site.
+2. **Extração**: o conteúdo principal vira Markdown (títulos, listas, tabelas, código); menus,
+   rodapés, banners de cookie e scripts ficam de fora.
+3. **Agente formatador**: organiza o Markdown **sem reescrever**. O resultado é conferido contra a
+   página, e é reprovado se trouxer palavra ou número que não estava lá, se cortar conteúdo demais
+   ou se mudar a redação — sequências de três palavras que não aparecem, nessa ordem, na página
+   (é o que pega um "não" removido ou uma frase invertida). Reprovado, o Kuro indexa o texto da
+   extração, e o status da página diz por quê. A checagem é por palavras, não por sentido: ela
+   barra reescrita, não um erro que mantenha as mesmas palavras na mesma ordem. O modelo é o de
+   `AUX_MODEL_ID` (ou o padrão do serviço), ou o da fonte (`--formatter-provider`/`--formatter-model`);
+   `--no-format` pula a etapa, e o trecho fica exatamente como a extração o tirou da página.
+4. **Trechos por seção**: cada trecho guarda `source_url`, `page_title` e `section`
+   (`Instalação > Windows`), que aparecem no trace.
+
+Ressincronizar é incremental: o documento de cada página tem id fixo pela URL, então página
+alterada é **substituída** (não duplicada), a que não mudou nem é reprocessada, e a que sumiu do
+site (404, 410 ou fora da coleta) sai da base. Se o site não responder, nada é apagado. Com
+`--refresh daily|weekly|monthly` o serviço repete sozinho.
+
+Apagar à mão (`collections rm-doc`) o documento de uma página de site tira a página da base só até
+o próximo sync, que a traz de volta. Para deixá-la de fora de vez, use `exclude`
+(`kuro collections set-site manuais <id> exclude='["/caminho/*"]'`).
 
 ### O que o agente leu
 
@@ -251,7 +297,8 @@ Cada busca que o agente faz vira uma span `search_knowledge_base` no trace do ru
 em `metadata.references`, a pergunta que o modelo mandou e cada trecho que voltou: posição no
 ranking, `score` (similaridade 0–1, ou o do reranker), documento, `content_id`, `chunk_id`, o
 número do trecho e, quando o documento veio de um site, `source_url` e `page_title`. O texto é o
-mesmo que o modelo recebeu — a saída da span continua sendo o texto cru.
+mesmo que o modelo recebeu — a saída da span continua sendo o texto cru. De um site, vêm também a
+`section` (o caminho de títulos) e o link para a página.
 
 ```bash
 uv run kuro --json runs show <run_id>    # spans[].metadata.references

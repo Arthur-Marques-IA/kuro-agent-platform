@@ -147,7 +147,7 @@ subiu; quem confirma que ele alcança o serviço é a tool `health`.
 | Tools | `tools_list`, `tool_get`, `tool_catalog`, `tool_apply`, `tool_invoke`, `tool_delete`\* |
 | Execuções | `runs_list`, `run_show`, `runs_stats`, `runs_overview`, `runs_agreement`, `run_score` |
 | Conversas | `sessions_list`, `session_show`, `session_delete`\* |
-| Bases de conhecimento | `collections_list`, `collection_docs`, `collection_search`, `collection_add`, `collection_rm_doc`\* |
+| Bases de conhecimento | `collections_list`, `collection_docs`, `collection_search`, `collection_add`, `collection_rm_doc`\*, `collection_add_site`, `collection_sources`, `collection_sync_site`, `collection_rm_site`\* |
 
 \* Pede confirmação ao usuário (ver abaixo).
 
@@ -174,7 +174,8 @@ Editar um agente (`agent_set`, `agent_apply`), uma tool (`tool_apply`) ou as reg
 pede confirmação, como na CLI: tem histórico e versão para voltar. Isso inclui editar direto o
 agente de produção, sem passar pelo draft. Essas tools levam `destructiveHint`, porque sobrescrevem
 o que existia. As de leitura levam `readOnlyHint`, e só `run_score` e `collection_add`, que apenas
-acrescentam, ficam sem nenhuma das duas. É por essas anotações que o cliente MCP decide o que
+acrescentam, ficam sem nenhuma das duas. `collection_add_site` e `collection_sync_site` levam também
+`openWorldHint` (saem para a web), e a segunda `destructiveHint` (troca e remove páginas da base). É por essas anotações que o cliente MCP decide o que
 pede permissão antes de chamar.
 
 ## Diferenças em relação à CLI, de propósito
