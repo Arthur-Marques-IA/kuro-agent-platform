@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -175,10 +176,16 @@ def _bucket_starts(since: datetime, until: datetime, granularity: Granularity, t
     return starts
 
 
-def _conditions(since: datetime, until: datetime, agent_type: str | None, include_dry_run: bool) -> list[Any]:
+def _agent_types(agent_type: str | Sequence[str] | None) -> tuple[str, ...]:
+    if not agent_type:
+        return ()
+    return (agent_type,) if isinstance(agent_type, str) else tuple(agent_type)
+
+
+def _conditions(since: datetime, until: datetime, agent_types: tuple[str, ...], include_dry_run: bool) -> list[Any]:
     conditions = [runs.c.started_at >= since, runs.c.started_at < until]
-    if agent_type:
-        conditions.append(runs.c.agent_type == agent_type)
+    if agent_types:
+        conditions.append(runs.c.agent_type.in_(agent_types))
     if not include_dry_run:
         conditions.append(
             not_(
@@ -268,30 +275,32 @@ def build_overview(
     *,
     since: datetime | None,
     until: datetime | None,
-    agent_type: str | None = None,
+    agent_type: str | Sequence[str] | None = None,
     include_dry_run: bool = False,
     timezone_name: str = DEFAULT_TIMEZONE,
     granularity: Granularity | None = None,
 ) -> Overview:
+    """`agent_type`: um agente, vários (qualquer um deles) ou `None`/vazio para todos."""
     tz = ZoneInfo(timezone_name)
+    agents = _agent_types(agent_type)
     engine = get_db().db_engine
     until = _as_utc(until) if until else datetime.now(timezone.utc)
     with engine.connect() as conn:
         if since is None:
             first = conn.execute(
-                select(func.min(runs.c.started_at)).where(*_conditions(datetime.min.replace(tzinfo=timezone.utc), until, agent_type, include_dry_run))
+                select(func.min(runs.c.started_at)).where(*_conditions(datetime.min.replace(tzinfo=timezone.utc), until, agents, include_dry_run))
             ).scalar_one()
             since = _as_utc(first) if first else until - timedelta(days=7)
         since = _as_utc(since)
         granularity = granularity or auto_granularity(since, until)
-        conditions = _conditions(since, until, agent_type, include_dry_run)
+        conditions = _conditions(since, until, agents, include_dry_run)
 
         totals = _totals(conn, conditions)
-        previous = _totals(conn, _conditions(since - (until - since), since, agent_type, include_dry_run))
+        previous = _totals(conn, _conditions(since - (until - since), since, agents, include_dry_run))
         # A coleta de sites não é de agente nenhum: só entra no panorama geral.
-        ingestion = [] if agent_type else _ingestion(since, until)
+        ingestion = [] if agents else _ingestion(since, until)
         _add_ingestion(totals, ingestion)
-        if not agent_type:
+        if not agents:
             _add_ingestion(previous, _ingestion(since - (until - since), since))
 
         starts = _bucket_starts(since, until, granularity, tz)

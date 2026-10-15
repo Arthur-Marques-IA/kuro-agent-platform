@@ -2,7 +2,7 @@ import { cn } from "@/lib/cn";
 
 // O mesmo corvo do `kuro dash` (src/agent_service/tui/crow.py): a grade e as cores
 // precisam ficar iguais às de lá — tests/test_tui.py confere.
-const GRID = [
+export const GRID = [
   "................",
   ".........KKK....",
   "........KKKKK...",
@@ -17,7 +17,7 @@ const GRID = [
   ".....FF.FF......",
 ];
 
-const COLORS: Record<string, string> = {
+export const COLORS: Record<string, string> = {
   K: "#2a3442",
   H: "#4a5a6e",
   B: "#8b99ab",

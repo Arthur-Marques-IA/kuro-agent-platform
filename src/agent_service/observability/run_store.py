@@ -359,12 +359,16 @@ def _filters(query: RunQuery, *, with_session: bool = False) -> list[Any]:
         conditions.append(runs.c.tenant_id == query.tenant_id)
     if query.agent_type:
         conditions.append(runs.c.agent_type == query.agent_type)
+    if query.agent_types:
+        conditions.append(runs.c.agent_type.in_(query.agent_types))
     if query.prompt_version is not None:
         conditions.append(runs.c.prompt_version == query.prompt_version)
     if query.agent_version is not None:
         conditions.append(runs.c.agent_version == query.agent_version)
     if query.status:
         conditions.append(runs.c.status == query.status)
+    if query.statuses:
+        conditions.append(runs.c.status.in_(query.statuses))
     if query.user_id:
         conditions.append(runs.c.user_id == query.user_id)
     if query.session_id:
@@ -448,6 +452,26 @@ def _decode_cursor(cursor: str) -> tuple[datetime, str] | None:
     started, _, run_id = cursor.partition("|")
     try:
         return datetime.fromisoformat(started), run_id
+    except ValueError:
+        return None
+
+
+# Ordenações além da padrão (mais recentes): a coluna e o prefixo do cursor, que carrega o valor
+# do último item — o cursor de uma ordenação não serve para outra.
+_SORT_COLUMNS = {"cost": runs.c.cost_usd, "latency": runs.c.latency_ms}
+
+
+def _encode_sort_cursor(sort: str, value: float, run_id: str) -> str:
+    return f"{sort}:{value!r}|{run_id}"
+
+
+def _decode_sort_cursor(sort: str, cursor: str) -> tuple[float, str] | None:
+    prefix, _, rest = cursor.partition(":")
+    value, _, run_id = rest.partition("|")
+    if prefix != sort or not run_id:
+        return None
+    try:
+        return float(value), run_id
     except ValueError:
         return None
 
@@ -543,12 +567,23 @@ class DbTraceStore:
                 meta = _metadata_of(conn, [r.run_id for r in page])
                 files = _attachments_of(conn, [r.run_id for r in page])
             return RunPage(items=[_summary(r, votes[r.run_id], meta[r.run_id], files[r.run_id]) for r in page])
-        if query.cursor and (position := _decode_cursor(query.cursor)):
-            started_at, run_id = position
-            stmt = stmt.where(
-                or_(runs.c.started_at < started_at, and_(runs.c.started_at == started_at, runs.c.run_id < run_id))
-            )
-        stmt = stmt.order_by(runs.c.started_at.desc(), runs.c.run_id.desc()).limit(query.limit + 1)
+        column = _SORT_COLUMNS.get(query.sort)
+        if column is not None:
+            # As mais caras (ou lentas) primeiro. Run sem o valor (custo desconhecido) não tem lugar
+            # nessa fila: fica de fora, e o cursor de chave nunca precisa comparar com NULL.
+            stmt = stmt.where(column.is_not(None))
+            if query.cursor and (sort_position := _decode_sort_cursor(query.sort, query.cursor)):
+                value, run_id = sort_position
+                stmt = stmt.where(or_(column < value, and_(column == value, runs.c.run_id < run_id)))
+            stmt = stmt.order_by(column.desc(), runs.c.run_id.desc())
+        else:
+            if query.cursor and (position := _decode_cursor(query.cursor)):
+                started_at, run_id = position
+                stmt = stmt.where(
+                    or_(runs.c.started_at < started_at, and_(runs.c.started_at == started_at, runs.c.run_id < run_id))
+                )
+            stmt = stmt.order_by(runs.c.started_at.desc(), runs.c.run_id.desc())
+        stmt = stmt.limit(query.limit + 1)
         with get_db().db_engine.connect() as conn:
             rows = list(conn.execute(stmt))
             page, more = rows[: query.limit], len(rows) > query.limit
@@ -556,7 +591,14 @@ class DbTraceStore:
             meta = _metadata_of(conn, [r.run_id for r in page])
             files = _attachments_of(conn, [r.run_id for r in page])
         items = [_summary(r, votes[r.run_id], meta[r.run_id], files[r.run_id]) for r in page]
-        next_cursor = _encode_cursor(page[-1].started_at, page[-1].run_id) if more else None
+        next_cursor = None
+        if more:
+            last = page[-1]
+            next_cursor = (
+                _encode_sort_cursor(query.sort, last._mapping[column.name], last.run_id)
+                if column is not None
+                else _encode_cursor(last.started_at, last.run_id)
+            )
         return RunPage(items=items, next_cursor=next_cursor)
 
     def get_run(self, run_id: str, *, tenant_id: str | None = None) -> RunTrace | None:

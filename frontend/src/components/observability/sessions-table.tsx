@@ -11,9 +11,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState, RelativeTime, Skeleton } from "@/components/ui/primitives";
 import { FeedbackCount } from "@/components/observability/run-status";
+import { apiSearchParams } from "@/lib/logs-query";
 
 /** Busca `/api/observability/sessions` com os filtros dados — não pagina de verdade, ver `scanned`. */
-export function useSessions(params: Record<string, string>) {
+export function useSessions(params: Record<string, string | string[]>) {
   const [items, setItems] = useState<LogSessionSummary[]>([]);
   const [scanned, setScanned] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -24,7 +25,7 @@ export function useSessions(params: Record<string, string>) {
     setState("loading");
     setError(null);
     try {
-      const page = await requestJson<LogSessionPage>(`/api/observability/sessions?${new URLSearchParams(params)}`, {
+      const page = await requestJson<LogSessionPage>(`/api/observability/sessions?${apiSearchParams(params)}`, {
         fallbackError: "Falha ao carregar sessões",
       });
       setItems(page.items);
@@ -45,7 +46,7 @@ export function useSessions(params: Record<string, string>) {
   return { items, scanned, state, error, reload };
 }
 
-export function SessionsTable({ params }: { params: Record<string, string> }) {
+export function SessionsTable({ params }: { params: Record<string, string | string[]> }) {
   const { items, state, error, reload } = useSessions(params);
 
   if (state === "loading") {

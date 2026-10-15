@@ -47,6 +47,7 @@ export function SessionDetailView({ sessionId }: { sessionId: string }) {
       <PageHeader
         breadcrumbs={[
           { label: "Logs", href: "/logs" },
+          { label: "Sessões", href: "/logs/sessions" },
           { label: "Sessão" },
         ]}
         title={

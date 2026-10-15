@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Sidebar } from "@/components/workspace/sidebar";
 import { CommandPalette } from "@/components/workspace/command-palette";
+import { KuroMascot } from "@/components/brand/kuro-mascot";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
 
 const ShellContext = createContext<{ openMobileSidebar: () => void } | null>(null);
@@ -69,6 +70,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
         <CommandPalette />
+        <KuroMascot sidebarCollapsed={isCollapsed} />
       </div>
     </ShellContext.Provider>
   );

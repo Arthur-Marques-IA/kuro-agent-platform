@@ -1,11 +1,13 @@
 "use client";
 
 import { Fragment, useEffect, useId, useRef, useState } from "react";
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronDown, ChevronRight, Table2, Wrench } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, ChevronDown, ChevronRight, Table2, Wrench } from "lucide-react";
 import { errorMessage, requestJson } from "@/lib/http";
 import { formatCost, formatMs, formatNumber, formatRelativeTime } from "@/lib/format";
 import { TOOL_FAILURE_META } from "@/lib/tool-failures";
 import { FEW_RUNS, STACK_KEYS, bucketRate, niceMax, periodFailureRate, rateScale } from "@/lib/trend";
+import { apiSearchParams, type LogsQuery } from "@/lib/logs-query";
 import type { Overview, OverviewAgent, OverviewBucket, OverviewTotals } from "@/lib/types";
 import { AgentAvatar } from "@/components/agents/agent-avatar";
 import { Badge } from "@/components/ui/badge";
@@ -19,12 +21,14 @@ import { cn } from "@/lib/cn";
  * tem algo quebrado? (KPIs com o período anterior, tools falhando), para onde vai
  * o dinheiro? (custo por agente e por conversa), a última versão melhorou?
  * (versões de cada agente), e como isso evolui (série no tempo, sem buracos).
- * Os dados vêm prontos de `GET /observability/overview`.
+ * Os dados vêm prontos de `GET /observability/overview`. Investigar um caso é nas listas de
+ * Sessões e Execuções: `runsHref` monta o link de cada número para as execuções que ele conta.
  */
 
 const TIMEZONE = "America/Sao_Paulo";
 
-export function useOverview(params: Record<string, string>) {
+/** `enabled` falso segura a busca (o recorte ainda não foi calculado). */
+export function useOverview(params: Record<string, string | string[]>, enabled = true) {
   const [data, setData] = useState<Overview | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
@@ -32,11 +36,12 @@ export function useOverview(params: Record<string, string>) {
   const key = JSON.stringify(params);
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     // Recarregar mantém o desenho anterior (com opacidade menor): sem esqueleto piscando.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setState("loading");
-    requestJson<Overview>(`/api/observability/overview?${new URLSearchParams({ tz: TIMEZONE, ...params })}`, {
+    requestJson<Overview>(`/api/observability/overview?${apiSearchParams({ tz: TIMEZONE, ...params })}`, {
       fallbackError: "Falha ao carregar o panorama",
     })
       .then((overview) => {
@@ -54,12 +59,15 @@ export function useOverview(params: Record<string, string>) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, nonce]);
+  }, [key, nonce, enabled]);
 
   return { data, state, error, reload: () => setNonce((n) => n + 1) };
 }
 
-export function OverviewPanel({ overview }: { overview: ReturnType<typeof useOverview> }) {
+/** O link para a lista de execuções com um recorte a mais (agente, versão, tool falhando). */
+type RunsHref = (drill: Partial<LogsQuery>) => string;
+
+export function OverviewPanel({ overview, runsHref }: { overview: ReturnType<typeof useOverview>; runsHref: RunsHref }) {
   const { data, state, error } = overview;
 
   if (!data) {
@@ -76,7 +84,7 @@ export function OverviewPanel({ overview }: { overview: ReturnType<typeof useOve
   return (
     <div className={cn("flex flex-col gap-4 transition-opacity", state === "loading" && "opacity-60")}>
       {state === "error" && error && <p className="text-[13px] text-destructive">{error}</p>}
-      <KpiRow totals={data.totals} previous={data.previous} />
+      <KpiRow totals={data.totals} previous={data.previous} runsHref={runsHref} />
       {data.totals.runs === 0 ? (
         <Card>
           <EmptyState
@@ -88,8 +96,8 @@ export function OverviewPanel({ overview }: { overview: ReturnType<typeof useOve
       ) : (
         <>
           <TrendCard overview={data} />
-          {data.tool_failures.length > 0 && <ToolFailuresCard overview={data} />}
-          <AgentsCard overview={data} />
+          {data.tool_failures.length > 0 && <ToolFailuresCard overview={data} runsHref={runsHref} />}
+          <AgentsCard overview={data} runsHref={runsHref} />
         </>
       )}
     </div>
@@ -137,19 +145,24 @@ function Delta({ current, previous, polarity, kind }: { current: number | null; 
   );
 }
 
-function KpiRow({ totals, previous }: { totals: OverviewTotals; previous: OverviewTotals | null }) {
+/** Cada KPI leva às execuções que explicam o número, no mesmo recorte (período, agentes, testes). */
+function KpiRow({ totals, previous, runsHref }: { totals: OverviewTotals; previous: OverviewTotals | null; runsHref: RunsHref }) {
   const failed = totals.errors + totals.interrupted;
   const prevFailed = previous ? previous.errors + previous.interrupted : null;
   const tiles = [
     {
       label: "Execuções",
       value: formatNumber(totals.runs),
+      href: runsHref({}),
+      goesTo: "ver as execuções do período",
       detail: `${formatNumber(totals.sessions)} conversas`,
       delta: <Delta current={totals.runs} previous={previous?.runs ?? null} polarity="neutral" kind="ratio" />,
     },
     {
       label: "Falharam",
       value: formatRate(rate(failed, totals.runs)),
+      href: runsHref({ statuses: ["error", "interrupted"] }),
+      goesTo: "ver as execuções com erro ou interrompidas",
       detail: `${formatNumber(totals.errors)} com erro · ${formatNumber(totals.interrupted)} interrompidas`,
       delta: (
         <Delta
@@ -163,6 +176,9 @@ function KpiRow({ totals, previous }: { totals: OverviewTotals; previous: Overvi
     {
       label: "Responderam com tool falhando",
       value: formatRate(rate(totals.tool_failure_runs, totals.runs)),
+      // O número conta só as que terminaram em sucesso: o erro já está em "Falharam".
+      href: runsHref({ statuses: ["success"], toolFailed: true }),
+      goesTo: "ver as execuções que responderam com alguma tool falhando",
       detail: `${formatNumber(totals.tool_failures)} de ${formatNumber(totals.tool_calls)} chamadas de tool falharam`,
       delta: (
         <Delta
@@ -176,6 +192,8 @@ function KpiRow({ totals, previous }: { totals: OverviewTotals; previous: Overvi
     {
       label: "Custo",
       value: formatCost(totals.cost_usd),
+      href: runsHref({ sort: "cost" }),
+      goesTo: "ver as execuções mais caras primeiro",
       // A coleta de sites entra no total, mas não é de conversa nenhuma.
       detail: [
         totals.sessions
@@ -190,6 +208,8 @@ function KpiRow({ totals, previous }: { totals: OverviewTotals; previous: Overvi
     {
       label: "Latência p95",
       value: formatMs(totals.p95_latency_ms),
+      href: runsHref({ sort: "latency" }),
+      goesTo: "ver as execuções mais lentas primeiro",
       detail: `mediana ${formatMs(totals.p50_latency_ms)}`,
       delta: <Delta current={totals.p95_latency_ms} previous={previous?.p95_latency_ms ?? null} polarity="bad" kind="ratio" />,
     },
@@ -197,12 +217,27 @@ function KpiRow({ totals, previous }: { totals: OverviewTotals; previous: Overvi
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
       {tiles.map((tile) => (
-        <Card key={tile.label} className="flex flex-col gap-1 p-4">
-          <span className="text-xs text-muted-foreground">{tile.label}</span>
+        <Link
+          key={tile.label}
+          href={tile.href}
+          aria-label={`${tile.label}: ${tile.value}. Abrir as Execuções para ${tile.goesTo}`}
+          title={`Abrir as Execuções para ${tile.goesTo}`}
+          className={cn(
+            "group relative flex flex-col gap-1 rounded-xl border border-border bg-card p-4 text-card-foreground shadow-xs",
+            "outline-none transition-colors hover:border-primary/50 hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring"
+          )}
+        >
+          <span className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            {tile.label}
+            <ArrowRight
+              className="size-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+              aria-hidden
+            />
+          </span>
           <span className="text-2xl font-semibold tracking-tight">{tile.value}</span>
           <span className="min-h-4">{tile.delta}</span>
           <span className="text-xs text-muted-foreground">{tile.detail}</span>
-        </Card>
+        </Link>
       ))}
     </div>
   );
@@ -776,7 +811,7 @@ function TrendTable({ overview, metric }: { overview: Overview; metric: Metric }
 
 // -- Tools falhando --------------------------------------------------------------
 
-function ToolFailuresCard({ overview }: { overview: Overview }) {
+function ToolFailuresCard({ overview, runsHref }: { overview: Overview; runsHref: RunsHref }) {
   return (
     <Card className="flex flex-col gap-3 p-4">
       <div>
@@ -795,7 +830,10 @@ function ToolFailuresCard({ overview }: { overview: Overview }) {
               <th className="py-2 pr-3 font-medium">Tipo</th>
               <th className="py-2 pr-3 text-right font-medium">Falhas</th>
               <th className="py-2 pr-3 font-medium">Agentes</th>
-              <th className="py-2 font-medium">Última</th>
+              <th className="py-2 pr-3 font-medium">Última</th>
+              <th className="py-2 font-medium">
+                <span className="sr-only">Execuções</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -810,7 +848,17 @@ function ToolFailuresCard({ overview }: { overview: Overview }) {
                 </td>
                 <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{formatNumber(f.count)}</td>
                 <td className="py-2 pr-3 text-xs text-muted-foreground">{f.agent_types.join(", ")}</td>
-                <td className="whitespace-nowrap py-2 text-xs text-muted-foreground">{formatRelativeTime(f.last_at)}</td>
+                <td className="whitespace-nowrap py-2 pr-3 text-xs text-muted-foreground">{formatRelativeTime(f.last_at)}</td>
+                <td className="whitespace-nowrap py-2 text-right">
+                  {/* A lista não filtra por tool: o recorte é "alguma tool falhou", nos agentes em que esta falhou.
+                      `not_found` não conta como falha, então não há lista que o mostre. */}
+                  {f.failure !== "not_found" && (
+                    <RunsLink
+                      href={runsHref({ toolFailed: true, agents: f.agent_types })}
+                      title="Execuções em que alguma tool falhou (a lista não recorta por tool)"
+                    />
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -873,18 +921,18 @@ function VersionVerdict({ agent }: { agent: OverviewAgent }) {
   );
 }
 
-function AgentsCard({ overview }: { overview: Overview }) {
+function AgentsCard({ overview, runsHref }: { overview: Overview; runsHref: RunsHref }) {
   const [open, setOpen] = useState<string | null>(overview.agents.length === 1 ? overview.agents[0].agent_type : null);
   return (
     <Card className="flex flex-col gap-3 p-4">
       <div>
         <h3 className="text-sm font-medium">Por agente</h3>
         <p className="text-xs text-muted-foreground">
-          Abra um agente para comparar as versões da configuração que rodaram no período.
+          Abra um agente para comparar as versões da configuração que rodaram no período; a seta leva às execuções.
         </p>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[960px] text-[13px]">
+        <table className="w-full min-w-[1000px] text-[13px]">
           <thead className="text-xs text-muted-foreground">
             <tr className="border-b border-border text-left">
               <th className="py-2 pr-3 font-medium">Agente</th>
@@ -895,7 +943,10 @@ function AgentsCard({ overview }: { overview: Overview }) {
               <th className="py-2 pr-3 text-right font-medium">Por conversa</th>
               <th className="py-2 pr-3 text-right font-medium">p95</th>
               <th className="py-2 pr-3 text-right font-medium">Feedback</th>
-              <th className="py-2 font-medium">Versão atual</th>
+              <th className="py-2 pr-3 font-medium">Versão atual</th>
+              <th className="py-2 font-medium">
+                <span className="sr-only">Execuções</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -936,14 +987,17 @@ function AgentsCard({ overview }: { overview: Overview }) {
                     <td className="whitespace-nowrap py-2 pr-3 text-right text-xs tabular-nums">
                       {t.feedback_up + t.feedback_down ? `👍 ${t.feedback_up} · 👎 ${t.feedback_down}` : "—"}
                     </td>
-                    <td className="whitespace-nowrap py-2">
+                    <td className="whitespace-nowrap py-2 pr-3">
                       <VersionVerdict agent={agent} />
+                    </td>
+                    <td className="whitespace-nowrap py-2 text-right">
+                      <RunsLink href={runsHref({ agents: [agent.agent_type] })} title={`Execuções de ${agent.agent_name ?? agent.agent_type}`} />
                     </td>
                   </tr>
                   {expanded && (
                     <tr className="border-b border-border bg-muted/30">
-                      <td colSpan={9} className="px-3 py-3">
-                        <VersionsTable agent={agent} />
+                      <td colSpan={10} className="px-3 py-3">
+                        <VersionsTable agent={agent} runsHref={runsHref} />
                       </td>
                     </tr>
                   )}
@@ -957,7 +1011,7 @@ function AgentsCard({ overview }: { overview: Overview }) {
   );
 }
 
-function VersionsTable({ agent }: { agent: OverviewAgent }) {
+function VersionsTable({ agent, runsHref }: { agent: OverviewAgent; runsHref: RunsHref }) {
   return (
     <table className="w-full text-xs">
       <thead className="text-muted-foreground">
@@ -975,7 +1029,19 @@ function VersionsTable({ agent }: { agent: OverviewAgent }) {
       <tbody className="tabular-nums">
         {agent.versions.map((v) => (
           <tr key={String(v.agent_version)}>
-            <td className="py-1 pr-3">{v.agent_version != null ? `v${v.agent_version}` : "sem versão"}</td>
+            <td className="py-1 pr-3">
+              {v.agent_version != null ? (
+                <Link
+                  href={runsHref({ agents: [agent.agent_type], version: v.agent_version })}
+                  className="font-medium underline-offset-2 hover:underline"
+                  title={`Execuções da v${v.agent_version}`}
+                >
+                  v{v.agent_version}
+                </Link>
+              ) : (
+                "sem versão"
+              )}
+            </td>
             <td className="py-1 pr-3 text-right">{formatNumber(v.runs)}</td>
             <td className="py-1 pr-3 text-right">{formatRate(v.error_rate)}</td>
             <td className="py-1 pr-3 text-right">{formatRate(v.tool_failure_rate)}</td>
@@ -989,5 +1055,18 @@ function VersionsTable({ agent }: { agent: OverviewAgent }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+function RunsLink({ href, title }: { href: string; title: string }) {
+  return (
+    <Link
+      href={href}
+      title={title}
+      aria-label={title}
+      className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+    >
+      <ArrowRight className="size-4" aria-hidden />
+    </Link>
   );
 }
