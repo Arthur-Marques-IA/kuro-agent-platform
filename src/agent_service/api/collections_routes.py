@@ -26,10 +26,12 @@ from agent_service.documents.collections import (
     add_file,
     add_text,
     default_collection_name,
+    get_collection,
     list_documents,
     remove_document,
     search,
 )
+from agent_service.documents.retrieval import describe_hits
 from agent_service.documents.embedder import (
     DEFAULT_EMBEDDER_PROVIDER,
     EMBEDDERS,
@@ -86,8 +88,20 @@ class AddTextRequest(BaseModel):
 
 
 class SearchResult(BaseModel):
+    """Um trecho encontrado — o mesmo formato de `metadata.references` na span
+    da busca do agente (`documents/retrieval.py`)."""
+
     content: str
     metadata: dict[str, Any] | None = None
+    rank: int | None = None
+    score: float | None = Field(default=None, description="Similaridade (0–1) ou o score do reranker")
+    document: str | None = None
+    content_id: str | None = None
+    chunk_id: str | None = None
+    chunk: int | None = None
+    section: str | None = None
+    source_url: str | None = None
+    page_title: str | None = None
 
 
 def _agents_using(name: str) -> list[str]:
@@ -227,6 +241,12 @@ def delete_collection(collection_name: str) -> None:
             status_code=409,
             detail=f"Coleção em uso por: {', '.join(using)}. Tire-a desses agentes primeiro.",
         )
+    # As fontes de site saem junto: o agendador não pode seguir coletando para
+    # uma collection que não existe mais.
+    from agent_service.documents import sources_store
+
+    for source in sources_store.list_sources(collection_name):
+        sources_store.delete_source(source["id"])
     store.delete_collection(collection_name)
 
 
@@ -324,10 +344,26 @@ async def delete_collection_document(collection_name: str, content_id: str) -> N
         raise HTTPException(
             status_code=404, detail=f"Documento {content_id!r} não encontrado em {collection_name!r}"
         )
+    # Página de um site: sem o registro dela, o próximo sync acharia a página
+    # "igual" e não a indexaria de novo — ficaria contada como indexada sem estar.
+    # Apagando o registro, ela volta no próximo sync (para tirar de vez, use
+    # `exclude` na fonte).
+    from agent_service.documents import sources_store
+
+    page = sources_store.source_of_content(content_id)
+    if page is not None:
+        sources_store.delete_page(page["source_id"], page["url"])
+        source = sources_store.get_source(page["source_id"])
+        if source is not None:
+            sources_store.update_source(page["source_id"], pages_indexed=max(source["pages_indexed"] - 1, 0))
 
 
 @router.get("/{collection_name}/search", response_model=list[SearchResult])
 async def search_collection(collection_name: str, query: str, limit: int = 5) -> list[SearchResult]:
     _row_or_404(collection_name)
     documents = await search(collection_name, query=query, limit=limit)
-    return [SearchResult(content=doc.content, metadata=doc.meta_data) for doc in documents]
+    hits = await describe_hits(get_collection(collection_name), documents)
+    return [
+        SearchResult(**{k: v for k, v in hit.items() if k in SearchResult.model_fields}, metadata=doc.meta_data)
+        for hit, doc in zip(hits, documents)
+    ]

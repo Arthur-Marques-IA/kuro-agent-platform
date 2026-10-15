@@ -36,6 +36,7 @@ from agno.agent import Agent
 from agno.run.agent import RunEvent, RunOutputEvent
 
 from agent_service.config import get_settings
+from agent_service.documents import retrieval
 from agent_service.tools import failures
 from agent_service.tools.context import set_dependencies, set_dry_run
 
@@ -104,6 +105,13 @@ class RunContext:
     extra_spans: tuple[Any, ...] = ()
     """Spans que aconteceram fora do run do Agno e fazem parte da mesma execução
     (a extração e a ação de um agente procedural), gravados junto no run."""
+
+    knowledge_searches: list[dict[str, Any]] = field(default_factory=list, compare=False, repr=False)
+    """As buscas na base de conhecimento que o run fez (o `metadata.references` de
+    cada span de busca), preenchidas enquanto os eventos passam. É uma lista do
+    próprio contexto — e não o ContextVar de `documents/retrieval.py` — porque com
+    o Langfuse o run roda noutra task, e a rota precisa ler isso no fim para
+    montar as `sources` da resposta."""
 
     @property
     def attachment_counts(self) -> dict[str, int]:
@@ -199,6 +207,7 @@ def _agent_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOutputEvent
     set_dependencies(run.dependencies)
     set_dry_run(run.dry_run)
     failures.start_run()
+    retrieval.start_run()
     return agent.arun(
         run.message,
         user_id=run.user_id,
@@ -301,12 +310,18 @@ def _tool_span(event: Any, now: datetime) -> Any:
     elif raised:
         metadata = {"failure": "exception"}
         status_message = getattr(event, "error", None) or str(getattr(tool, "result", "") or "")[:500] or None
+    if name == retrieval.SEARCH_TOOL:
+        # Os trechos que a busca devolveu, com documento, posição e score — o
+        # texto cru continua no `output`, que é o que o modelo leu.
+        search = retrieval.take_search((getattr(tool, "tool_args", None) or {}).get("query"))
+        if search is not None:
+            metadata["references"] = search
     return SpanRecord(
         type="TOOL",
         name=name,
         started_at=_utc(getattr(tool_metrics, "start_time", None)) or now,
         ended_at=_utc(getattr(tool_metrics, "end_time", None)),
-        level=failures.span_level(metadata["failure"]) if metadata else "DEFAULT",
+        level=failures.span_level(metadata["failure"]) if "failure" in metadata else "DEFAULT",
         status_message=status_message,
         input=getattr(tool, "tool_args", None),
         output=output,
@@ -382,7 +397,10 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
                 record.status_message = event.content or RUN_FAILED
             elif event.event in (RunEvent.tool_call_completed.value, RunEvent.tool_call_error.value):
                 if getattr(event, "tool", None) is not None:
-                    record.spans.append(_tool_span(event, datetime.now(timezone.utc)))
+                    span = _tool_span(event, datetime.now(timezone.utc))
+                    record.spans.append(span)
+                    if "references" in span.metadata:
+                        run.knowledge_searches.append(span.metadata["references"])
             if record.model is None and isinstance(getattr(event, "model", None), str):
                 record.model = event.model or None
             yield event

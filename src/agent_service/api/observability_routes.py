@@ -17,6 +17,7 @@ from agent_service.observability.overview import DEFAULT_TIMEZONE, Granularity, 
 from agent_service.observability.trace_store import (
     RunPage,
     RunQuery,
+    RunSort,
     RunStats,
     RunStatus,
     RunTrace,
@@ -71,6 +72,12 @@ class ScoreOut(BaseModel):
     value: float
 
 
+def _is_local(store: TraceStore) -> bool:
+    from agent_service.observability.run_store import DbTraceStore
+
+    return isinstance(store, DbTraceStore)
+
+
 def _store() -> TraceStore:
     store = get_trace_store()
     if store is None:
@@ -79,6 +86,25 @@ def _store() -> TraceStore:
             detail="TRACE_STORE_BACKEND=langfuse, mas o Langfuse não está configurado neste serviço.",
         )
     return store
+
+
+AgentTypes = Annotated[
+    list[str] | None,
+    Query(description="Só estes agentes (repetível: `agent_type=r8&agent_type=suporte`)."),
+]
+Statuses = Annotated[
+    list[RunStatus] | None,
+    Query(description="Só estes status (repetível: `status=error&status=interrupted`)."),
+]
+
+
+def _many(value: Any) -> tuple[Any, ...]:
+    """Parâmetro repetível como tupla. Chamada direta (testes, outros módulos) pode passar um valor só."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    return tuple(dict.fromkeys(value))
 
 
 def _parse_meta(meta: list[str] | None) -> tuple[tuple[str, str], ...]:
@@ -93,9 +119,9 @@ def _parse_meta(meta: list[str] | None) -> tuple[tuple[str, str], ...]:
 
 def _list_runs(
     *,
-    agent_type: str | None,
+    agent_type: str | list[str] | None,
     prompt_version: int | None,
-    status: RunStatus | None,
+    status: RunStatus | list[RunStatus] | None,
     user_id: str | None,
     session_id: str | None,
     since: datetime | None,
@@ -106,13 +132,21 @@ def _list_runs(
     meta: list[str] | None = None,
     search: str | None = None,
     review: dict[str, Any] | None = None,
+    sort: RunSort = "recent",
 ) -> RunPage:
+    store = _store()
+    if sort != "recent" and not _is_local(store):
+        raise HTTPException(
+            status_code=501,
+            detail="Ordenar por custo ou latência só existe com o trace store local (TRACE_STORE_BACKEND=db).",
+        )
     query = RunQuery(
         **(review or {}),
-        agent_type=agent_type,
+        agent_types=_many(agent_type),
         prompt_version=prompt_version,
         agent_version=agent_version,
-        status=status,
+        statuses=_many(status),
+        sort=sort,
         user_id=user_id,
         session_id=session_id,
         since=since,
@@ -123,16 +157,16 @@ def _list_runs(
         search=search,
     )
     try:
-        return _store().list_runs(query)
+        return store.list_runs(query)
     except TraceStoreError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/runs", response_model=RunPage)
 def list_runs(
-    agent_type: str | None = None,
+    agent_type: AgentTypes = None,
     prompt_version: Annotated[int | None, Query(ge=1)] = None,
-    status: RunStatus | None = None,
+    status: Statuses = None,
     user_id: str | None = None,
     session_id: str | None = None,
     since: datetime | None = None,
@@ -151,9 +185,16 @@ def list_runs(
     feedback: Annotated[Literal["up", "down", "none"] | None, Query()] = None,
     include_dry_run: Annotated[bool, Query(description="false tira os testes do Playground.")] = True,
     sample: Annotated[int | None, Query(ge=1, le=100, description="Amostra aleatória deste tamanho, sem paginação.")] = None,
+    sort: Annotated[
+        RunSort, Query(description="`cost`/`latency`: as mais caras/lentas primeiro (sem os runs sem esse valor).")
+    ] = "recent",
 ) -> RunPage:
-    """Execuções de todos os agentes (ou de um só, com `agent_type`), mais recentes
-    primeiro, com tokens, custo e feedback — a página `/observability` do console usa isto.
+    """Execuções de todos os agentes (ou só dos `agent_type` pedidos), mais recentes
+    primeiro, com tokens, custo e feedback — a página de Execuções do console usa isto.
+
+    `agent_type` e `status` são repetíveis (qualquer um dos valores). `sort=cost|latency`
+    ordena pelas mais caras/lentas — os KPIs de custo e latência do Panorama levam para cá;
+    com `sample`, a amostra continua aleatória. Só no trace store local (501 no Langfuse).
 
     Um run aparece logo depois de terminar (a gravação sai do caminho da resposta).
 
@@ -183,6 +224,7 @@ def list_runs(
             "exclude_dry_run": not include_dry_run,
             "sample": sample,
         },
+        sort=sort,
     )
 
 
@@ -221,8 +263,8 @@ def list_agent_runs(
 
 @router.get("/sessions", response_model=SessionPage)
 def list_sessions(
-    agent_type: str | None = None,
-    status: RunStatus | None = None,
+    agent_type: AgentTypes = None,
+    status: Statuses = None,
     user_id: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
@@ -235,7 +277,15 @@ def list_sessions(
     quantas execuções entraram. Com `TRACE_STORE_BACKEND=langfuse` a API não agrupa
     por sessão, e isto varre só um lote das execuções mais recentes.
     """
-    query = RunQuery(agent_type=agent_type, status=status, user_id=user_id, since=since, until=until, limit=limit, search=search)
+    query = RunQuery(
+        agent_types=_many(agent_type),
+        statuses=_many(status),
+        user_id=user_id,
+        since=since,
+        until=until,
+        limit=limit,
+        search=search,
+    )
     try:
         return _store().list_sessions(query)
     except TraceStoreError as exc:
@@ -246,7 +296,7 @@ def list_sessions(
 def overview(
     since: datetime | None = None,
     until: datetime | None = None,
-    agent_type: str | None = None,
+    agent_type: AgentTypes = None,
     include_dry_run: bool = False,
     tz: Annotated[str, Query(max_length=64, description="Fuso dos baldes da série (IANA).")] = DEFAULT_TIMEZONE,
     granularity: Granularity | None = None,
@@ -254,14 +304,13 @@ def overview(
     """O panorama do dashboard dos Logs (`observability/overview.py`): totais com o
     período anterior, série no tempo sem buracos, uma linha por agente com as versões
     da configuração, e as tools que estão falhando. Sem `since`, desde o primeiro run.
+    `agent_type` é repetível; o período anterior é a janela do mesmo tamanho logo antes de `since`.
 
     Os testes do Playground (`dry_run`) ficam de fora, a menos que `include_dry_run`.
     Só no trace store local: com `TRACE_STORE_BACKEND=langfuse` responde 501."""
     from zoneinfo import ZoneInfoNotFoundError
 
-    from agent_service.observability.run_store import DbTraceStore
-
-    if not isinstance(_store(), DbTraceStore):
+    if not _is_local(_store()):
         raise HTTPException(status_code=501, detail="O panorama só existe com o trace store local (TRACE_STORE_BACKEND=db).")
     if since and until and since >= until:
         raise HTTPException(status_code=422, detail="since precisa ser anterior a until")
@@ -269,20 +318,23 @@ def overview(
         return build_overview(
             since=since,
             until=until,
-            agent_type=agent_type,
+            agent_type=_many(agent_type),
             include_dry_run=include_dry_run,
             timezone_name=tz,
             granularity=granularity,
         )
+    except OverflowError as exc:
+        # O período anterior (`since` menos a duração) caiu antes do ano 1: datas fora do plausível.
+        raise HTTPException(status_code=422, detail="Intervalo de datas fora do suportado") from exc
     except (ZoneInfoNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"Fuso desconhecido: {tz!r}") from exc
 
 
 @router.get("/stats", response_model=RunStats)
 def run_stats(
-    agent_type: str | None = None,
+    agent_type: AgentTypes = None,
     prompt_version: Annotated[int | None, Query(ge=1)] = None,
-    status: RunStatus | None = None,
+    status: Statuses = None,
     user_id: str | None = None,
     session_id: str | None = None,
     since: datetime | None = None,
@@ -295,9 +347,9 @@ def run_stats(
     só um lote das execuções mais recentes (ver `list_sessions`).
     """
     query = RunQuery(
-        agent_type=agent_type,
+        agent_types=_many(agent_type),
         prompt_version=prompt_version,
-        status=status,
+        statuses=_many(status),
         user_id=user_id,
         session_id=session_id,
         since=since,

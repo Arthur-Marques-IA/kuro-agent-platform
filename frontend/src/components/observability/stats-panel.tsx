@@ -7,21 +7,22 @@ import { formatCost, formatDate, formatMs, formatNumber } from "@/lib/format";
 import type { RunStats } from "@/lib/types";
 import { Card } from "@/components/ui/card";
 import { EmptyState, Skeleton } from "@/components/ui/primitives";
+import { apiSearchParams } from "@/lib/logs-query";
 
-const STATUS_DOT: Record<string, string> = {
+const STATUS_DOT: Record<string, string | string[]> = {
   success: "bg-success",
   error: "bg-destructive",
   interrupted: "bg-warning",
 };
 
-const STATUS_LABEL: Record<string, string> = {
+const STATUS_LABEL: Record<string, string | string[]> = {
   success: "Sucesso",
   error: "Erro",
   interrupted: "Interrompido",
 };
 
 /** Busca `/api/observability/stats` com os filtros dados — reaproveitado pelos Logs (geral) e por sessão. */
-export function useStats(params: Record<string, string>) {
+export function useStats(params: Record<string, string | string[]>) {
   const [stats, setStats] = useState<RunStats | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +33,7 @@ export function useStats(params: Record<string, string>) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setState("loading");
     setError(null);
-    requestJson<RunStats>(`/api/observability/stats?${new URLSearchParams(params)}`, {
+    requestJson<RunStats>(`/api/observability/stats?${apiSearchParams(params)}`, {
       fallbackError: "Falha ao carregar estatísticas",
     })
       .then((data) => {
@@ -60,7 +61,7 @@ export function useStats(params: Record<string, string>) {
  * uma sessão isolada normalmente cabe num único dia, então a série temporal
  * não mostra tendência nenhuma; só os KPIs agregados fazem sentido ali.
  */
-export function StatsPanel({ params, showTrend = true }: { params: Record<string, string>; showTrend?: boolean }) {
+export function StatsPanel({ params, showTrend = true }: { params: Record<string, string | string[]>; showTrend?: boolean }) {
   const { stats, state, error } = useStats(params);
 
   if (state === "loading") {

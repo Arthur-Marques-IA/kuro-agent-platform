@@ -157,6 +157,13 @@ def test_rota_recusa_fuso_invalido_e_intervalo_invertido():
     assert invertido.value.status_code == 422
 
 
+def test_rota_recusa_datas_implausiveis_sem_estourar():
+    # O período anterior de uma janela que começa no ano 1 cairia antes do ano 1 (OverflowError).
+    with pytest.raises(HTTPException) as antigo:
+        overview(since=datetime(1, 1, 2, tzinfo=UTC), until=BASE)
+    assert antigo.value.status_code == 422
+
+
 # -- fila de revisão (filtros de /observability/runs) ---------------------------------
 
 
@@ -221,3 +228,118 @@ def test_filtros_de_revisao_pela_http(agente):
     assert resposta.status_code == 200
     assert {r["run_id"] for r in resposta.json()["items"]} == {dois, tres}
     assert client.get("/observability/runs", params={"complexity": 4}).status_code == 422
+
+
+def test_coleta_de_sites_entra_no_custo_do_panorama_geral(agente):
+    from agent_service.documents import sources_store
+
+    # Uma janela só deste teste: o panorama geral soma o banco inteiro.
+    inicio = datetime(2033, 5, 1, 12, tzinfo=UTC)
+    gravar(agente, inicio + timedelta(days=1), cost=0.01)
+    sources_store.record_sync_cost(source_id="s1", collection="docs", model="gemini-2.5-flash", input_tokens=200,
+                                   output_tokens=100, cost_usd=0.002, ended_at=inicio + timedelta(days=2))
+    sources_store.record_sync_cost(source_id="s1", collection="docs", model="gemini-2.5-flash", input_tokens=10,
+                                   output_tokens=5, cost_usd=0.004, ended_at=inicio - timedelta(days=3))
+
+    geral = build_overview(since=inicio, until=inicio + timedelta(days=7))
+    assert geral.totals.cost_usd == pytest.approx(0.012)
+    assert (geral.totals.ingestion_cost_usd, geral.totals.ingestion_tokens) == (0.002, 300)
+    assert geral.totals.total_tokens == 100, "tokens do formatador não entram no total dos runs"
+    assert sum(b.cost_usd for b in geral.buckets) == pytest.approx(0.012)
+    assert sum(b.ingestion_cost_usd for b in geral.buckets) == pytest.approx(0.002)
+    # Só a coleta no período anterior: ele existe e tem o custo dela.
+    assert geral.previous is not None and geral.previous.cost_usd == pytest.approx(0.004)
+
+    # Filtrado por agente, a coleta (que não é de agente nenhum) fica de fora.
+    do_agente = painel(agente, inicio, inicio + timedelta(days=7))
+    assert do_agente.totals.cost_usd == pytest.approx(0.01)
+    assert do_agente.totals.ingestion_cost_usd is None
+
+
+# -- vários agentes, vários status e ordenação (os KPIs do Panorama levam às Execuções) ---
+
+
+def _cliente():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from agent_service.api.observability_routes import router
+
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app)
+
+
+def test_panorama_de_varios_agentes(agente):
+    outro, fora = f"{agente}-b", f"{agente}-c"
+    t = BASE + timedelta(hours=12)
+    gravar(agente, t)
+    gravar(outro, t, status="error")
+    gravar(fora, t)
+
+    p = build_overview(since=BASE, until=BASE + timedelta(days=1), agent_type=[agente, outro])
+    assert p.totals.runs == 2 and p.totals.errors == 1
+    assert {a.agent_type for a in p.agents} == {agente, outro}
+
+    # Pela HTTP, `agent_type` repetido; um só continua valendo.
+    client = _cliente()
+    params = [("since", BASE.isoformat()), ("until", (BASE + timedelta(days=1)).isoformat())]
+    varios = client.get("/observability/overview", params=[*params, ("agent_type", agente), ("agent_type", outro)])
+    assert varios.status_code == 200 and varios.json()["totals"]["runs"] == 2
+    um = client.get("/observability/overview", params=[*params, ("agent_type", fora)])
+    assert um.json()["totals"]["runs"] == 1
+
+
+def test_execucoes_sessoes_e_estatisticas_de_varios_agentes_e_status(agente):
+    outro = f"{agente}-b"
+    t = BASE + timedelta(days=2)
+    ok = gravar(agente, t)
+    erro = gravar(agente, t, status="error")
+    interrompida = gravar(outro, t, status="interrupted")
+    gravar(f"{agente}-fora", t, status="error")
+    client = _cliente()
+    agentes = [("agent_type", agente), ("agent_type", outro)]
+
+    runs = client.get("/observability/runs", params=agentes).json()["items"]
+    assert {r["run_id"] for r in runs} == {ok, erro, interrompida}
+    falharam = client.get("/observability/runs", params=[*agentes, ("status", "error"), ("status", "interrupted")])
+    assert {r["run_id"] for r in falharam.json()["items"]} == {erro, interrompida}
+    assert client.get("/observability/runs", params=[*agentes, ("status", "talvez")]).status_code == 422
+
+    sessoes = client.get("/observability/sessions", params=agentes).json()["items"]
+    assert len(sessoes) == 3
+    stats = client.get("/observability/stats", params=[*agentes, ("status", "error"), ("status", "interrupted")]).json()
+    assert stats["status_counts"] == {"error": 1, "interrupted": 1}
+
+    # Chamada direta (outros módulos, testes) ainda passa um valor só.
+    assert listar(agente, status="error") == {erro}
+
+
+def test_ordenar_pelas_mais_caras_e_mais_lentas_pagina_pela_ordem(agente):
+    t = BASE + timedelta(days=3)
+    barata = gravar(agente, t, cost=0.001, latency_ms=9000)
+    media = gravar(agente, t + timedelta(minutes=1), cost=0.05, latency_ms=100)
+    cara = gravar(agente, t + timedelta(minutes=2), cost=0.5, latency_ms=3000)
+    empate = gravar(agente, t + timedelta(minutes=3), cost=0.05, latency_ms=500)
+    sem_custo = gravar(agente, t + timedelta(minutes=4), cost=None)
+    client = _cliente()
+
+    def pagina(sort, cursor=None):
+        params = {"agent_type": agente, "sort": sort, "limit": 2, **({"cursor": cursor} if cursor else {})}
+        resposta = client.get("/observability/runs", params=params)
+        assert resposta.status_code == 200
+        return resposta.json()
+
+    primeira = pagina("cost")
+    segunda = pagina("cost", primeira["next_cursor"])
+    ids = [r["run_id"] for r in primeira["items"] + segunda["items"]]
+    # O empate de custo sai numa ordem estável (run_id), sem repetir nem pular na virada da página.
+    assert ids[0] == cara and ids[-1] == barata and set(ids[1:3]) == {media, empate}
+    assert sem_custo not in ids, "run sem custo não entra na fila das mais caras"
+    assert segunda["next_cursor"] is None
+
+    lentas = [r["run_id"] for r in pagina("latency")["items"]]
+    assert lentas == [barata, cara]
+    # O cursor de uma ordenação não vale em outra: recomeça do topo em vez de errar.
+    assert [r["run_id"] for r in pagina("latency", primeira["next_cursor"])["items"]] == lentas
+    assert client.get("/observability/runs", params={"sort": "preco"}).status_code == 422

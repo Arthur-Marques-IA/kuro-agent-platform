@@ -163,3 +163,49 @@ def test_health_continua_aberta_por_necessidade(app_com_auth):
 def test_panorama_dos_logs_exige_admin():
     """Expõe custo e falhas de todos os agentes: nada de rota aberta por esquecimento."""
     assert auth.required_scope("/observability/overview") == "admin"
+
+
+# -- rotação: mais de uma chave por escopo ---------------------------------------
+
+
+def test_lista_de_chaves_vale_a_nova_e_a_antiga_juntas(monkeypatch):
+    """Rotacionar sem derrubar ninguém: `nova,antiga` aceita as duas até os
+    clientes trocarem; tirar a antiga da lista a revoga."""
+    monkeypatch.setattr(get_settings(), "admin_api_key", ADMIN)
+    monkeypatch.setattr(get_settings(), "runtime_api_key", " runtime-nova , runtime-antiga ,")
+    cliente = _app()
+    assert cliente.post("/chat", headers=_com("runtime-nova")).status_code == 200
+    assert cliente.post("/chat", headers=_com("runtime-antiga")).status_code == 200
+    assert cliente.get("/agents", headers=_com("runtime-antiga")).status_code == 403
+    # A lista inteira não é uma chave.
+    assert cliente.post("/chat", headers=_com("runtime-nova,runtime-antiga")).status_code == 403
+
+    monkeypatch.setattr(get_settings(), "runtime_api_key", "runtime-nova")
+    assert cliente.post("/chat", headers=_com("runtime-antiga")).status_code == 403
+
+
+def test_chave_com_acento_nao_derruba_a_comparacao(app_com_auth):
+    """`compare_digest` com str só aceita ASCII; uma chave estranha no header vira 403, não 500."""
+    assert app_com_auth.post("/chat", headers={"X-API-Key": "chave-çãé".encode()}).status_code == 403
+
+
+def test_openapi_de_integracao_e_da_chave_runtime():
+    assert auth.required_scope("/integration/openapi.json") == "runtime"
+    assert auth.required_scope("/openapi.json") == "admin"
+
+
+def test_cliente_manda_so_a_chave_atual_de_uma_lista():
+    """No container o compose copia `ADMIN_API_KEY` para `KURO_API_KEY`; numa rotação ela é
+    `nova,antiga`, e mandar a lista inteira daria 403 na CLI, no MCP e no console."""
+    import httpx
+
+    from agent_service.cli.client import Client
+
+    vistos: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        vistos.append(request.headers.get("authorization", ""))
+        return httpx.Response(200, json={"status": "ok"})
+
+    Client("http://x", transport=httpx.MockTransport(handler), api_key="nova, antiga").health()
+    assert vistos == ["Bearer nova"]

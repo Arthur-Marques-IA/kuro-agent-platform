@@ -358,6 +358,38 @@ def test_list_runs_route_without_agent_type_returns_all_agents(installed_store) 
     assert [r.run_id for r in page.items] == [RUN_ID]
 
 
+def test_several_agents_and_statuses_become_any_of_filters() -> None:
+    fake = FakeLangfuse([ROOT, GENERATION], SCORES)
+    query = RunQuery(agent_types=("conversational", "outro"), statuses=("error", "interrupted"))
+    make_store(fake).list_runs(query)
+
+    filters = fake.filters(0)
+    assert {"type": "stringOptions", "column": "traceName", "operator": "any of", "value": ["conversational", "outro"]} in filters
+    assert {"type": "stringOptions", "column": "level", "operator": "any of", "value": ["ERROR", "WARNING"]} in filters
+
+    # As agregações (sessões, estatísticas) varrem com os mesmos filtros.
+    stats = make_store(FakeLangfuse([ROOT, GENERATION], [])).get_stats(RunQuery(agent_types=("conversational", "outro")))
+    assert stats.total_runs == 1
+
+
+def test_a_single_agent_or_status_from_the_route_keeps_the_equals_filter(installed_store) -> None:
+    fake = FakeLangfuse([ROOT, GENERATION], [])
+    installed_store(make_store(fake))
+    list_runs(agent_type=["conversational"], status=["error"])
+
+    filters = fake.filters(0)
+    assert {"type": "string", "column": "traceName", "operator": "=", "value": "conversational"} in filters
+    assert {"type": "string", "column": "level", "operator": "=", "value": "ERROR"} in filters
+    assert not any(f["type"] == "stringOptions" and f["column"] in ("traceName", "level") for f in filters)
+
+
+def test_sort_by_cost_is_local_only(installed_store) -> None:
+    installed_store(make_store(FakeLangfuse([ROOT, GENERATION], [])))
+    with pytest.raises(HTTPException) as exc:
+        list_runs(sort="cost")
+    assert exc.value.status_code == 501
+
+
 def test_list_sessions_groups_runs_of_the_same_session_and_sums_usage() -> None:
     fake = FakeLangfuse([ROOT, GENERATION, TOOL, ROOT_2, GENERATION_2], SCORES)
     page = make_store(fake).list_sessions(RunQuery(agent_type="conversational"))

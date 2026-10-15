@@ -16,6 +16,7 @@ registradas no boot e não aceita escolher a collection — aqui a collection é
 resolvida por nome, como no resto do módulo. A ingestão por URL continua lá.
 """
 
+import asyncio
 import logging
 from functools import lru_cache
 from pathlib import Path
@@ -25,6 +26,7 @@ from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.utils.string import generate_id
 from agno.vectordb.pgvector import PgVector
+from sqlalchemy import select
 
 from agent_service.config import get_settings
 from agent_service.db import get_db
@@ -209,10 +211,36 @@ async def remove_document(collection_name: str, content_id: str) -> bool:
     em toda a tabela, então sem isso um id de outra coleção seria apagado por
     uma chamada endereçada a esta."""
     knowledge = get_collection(collection_name)
-    documentos, _ = await knowledge.aget_content(limit=1000)
-    if not any(c.id == content_id for c in documentos):
+    if not await _belongs(knowledge, content_id):
         return False
     return await knowledge.aremove_content_by_id(content_id)
+
+
+async def _belongs(knowledge: Knowledge, content_id: str) -> bool:
+    """O documento é desta coleção? Primeiro pelos vetores dela (uma consulta só,
+    vale para coleções de qualquer tamanho — um site indexado passa fácil de mil
+    documentos); um documento sem vetores (falhou na indexação) cai na varredura."""
+    vector_db = getattr(knowledge, "vector_db", None)
+    table, session = getattr(vector_db, "table", None), getattr(vector_db, "Session", None)
+    if table is not None and session is not None:
+
+        def found() -> bool:
+            with session() as sess:
+                return sess.execute(select(table.c.id).where(table.c.content_id == content_id).limit(1)).first() is not None
+
+        try:
+            if await asyncio.to_thread(found):
+                return True
+        except Exception:
+            logger.debug("Busca do documento nos vetores falhou; seguindo pela varredura", exc_info=True)
+    page = 1
+    while True:
+        documentos, total = await knowledge.aget_content(limit=500, page=page)
+        if any(c.id == content_id for c in documentos):
+            return True
+        if not documentos or page * 500 >= total:
+            return False
+        page += 1
 
 
 async def search(collection_name: str, *, query: str, limit: int = 5) -> list[Any]:

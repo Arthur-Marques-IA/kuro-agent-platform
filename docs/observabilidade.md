@@ -35,6 +35,13 @@ Filtros: `agent_type`, `prompt_version`, `status` (`success`/`error`/`interrupte
 não agrupa por sessão nem por dia: aí eles agregam só um lote das execuções
 recentes (o campo `scanned` diz quantas).
 
+O panorama dos Logs (`GET /observability/overview`) agrega o período num pedido só: totais
+contra o período anterior, a série por hora, dia ou semana (execuções por resultado, custo,
+latência p95), as tools que estão falhando e os números por agente e por versão. O console o
+desenha na página Logs ([como ler o gráfico](console.md#o-gráfico-do-panorama-logs)), e o
+`kuro dash` na aba Panorama ([tui.md](tui.md)). Os testes em `dry_run` ficam de fora, a menos que
+`include_dry_run=true`.
+
 Quando ligado, o Langfuse roda no compose sem ninguém precisar abrir a UI dele. Se precisar, ela fica em `http://localhost:3100`, só na máquina
 local (login em `LANGFUSE_INIT_USER_EMAIL`/`LANGFUSE_INIT_USER_PASSWORD`). Para
 usar o Langfuse Cloud, remova os serviços `langfuse-*` do compose e aponte

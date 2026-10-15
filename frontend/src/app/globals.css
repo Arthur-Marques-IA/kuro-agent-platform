@@ -36,6 +36,11 @@
   --viz-good: #0ca30c;
   --viz-warning: #fab219;
   --viz-critical: #d03b3b;
+  /* O âmbar das LINHAS (taxa de falha), mais escuro: uma linha de 2px tem pouca área, e o
+     #fab219 fica a 1,8:1 no fundo claro. Este passa em tudo nos dois temas (contraste
+     ≥ 3:1, faixa de luminosidade, ΔE 9,7 contra o vermelho em deuteranopia). Não serve nas
+     barras empilhadas: ao lado do verde, os dois se confundem em protanopia (ΔE 3,1). */
+  --viz-warning-line: #c48600;
 }
 
 /* As mesmas cores do `kuro dash` (KURO_THEME em src/agent_service/tui/app.py): neutros

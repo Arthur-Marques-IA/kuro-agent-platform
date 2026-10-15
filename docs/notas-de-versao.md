@@ -33,6 +33,80 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
 
 ### Novo
 
+- **Filtros dos Logs mais soltos, e KPIs que levam às execuções.** Panorama, Sessões e Execuções
+  aceitam vários agentes (com busca, mostrando o `agent_type`), vários status e um intervalo de
+  datas livre além dos atalhos; tudo fica na URL, e os links antigos (`agent=`, `status=`, `period=`)
+  continuam valendo. Cada KPI do Panorama abre as Execuções com o recorte que explica o número
+  (Falharam = erro + interrompida; Custo e Latência p95 = as mais caras/lentas primeiro). Na API:
+  `agent_type` e `status` passam a ser repetíveis em `GET /observability/runs`, `/sessions` e
+  `/stats` (`agent_type` também em `/overview`), e `/runs` ganha `sort=recent|cost|latency` (sem os
+  runs sem custo/latência; 501 com `TRACE_STORE_BACKEND=langfuse`). Um valor só funciona como antes.
+  Ver [console](console.md#logs-panorama-sessões-e-execuções).
+- **O Kuro no canto do console.** O corvo do `kuro dash` aparece no canto inferior esquerdo do
+  conteúdo (telas a partir de 1280 px) e reage às execuções como na TUI: asas batendo com execução
+  nova, alerta com erro, interrupção ou tool falhando, de cabeça para baixo com a API fora do ar e
+  dormindo com a observabilidade desligada. O balão diz o que chegou e o clique abre o run ou os
+  Logs. Consulta `/observability/runs` a cada 5 s só com a aba visível; dá para minimizar.
+- **Página Tools reorganizada no console.** As tools aparecem agrupadas por integração (prefixo do
+  nome ou host da API), com as de sistema recolhidas no fim, e filtros em chip: tipo, efeito
+  colateral, não classificada, desligada e sem agente. Cada linha mostra a 1ª frase da descrição em
+  texto normal, método e host da API e quais agentes a usam; o detalhe abre a descrição inteira, a
+  URL, os parâmetros com a origem de cada um e os agentes. Ligar/desligar também fica no menu da
+  linha, e as tools que ainda não dizem se têm efeito colateral ganham um aviso. A API não muda.
+- **Formulário de `dependencies` no console.** O painel Contexto do Playground, a tela Análise e o
+  botão Testar de uma tool montam um formulário a partir dos `dependency_fields` do agente (ou dos
+  parâmetros da tool `kind="api"`): um controle por campo, com obrigatórios, descrição, `enum` como
+  seleção e validação inline. O modo **JSON** continua ao lado, sincronizado nos dois sentidos, e os
+  campos não declarados aparecem em "Outros campos" em vez de se perderem. A API não muda.
+- **Trechos consultados no trace.** A span `search_knowledge_base` de um run passa a trazer
+  `metadata.references`: a pergunta, a collection e cada trecho recuperado (`rank`, `score`,
+  `document`, `content_id`, `chunk_id`, `chunk`, `content` e, de sites, `source_url`/`page_title`).
+  `GET /collections/{nome}/search` devolve esses mesmos campos ao lado de `content` e `metadata`.
+  O que o modelo recebe não muda. Ver [o que o agente leu](conceitos.md#o-que-o-agente-leu).
+- **Fontes na resposta.** `/chat` e `/analyze` passam a devolver `sources`: um item por documento
+  ou página da base que as buscas do run devolveram, com `title`, `source_url`, `content_id`,
+  `collection`, o melhor `score` e os `chunk_ids`. No `/chat/stream`, chega o evento novo `sources`
+  antes do `done` — um cliente que ignora eventos desconhecidos não precisa mudar. `kuro chat`
+  e `kuro analyze` listam as fontes no rodapé, e o console mostra um chip por fonte abaixo da
+  resposta, com o link da página e o atalho para os trechos no trace. Ver
+  [fontes consultadas](integracao.md#fontes-consultadas-sources).
+- **Custo da coleta de sites nos Logs.** O que o agente formatador gasta em cada sincronização de
+  uma fonte de site (o custo informado pelo provedor ou, sem ele, a estimativa da tabela de
+  preços) fica gravado e entra no custo do panorama geral: `GET /observability/overview` soma em
+  `totals.cost_usd`, `previous.cost_usd` e `buckets[].cost_usd`, e mostra a parte da coleta em
+  `ingestion_cost_usd` (e os tokens em `totals.ingestion_tokens`, fora de `total_tokens`). Com
+  `agent_type`, nada muda: a coleta não é de agente nenhum. Conta também a sincronização que falhou
+  ou foi cancelada no meio. O `progress` da fonte ganha `format_cost_usd`.
+- **Sites como fonte de uma collection.** `POST /collections/{nome}/sources` (`url`, `mode`
+  `crawl`/`sitemap`/`page`, `max_pages`, `max_depth`, `include`, `exclude`, `format`, `refresh`)
+  coleta o site em background (202), com a trava de egress das tools em cada salto, `robots.txt`
+  e um agente formatador conferido contra a página. `GET .../sources[/{id}]` mostra o progresso e
+  cada página; `POST .../sources/{id}/sync` ressincroniza (incremental: substitui o que mudou,
+  remove o que sumiu); `PATCH` muda agendamento e opções; `DELETE` tira o site e as páginas
+  (`?keep_documents=true` deixa as páginas). CLI: `kuro collections add-site|sources|sync|set-site|rm-site`;
+  MCP: `collection_add_site`, `collection_sources`, `collection_sync_site`, `collection_rm_site`.
+  Novas variáveis: `WEB_SOURCE_MAX_PAGES`, `WEB_SOURCE_CONCURRENCY`, `WEB_SOURCE_REQUEST_DELAY_MS`,
+  `WEB_SOURCE_USER_AGENT`, `WEB_SOURCE_SCHEDULER`. Ver [sites como fonte](conceitos.md#sites-como-fonte).
+- **Console: aba Site em qualquer coleção.** Substitui a aba URL, que só funcionava na coleção
+  padrão (pipeline do AgentOS). O `/knowledge/content` do AgentOS continua existindo para quem o usa.
+- **Gemini 3 em diante: sem `temperature`, `top_p` e `thinking_budget`.** O Google passou a
+  recusar esses campos nos modelos novos (`400 INVALID_ARGUMENT`). Em agentes `google` com modelo
+  Gemini 3+ (ou `-latest`) o Kuro deixa de enviá-los; o cadastro continua aceitando, então nada
+  quebra, mas o valor não tem efeito. Para controlar o raciocínio use `reasoning`
+  (`off`/`low`/`medium`/`high` → `thinking_level`). Gemini 2.x não muda.
+- **Gráfico dos Logs: volume e taxa de falha separados.** Na aba Volume, as barras empilham as
+  falhas na base, junto ao eixo (antes ficavam no topo, um fio invisível num dia de muito volume),
+  e um segundo gráfico, alinhado ao primeiro, mostra a taxa de falha e a de tool falhando de cada
+  período, em %, com a média do período como referência. Período com menos de 5 execuções sai
+  com o ponto vazado e não define a escala; o mesmo vale na latência p95. O hover marca o mesmo
+  período nos dois gráficos, e a tabela ganhou as colunas das taxas. Ver
+  [console](console.md#o-gráfico-do-panorama-logs).
+- **Console: Logs separados em Panorama, Sessões e Execuções.** O dashboard (KPIs, série no tempo,
+  tools falhando, agentes e versões) fica em `/logs`; as listas para investigar ganham rota própria,
+  `/logs/sessions` e `/logs/runs` (esta com a fila de revisão). O período, o agente e os filtros vão
+  na URL, e cada agente, versão ou tool falhando do Panorama leva às execuções que conta. Os links
+  antigos continuam valendo: `/logs?user_id=` abre as sessões do usuário e `/logs?session_id=` as
+  execuções da sessão. Ver [console](console.md#logs-panorama-sessões-e-execuções).
 - **`kuro dash` de cara nova**: tema com as cores do console, um cabeçalho com o corvo do Kuro (o
   humor dele mostra o estado do painel: execuções chegando, erro, pausado ou serviço fora do ar),
   a aba Execuções virou **Ao vivo**, com um resumo do que está na tela, e o **Panorama** virou
@@ -103,8 +177,79 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
 - Tool `kind="api"`: um parâmetro de header que não vem do modelo (`source` `dependency` ou
   `const`) aceita nome de header HTTP com hífen, como `Idempotency-Key` ou `X-Request-Id`. Antes só
   identificadores passavam, e não havia como mandar a `idempotency_key` no header esperado.
+- **Rotação de chave sem derrubar ninguém.** `ADMIN_API_KEY` e `RUNTIME_API_KEY` aceitam uma lista
+  separada por vírgula (`nova,antiga`), e qualquer uma vale. A primeira é a atual: é a que a CLI no
+  container, o `/mcp` e o console mandam. Passo a passo em
+  [operação](operacao.md#rotacionar-as-chaves).
+- **OpenAPI de quem integra:** `GET /integration/openapi.json` abre com a chave **runtime** e traz só
+  as rotas que ela alcança (`/chat`, `/chat/stream`, `/analyze`, scores, referência, estado do
+  procedural) e os schemas delas. O `/docs` e o `/openapi.json` completos continuam exigindo admin.
+- **`kuro connect` diz por que o SSH não entrou:** chave com passphrase fora do ssh-agent (manda
+  carregar, em vez de oferecer outra chave), servidor que só aceita chave (manda pôr a pública no
+  `authorized_keys`, sem pedir senha) ou senha (o fluxo de antes, que instala a chave). `--passphrase`
+  cria a chave nova com senha de proteção e a carrega no agent. Ver [MCP](mcp.md#pelo-ssh-kuro-connect).
+- **`CORS_ORIGINS` explícito.** Vazio mantém a lista de antes (a do AgentOS: `localhost:3000` e os
+  domínios do Agno); `none` fecha para todas as origens; uma lista libera exatamente essas. `*` e
+  origem com caminho derrubam a subida com o motivo. Ver
+  [operação](operacao.md#segurança-e-limitações-atuais).
+- **OpenAPI por agente:** `GET /agents/{t}/openapi.json`, com a chave **runtime**: só as rotas que o
+  agente usa, `agent_type` fixo, `dependencies` tipadas (com `enum`), o `result` do analista em JSON
+  Schema, o header `Idempotency-Key` e `servers` com a URL pública. O contrato de integração ganha
+  `agent_openapi_url`. Ver [integração](integracao.md#2-acesso).
+- **Contrato de integração mais completo** (`GET /agents/{t}/integration`, `kuro agents integrate`,
+  `agent_integration` no MCP e a aba Integração): `base_url` e `base_url_source` (de onde saiu a
+  URL), `openapi_url`, `agent_version`, `request_fields` (os campos do corpo, inclusive `metadata`,
+  `dry_run` e `attachments`), `response_example` (com `run_id`, `agent_version`, `config_hash` e
+  `sources`), `stream_events` e `errors` (a tabela de erros e o que fazer). O `request_example`
+  passa a trazer `metadata` e `dry_run`.
+- **Aba Integração do console** montada só a partir do contrato: os eventos do stream (`run`,
+  `message`, `usage`, `state`, `sources`, `error`, `done`), a resposta de exemplo, a tabela de erros
+  e um exemplo em **PHP** (cURL, com o stream lido por `CURLOPT_WRITEFUNCTION`). Os exemplos de
+  stream em JavaScript e Python tratam o evento `error`, que antes era ignorado.
+- **MCP:** cada parâmetro das tools tem descrição no schema (valores aceitos e exemplo). As
+  respostas têm teto de ~30 mil caracteres: passou disso, textos e listas são cortados e a resposta
+  traz `truncated: true` (`run_show`, `agent_get`, `agent_revisions`, `feedback_versions`,
+  `collections_list`, `session_show`...). `agent_get(editable=true)` nunca é cortado.
+- **MCP: as tools que faltavam frente à CLI.** `runs_reference` e `runs_export` fecham o ciclo
+  shadow → dataset → `eval(cases=...)` sem sair do MCP (`runs_export` devolve os casos inteiros e diz
+  quantos ficaram de fora); `runs_sessions` (execuções por conversa), `credentials_test` (testa a
+  chave salva, sem expô-la), `collection_create`/`collection_get`/`collection_set`/
+  `collection_embedders`, `agents_export` (o agente como código, sem corte) e `attachments`/`metadata`
+  em `chat` e `analyze` (`analyze` também aceita `user_id` e só anexos). Ver [MCP](mcp.md#o-que-dá-para-fazer).
+- **MCP: defaults coerentes.** `runs_list` passa a deixar os testes (`dry_run`) de fora por padrão,
+  como `runs_overview` e `procedure_funnel` já faziam; filtrar por `session_id` os inclui sempre (o
+  run que o `chat` do MCP acabou de criar continua achável). `runs_list` ganha `user_id` e
+  `min_chars`. `sessions_list`, `session_show` e `session_delete` sem `user_id` olham as conversas de
+  todos (antes, só as do `user_id` `mcp`: as da CLI e das integrações sumiam sem aviso), e
+  `sessions_list` pagina (`page`, `meta.total_pages`).
+- **`Idempotency-Key` no `/chat` e no `/analyze`.** Repetir com a mesma chave e o mesmo corpo devolve
+  a resposta guardada (mesmo `run_id`, header `Idempotent-Replayed: true`) em vez de rodar o agente e
+  as tools de novo; **409** se a primeira ainda está em andamento, **422** se o corpo for outro. Uma
+  falha libera a chave. As tools recebem a chave em `dependencies.idempotency_key` (o header vence um
+  valor mandado em `dependencies`), e ela fica no `metadata` do run. Vale por `IDEMPOTENCY_TTL_HOURS`
+  (24 h). O `/chat/stream` recusa o header com 422. Ver
+  [integração](integracao.md#repetir-sem-duplicar-idempotency-key).
+- Uma tool com parâmetro `source="dependency"` em `idempotency_key` não exige mais que o agente
+  declare o campo em `dependency_fields` (como já era com `dry_run`): o servidor o preenche.
+- **`kuro connect` com keepalive no SSH** (`ServerAliveInterval=15`, `ServerAliveCountMax=3`,
+  `ConnectTimeout=15`): com a rede caída, a tool falha em ~45 s em vez de ficar pendurada.
+- **URL sem domínio próprio, documentada:** `KURO_API_DOMAIN=<ip-com-hífens>.sslip.io` com o profile
+  `tls` dá HTTPS com certificado válido, inclusive para o MCP por `/mcp`. Precisa das portas 80 e
+  443 livres. Ver [operação](operacao.md#sem-domínio-próprio-sslipio).
 
 ### Corrigido
+
+- Com a autenticação ligada, o preflight de CORS (`OPTIONS`, que o navegador manda sem a chave)
+  recebia 401, e nenhuma página em outro domínio conseguia chamar a API, nem as origens liberadas.
+  O preflight passa a ser respondido pelo CORS; a chamada de verdade continua exigindo a chave.
+- O contrato de integração pedido pelo MCP ou pela CLI dentro do container saía com
+  `http://localhost:8000` no endpoint e no cURL. Sem `base_url`, o servidor agora usa a URL pública
+  que conhece (`KURO_PUBLIC_URL`, depois `KURO_API_DOMAIN`, depois o profile `ip`, por último
+  `http://127.0.0.1:<porta publicada>`), a mesma do `kuro mcp-config`. Quem manda `base_url`
+  explícito continua recebendo o que pediu.
+- O link "OpenAPI" da aba Integração e o "Referência OpenAPI" do menu do console abriam o `/docs`,
+  que dá 403 sem a chave admin. Agora abrem o OpenAPI de integração pelo console.
+- `kuro agents integrate` num agente analista imprimia `streaming (SSE): POST None`.
 
 - O título de uma conversa com `dependencies` mostrava os dados do cliente: sem nome definido, o
   AgentOS usa a primeira mensagem como título, e o Agno junta a ela o bloco
@@ -132,6 +277,23 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
   preenchidas, e a porta 58443 precisa estar liberada no firewall do provedor.
 - A migração `0007` roda sozinha no startup: acrescenta `agent_definitions.stages` e cria a
   tabela `procedure_runs`. Nada muda nos agentes que já existem, nem a versão da configuração deles.
+- A migração `0008` também roda sozinha: cria `knowledge_sources` e `knowledge_source_pages`
+  (os sites das collections). O agendador de ressincronização liga no startup. Um sync em
+  andamento renova um heartbeat a cada 30 s; sem sinal por 2 minutos (o processo caiu no meio),
+  ele é marcado `failed` e pode ser disparado de novo. A trava no banco impede dois syncs da mesma
+  fonte, inclusive entre réplicas; com mais de uma, deixe `WEB_SOURCE_SCHEDULER=true` em uma só.
+- A migração `0009` também roda sozinha: cria `knowledge_sync_costs` (o gasto do formatador de
+  sites por sincronização). Sincronizações anteriores a ela não entram no custo dos Logs.
+- A migração `0010` também roda sozinha: cria `idempotency_keys` (as chaves do header
+  `Idempotency-Key`, com a resposta guardada). As vencidas somem sozinhas. Variável nova, opcional:
+  `IDEMPOTENCY_TTL_HOURS` (24).
+- `AGENT_SERVICE_PUBLIC_URL` do console deixou de ter `http://localhost:58000` fixo no compose:
+  vazia, a aba Integração mostra a URL que o agent-service conhece. Para forçar outra, defina-a no
+  `.env`.
+- Quem conectou o MCP pelo SSH antes desta versão: rode o `kuro connect` de novo para registrar o
+  comando com keepalive.
+- MCP: `agent_versions` sem `version` passou a devolver a lista resumida (versão, data, `chars` e
+  `preview`) em vez do texto inteiro de cada versão; peça `version=N` para o texto.
 
 ---
 

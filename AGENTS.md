@@ -22,7 +22,8 @@ foi aceito" — é diferente de serviço fora do ar, não adianta reiniciar cont
 tipadas, e o guia está em `docs/mcp.md`. Para conectá-lo a um serviço num servidor, a pessoa roda
 `kuro connect usuario@servidor` na máquina dela (MCP pelo SSH, sem porta aberta); com domínio, o
 serviço também atende o MCP em `/mcp`. Diferenças que importam:
-- `chat`, `analyze`, `tool_invoke` e `eval` rodam em `dry_run` por padrão;
+- `chat`, `analyze`, `tool_invoke` e `eval` rodam em `dry_run` por padrão, e `runs_list` deixa os
+  testes de fora — ache o seu run por `run_show(run_id)`, `runs_list(session_id=...)` ou `include_tests=true`;
 - pelo SSH e pela URL o MCP roda no servidor: `document_file`, `cases_file`, `rules_file` e o `file`
   de `collection_add` são recusados — mande o conteúdo inline (`document`, `cases`, `rules`, `text`);
 - `chat` não reaproveita a sessão da CLI, então repasse o `session_id` que ele devolve;
@@ -60,7 +61,9 @@ kuro --json agents delete suporte --yes
 kuro --json chat suporte -m "meu wifi caiu" -d cpf=12345678900
 kuro --json chat suporte -m "recomeçar" --new-session
 echo "mensagem longa" | kuro --json chat suporte
-# retorna {content, run_id, trace_id, session_id, usage, error}
+# retorna {content, run_id, trace_id, session_id, usage, error, sources}
+# `sources`: documentos da base que as buscas do run devolveram (título, source_url, content_id,
+# score, chunk_ids) — também no /chat, no /analyze e no evento `sources` do /chat/stream.
 kuro --json chat suporte -m "fecha o acordo" --dry-run   # teste: tools recebem X-Kuro-Dry-Run: true
 # `dry_run: true` no /chat e no /analyze (também `--dry-run` em analyze, eval e tools invoke):
 # as tools recebem o header e `dependencies.dry_run` (sem declarar em dependency_fields);
@@ -194,7 +197,15 @@ cat manual.txt | kuro --json collections add manuais --title "Manual v2"
 kuro --json collections add manuais -f manual.pdf             # arquivo (PDF, DOCX, CSV, TXT, MD...)
 kuro --json collections docs manuais                          # o que está indexado, com o status
 kuro --json collections rm-doc manuais <content_id> --yes     # tira um documento da base (não tem volta)
-kuro --json collections search manuais "prazo de garantia"   # o mesmo que o agente enxerga
+kuro --json collections search manuais "prazo de garantia"   # o mesmo que o agente enxerga (score, documento, origem)
+# Sites: coleta em background (crawl | sitemap | page), robots.txt, egress travado, um agente
+# formata cada página sem reescrever (conferido; reprovado = texto extraído), ressincronização incremental.
+kuro --json collections add-site manuais https://docs.exemplo.com/guia --max-pages 100 --refresh weekly --wait
+kuro --json collections sources manuais [<source_id>]        # status; com o id, página a página
+kuro --json collections sync manuais <source_id>             # coleta de novo (só reprocessa o que mudou)
+kuro --json collections rm-site manuais <source_id> --yes    # tira o site e as páginas dele
+# No trace, a span `search_knowledge_base` traz `metadata.references`: query, e cada trecho com
+# rank, score, document, content_id, chunk, section, source_url e o texto exato que o modelo leu.
 kuro --json agents set suporte knowledge_collection=manuais
 
 # Modelos: provedores suportados e credenciais

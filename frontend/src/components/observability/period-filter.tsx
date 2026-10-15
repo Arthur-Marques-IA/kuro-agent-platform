@@ -1,16 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { PERIODS, logsRange, type LogsQuery, type Period } from "@/lib/logs-query";
 
-export const PERIODS = [
-  { value: "1d", label: "Últimas 24h", days: 1 },
-  { value: "7d", label: "Últimos 7 dias", days: 7 },
-  { value: "30d", label: "Últimos 30 dias", days: 30 },
-  { value: "90d", label: "Últimos 90 dias", days: 90 },
-  { value: "all", label: "Todo o período", days: null },
-] as const;
-
-export type Period = (typeof PERIODS)[number]["value"];
+export { PERIODS, type Period };
 
 /** `Date.now()` é impuro: calculado num efeito (não durante a renderização) e guardado em estado. */
 export function usePeriodSince(period: Period): string | null {
@@ -21,4 +14,22 @@ export function usePeriodSince(period: Period): string | null {
     setSince(days ? new Date(Date.now() - days * 86_400_000).toISOString() : null);
   }, [period]);
   return since;
+}
+
+/**
+ * `since`/`until` do recorte dos Logs: o atalho do período ou o intervalo livre (`from`/`to`). `ready` fica
+ * falso até o primeiro cálculo, para ninguém buscar "todo o período" antes de saber o recorte.
+ */
+export function useLogsRange(query: Pick<LogsQuery, "period" | "from" | "to">) {
+  const [range, setRange] = useState<{ since: string | null; until: string | null; ready: boolean }>({
+    since: null,
+    until: null,
+    ready: false,
+  });
+  const { period, from, to } = query;
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRange({ ...logsRange({ period, from, to }, Date.now()), ready: true });
+  }, [period, from, to]);
+  return range;
 }

@@ -21,7 +21,13 @@ uv run kuro-migrate
 
 # testes
 uv run pytest
+npm --prefix frontend test   # a conta dos gráficos do console (frontend/src/lib/*.test.ts)
 ```
+
+Os testes do frontend usam o test runner do próprio Node (22+, que roda TypeScript direto), sem
+dependência a mais. Lógica que dá para testar sem tela (a escala e as taxas do gráfico dos Logs,
+por exemplo) fica num módulo puro em `frontend/src/lib/`, com um `*.test.ts` ao lado; o componente
+só desenha. O CI roda `npm test` junto com o lint e o build.
 
 **CLI, MCP e TUI** são clientes da API e dividem o mesmo `Client`
 (`src/agent_service/cli/client.py`). Uma operação nova entra primeiro nele e na

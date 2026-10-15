@@ -9,7 +9,6 @@ import json
 import os
 import shlex
 import sys
-from pathlib import Path
 from typing import Any
 
 import click
@@ -36,6 +35,8 @@ from agent_service.cli.common import (
     state,
 )
 from agent_service.cli.connection import DEFAULT_URL
+from agent_service.config import current_key
+from agent_service.public_url import LOOPBACK, ip_https, public_url
 
 app = typer.Typer(
     name="kuro",
@@ -120,46 +121,14 @@ def _mask(key: str) -> str:
     return f"{key[:4]}…{key[-4:]}" if len(key) > 12 else "…"
 
 
-_LOOPBACK = ("localhost", "127.0.0.1", "0.0.0.0")
-
-PUBLIC_DIR = "/kuro-public"
-"""Onde o profile `ip` publica a URL e a CA raiz (volume `kuro_public`, ver docker/caddy-ip.sh).
-`KURO_PUBLIC_DIR` troca o caminho (testes, ou o comando rodado fora do container)."""
-
-
-def _ip_https() -> tuple[str, str] | None:
-    """(url, ca_pem) do HTTPS por IP, se o profile `ip` estiver de pé."""
-    base = Path(os.environ.get("KURO_PUBLIC_DIR") or PUBLIC_DIR)
-    try:
-        url = (base / "url").read_text(encoding="utf-8").strip()
-        ca = (base / "ca.crt").read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    return (url, ca) if url and "BEGIN CERTIFICATE" in ca else None
+_LOOPBACK = LOOPBACK
+_ip_https = ip_https
 
 
 def _public_url(explicit: str | None, internal: str) -> tuple[str, str]:
-    """O endereço do serviço visto da máquina de quem opera, e de onde ele saiu.
-
-    De dentro do container o serviço só conhece o endereço interno, que não serve lá fora.
-    O `.env` (que o compose passa inteiro ao container) e o profile `ip` dizem o resto:
-    1. `--url` ou `KURO_PUBLIC_URL`: quem sabe disse;
-    2. `KURO_API_DOMAIN` com um domínio de verdade: o profile `tls` serve HTTPS nele;
-    3. o profile `ip` de pé: HTTPS no IP público, com a CA própria do Caddy;
-    4. senão o serviço só escuta no host, em `AGENT_SERVICE_BIND` (127.0.0.1:58000).
-    """
-    if explicit:
-        return explicit.rstrip("/"), "explicit"
-    domain = os.environ.get("KURO_API_DOMAIN", "").strip().strip("/")
-    if domain and domain != "localhost" and not domain.endswith(".localhost"):
-        return f"https://{domain.removeprefix('https://')}", "domain"
-    ip = _ip_https()
-    if ip:
-        return ip[0], "ip"
-    if not any(host in internal for host in _LOOPBACK):
-        return internal.rstrip("/"), "client"
-    port = os.environ.get("AGENT_SERVICE_BIND", "127.0.0.1:58000").rsplit(":", 1)[-1] or "58000"
-    return f"http://127.0.0.1:{port}", "local"
+    """O endereço do serviço visto da máquina de quem opera, e de onde ele saiu
+    (ver `agent_service.public_url`)."""
+    return public_url(explicit, internal)
 
 
 def _ca_file_name(url: str) -> str:
@@ -187,7 +156,7 @@ def mcp_config(
     apontado para a URL (o domínio ou, sem domínio, o HTTPS por IP do profile `ip`, com o
     certificado da CA para salvar). `--url` sobrepõe o endereço."""
     st = state(ctx)
-    key = ctx.find_root().params.get("api_key") or ""
+    key = current_key(ctx.find_root().params.get("api_key")) or ""
     url, url_source = _public_url(public_url, st.client.base_url)
     ip = _ip_https() if url_source == "ip" else None
     warnings = []

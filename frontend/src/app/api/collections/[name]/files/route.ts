@@ -1,4 +1,4 @@
-import { backendUrl } from "@/lib/api";
+import { backendApiKey, backendUrl } from "@/lib/api";
 
 /**
  * Upload de arquivo para uma collection qualquer.
@@ -13,7 +13,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ nam
   const { name } = await params;
   const formData = await request.formData();
   const headers = new Headers();
-  const apiKey = process.env.AGENT_SERVICE_API_KEY;
+  const apiKey = backendApiKey();
   if (apiKey) headers.set("Authorization", `Bearer ${apiKey}`);
 
   let upstream: Response;

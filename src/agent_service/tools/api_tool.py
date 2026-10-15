@@ -44,7 +44,14 @@ from agno.tools.function import Function
 
 from agent_service.field_schema import FieldSchemaError, object_schema, validate_composite
 from agent_service.tools import failures
-from agent_service.tools.context import DRY_RUN_DEPENDENCY, DRY_RUN_HEADER, get_dependencies, is_dry_run
+from agent_service.tools.context import (
+    DRY_RUN_DEPENDENCY,
+    DRY_RUN_HEADER,
+    IDEMPOTENCY_DEPENDENCY,
+    get_dependencies,
+    get_idempotency_key,
+    is_dry_run,
+)
 from agent_service.tools.egress import EgressBlockedError, acheck_url, check_url_template
 
 Method = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
@@ -248,8 +255,9 @@ def required_dependencies(config: dict[str, Any]) -> list[str]:
             if p.get("source") == "dependency"
             and p.get("required")
             and isinstance(p.get("dependency"), str)
-            # Preenchido pelo servidor em todo run — não é coisa de declarar.
-            and p["dependency"] != DRY_RUN_DEPENDENCY
+            # Preenchidos pelo servidor (o dry_run em todo run; a chave de idempotência no
+            # procedural e quando quem chama manda `Idempotency-Key`) — não é coisa de declarar.
+            and p["dependency"] not in (DRY_RUN_DEPENDENCY, IDEMPOTENCY_DEPENDENCY)
         }
     )
 
@@ -309,8 +317,10 @@ async def _call_api(config: dict[str, Any], model_arguments: dict[str, Any], too
         failures.record_failure(tool_name, output, kind, http_status)
         return output
 
-    # O flag do servidor vence um `dry_run` que viesse nas dependencies.
+    # O flag do servidor vence um `dry_run` que viesse nas dependencies; a chave também.
     dependencies = {**get_dependencies(), DRY_RUN_DEPENDENCY: is_dry_run()}
+    if key := get_idempotency_key():
+        dependencies[IDEMPOTENCY_DEPENDENCY] = key
     arguments, error = _resolve_arguments(config["parameters"], model_arguments, dependencies)
     if error is not None:
         return failed(error, "config" if error.startswith("Erro de configuração") else "invalid_arguments")

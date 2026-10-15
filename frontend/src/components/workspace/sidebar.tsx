@@ -453,9 +453,9 @@ function SidebarFooter({ collapsed }: { collapsed: boolean }) {
         </DropdownMenuItem>
         <DropdownMenuItem
           icon={ExternalLink}
-          onSelect={() => window.open(`${publicApiUrl}/docs`, "_blank", "noopener,noreferrer")}
+          onSelect={() => window.open("/api/integration/openapi", "_blank", "noopener,noreferrer")}
         >
-          Referência OpenAPI
+          OpenAPI de integração
         </DropdownMenuItem>
       </DropdownMenu>
     </div>

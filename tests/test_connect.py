@@ -28,6 +28,8 @@ class Fake:
         self.has_kuro_mcp = True
         self.registered = False
         self.add_ok = True
+        self.key_locked = False  # a chave daqui tem passphrase
+        self.agent_code = 2  # `ssh-add -l`: 0 com chaves, 1 vazio, 2 sem agent
 
     def __call__(self, cmd, stdin=None, timeout=60):
         cmd = list(cmd)
@@ -41,6 +43,12 @@ class Fake:
                 return R(0, "\n".join(self.containers) + "\n", "")
             if cmd[-1].endswith("python -c 'import mcp.server'"):
                 return R(0, "", "") if self.has_kuro_mcp else R(1, "", "ModuleNotFoundError: No module named 'mcp'")
+        if cmd[0] == "ssh-keygen":
+            if self.key_locked:
+                return R(255, "", f"Load key \"{cmd[-1]}\": incorrect passphrase supplied to decrypt private key")
+            return R(0, "ssh-ed25519 AAAA... eu@notebook\n", "")
+        if cmd[:2] == ["ssh-add", "-l"]:
+            return R(self.agent_code, "", "")
         if cmd[:3] == ["claude", "mcp", "get"]:
             return R(0 if self.registered else 1, "", "")
         if cmd[:3] == ["claude", "mcp", "remove"]:
@@ -62,6 +70,9 @@ def fake(monkeypatch):
     monkeypatch.setattr(connect_mod.sys, "platform", "linux")
     monkeypatch.setattr(connect_mod, "claude_bin", lambda: "claude")
     monkeypatch.setattr(connect_mod.shutil, "which", lambda name: f"/usr/bin/{name}")
+    # As chaves desta máquina não entram no teste; quem quer uma a põe aqui.
+    fake.keys = []
+    monkeypatch.setattr(connect_mod, "_private_keys", lambda ssh: list(fake.keys))
     fake.probed = probed
     return fake
 
@@ -88,6 +99,16 @@ def test_testa_antes_e_registra_o_ssh_no_claude_code(fake):
     assert out["mcp_json"]["mcpServers"]["kuro"] == {"command": "ssh", "args": command[1:]}
 
 
+def test_comando_registrado_tem_keepalive_antes_do_destino(fake):
+    """Com a rede caída, a conexão meio aberta pendurava a tool até o timeout do cliente.
+    As opções vão antes do destino: depois dele virariam parte do comando remoto."""
+    command = json.loads(_run("root@69.62.89.141").stdout)["command"]
+    destino = command.index("root@69.62.89.141")
+    opcoes = [command[i + 1] for i in range(destino) if command[i] == "-o"]
+    assert {"ServerAliveInterval=15", "ServerAliveCountMax=3", "ConnectTimeout=15"} <= set(opcoes)
+    assert command[destino + 1] == "docker"
+
+
 def test_comando_registrado_nao_tem_nada_que_o_cmd_do_windows_interprete(fake):
     command = json.loads(_run("deploy@kuro", "-p", "2222", "-i", "~/.ssh/kuro").stdout)["command"]
     assert ["-p", "2222"] == command[command.index("-p"): command.index("-p") + 2]
@@ -100,6 +121,40 @@ def test_ssh_com_senha_sem_terminal_explica_e_nao_registra(fake):
     assert result.exit_code == 3
     assert "senha" in _error(result) and "chave SSH" in _error(result)
     assert not fake.claude("add")
+
+
+def test_chave_com_passphrase_sem_agent_manda_carregar_no_agent(fake):
+    """Oferecer instalar outra chave não resolveria: a chave certa existe, só está trancada."""
+    fake.ssh_ok, fake.ssh_err = False, "root@kuro: Permission denied (publickey,password)."
+    fake.keys, fake.key_locked = ["/home/eu/.ssh/id_ed25519"], True
+    result = _run("root@kuro")
+    assert result.exit_code == 3
+    erro = _error(result)
+    assert "passphrase" in erro and "ssh-add" in erro and "id_ed25519" in erro
+    assert ["ssh-add", "-l"] in fake.calls
+    assert not fake.claude("add")
+
+
+def test_chave_com_passphrase_ja_no_agent_nao_e_o_problema(fake):
+    """Com a chave no agent, ela foi oferecida e recusada: o caso é o de sempre (senha)."""
+    fake.ssh_ok, fake.ssh_err = False, "root@kuro: Permission denied (publickey,password)."
+    fake.keys, fake.key_locked, fake.agent_code = ["/home/eu/.ssh/id_ed25519"], True, 0
+    erro = _error(_run("root@kuro"))
+    assert "pediu senha" in erro and "passphrase" not in erro
+
+
+def test_servidor_que_so_aceita_chave_nao_pede_senha(fake):
+    fake.ssh_ok, fake.ssh_err = False, "root@kuro: Permission denied (publickey)."
+    fake.keys = ["/home/eu/.ssh/id_ed25519"]
+    result = _run("root@kuro")
+    assert result.exit_code == 3
+    erro = _error(result)
+    assert "só aceita chave" in erro and "authorized_keys" in erro and "id_ed25519" in erro
+
+
+def test_diagnostico_respeita_a_chave_do_dash_i():
+    ssh = connect_mod.Ssh("root@kuro", identity="~/.ssh/kuro")
+    assert connect_mod._private_keys(ssh) == [connect_mod.Path("~/.ssh/kuro").expanduser()]
 
 
 def test_chave_do_host_diferente_manda_parar(fake):

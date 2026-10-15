@@ -69,11 +69,38 @@ export interface DependencyContract {
   required_by_tools: string[];
 }
 
+/** Um campo do corpo do `/chat` ou do `/analyze`, como o contrato descreve. */
+export interface RequestFieldContract {
+  name: string;
+  type: string;
+  required: boolean;
+  description: string;
+}
+
+export interface StreamEventContract {
+  event: string;
+  /** A forma do `data` (JSON) desse evento. */
+  data: string;
+}
+
+export interface ErrorContract {
+  status: string;
+  meaning: string;
+  action: string;
+}
+
 export interface IntegrationContract {
   agent_type: string;
   name: string;
   kind: AgentKind;
   prompt_version: number;
+  agent_version?: number | null;
+  /** O endereço dos exemplos: o pedido, ou o público que o agent-service conhece. */
+  base_url: string;
+  /** `explicit` | `domain` | `ip` | `local` (o serviço só escuta no host). */
+  base_url_source: string;
+  /** OpenAPI só das rotas da chave `runtime` — abre com ela, diferente do `/docs`. */
+  openapi_url: string;
   /** `/chat` num conversacional, `/analyze` num analista. */
   endpoint: string;
   chat_url: string;
@@ -84,7 +111,12 @@ export interface IntegrationContract {
   /** Só em `kind: "procedural"`: onde ler o estado de uma conversa (`{session_id}` a trocar). */
   state_url?: string | null;
   dependencies: DependencyContract[];
+  request_fields: RequestFieldContract[];
   request_example: Record<string, unknown>;
+  response_example: Record<string, unknown>;
+  /** Eventos do stream, na ordem em que podem chegar. Vazio em analista. */
+  stream_events: StreamEventContract[];
+  errors: ErrorContract[];
   curl: string;
   warnings: string[];
 }
@@ -115,6 +147,19 @@ export interface ChatMessage {
   runId?: string;
   /** Anexos da mensagem do usuário — só nome e tipo, para mostrar o chip. */
   attachments?: AttachmentInfo[];
+  /** Documentos da base que as buscas do run devolveram (evento `sources` do stream). */
+  sources?: ChatSource[];
+}
+
+/** Uma fonte citada na resposta: um documento ou página da base, com os trechos usados. */
+export interface ChatSource {
+  title?: string | null;
+  document?: string | null;
+  source_url?: string | null;
+  content_id?: string | null;
+  collection?: string | null;
+  score?: number | null;
+  chunk_ids: string[];
 }
 
 /** O que se mostra de um anexo: nunca o conteúdo. */
@@ -126,9 +171,90 @@ export interface AttachmentInfo {
   url?: string | null;
 }
 
-export interface SearchResult {
+/** Um trecho recuperado da base — na busca da collection e em `metadata.references` da span de busca. */
+export interface RetrievedChunk {
   content: string;
+  rank?: number | null;
+  /** Similaridade 0–1 (ou o score do reranker). */
+  score?: number | null;
+  document?: string | null;
+  content_id?: string | null;
+  chunk_id?: string | null;
+  chunk?: number | null;
+  page?: number | null;
+  section?: string | null;
+  source_url?: string | null;
+  page_title?: string | null;
+}
+
+export interface SearchResult extends RetrievedChunk {
   metadata: Record<string, unknown> | null;
+}
+
+export type SourceMode = "crawl" | "sitemap" | "page";
+export type SourceRefresh = "never" | "daily" | "weekly" | "monthly";
+export type SourceStatus = "pending" | "running" | "ready" | "partial" | "failed";
+
+/** Um site que alimenta a coleção (`/collections/{nome}/sources`). */
+export interface KnowledgeSource {
+  id: string;
+  collection: string;
+  url: string;
+  label?: string | null;
+  mode: SourceMode;
+  options: {
+    max_pages?: number;
+    max_depth?: number;
+    include?: string[];
+    exclude?: string[];
+    format?: boolean;
+    formatter_provider?: string | null;
+    formatter_model_id?: string | null;
+  };
+  refresh: SourceRefresh;
+  status: SourceStatus;
+  status_message?: string | null;
+  progress?: {
+    discovered?: number;
+    done?: number;
+    indexed?: number;
+    unchanged?: number;
+    removed?: number;
+    failed?: number;
+    skipped?: number;
+    format_input_tokens?: number;
+    format_output_tokens?: number;
+    format_fallbacks?: number;
+    /** Custo do formatador nesta sincronização (também em `knowledge_sync_costs`, somado aos Logs). */
+    format_cost_usd?: number | null;
+  } | null;
+  pages_indexed: number;
+  pages_failed: number;
+  last_synced_at?: string | null;
+  next_sync_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface KnowledgeSourcePage {
+  url: string;
+  title?: string | null;
+  status: "indexed" | "failed" | "skipped" | string;
+  error?: string | null;
+  formatted?: "agent" | "fallback" | "none" | null;
+  chunks: number;
+  content_id?: string | null;
+  fetched_at?: string | null;
+}
+
+export interface KnowledgeSourceDetail extends KnowledgeSource {
+  pages: KnowledgeSourcePage[];
+}
+
+/** O que a span `search_knowledge_base` registra da busca que o agente fez. */
+export interface RetrievalReferences {
+  query: string;
+  collection: string;
+  results: RetrievedChunk[];
 }
 
 export type ContentStatus = "processing" | "completed" | "partial" | "failed";
@@ -796,7 +922,12 @@ export interface OverviewTotals {
   tool_failures: number;
   sessions: number;
   total_tokens: number;
+  /** Runs + (no panorama geral) a coleta de sites. */
   cost_usd: number | null;
+  /** Parte de `cost_usd` gasta pelo formatador das fontes de site. */
+  ingestion_cost_usd?: number | null;
+  /** Tokens do formatador — fora de `total_tokens`. */
+  ingestion_tokens?: number;
   p50_latency_ms: number | null;
   p95_latency_ms: number | null;
   feedback_up: number;
@@ -811,7 +942,9 @@ export interface OverviewBucket {
   tool_failure_runs: number;
   /** `error` + `interrupted`. */
   errors: number;
+  /** Inclui `ingestion_cost_usd`. */
   cost_usd: number;
+  ingestion_cost_usd?: number;
   total_tokens: number;
   p95_latency_ms: number | null;
 }

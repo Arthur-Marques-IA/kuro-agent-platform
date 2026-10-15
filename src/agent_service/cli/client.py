@@ -13,6 +13,9 @@ from typing import Any
 
 import httpx
 
+from agent_service.config import current_key
+from agent_service.public_url import is_loopback
+
 
 class ApiError(Exception):
     def __init__(self, status: int, detail: Any):
@@ -71,7 +74,9 @@ class Client:
     ):
         self.base_url = base_url.rstrip("/")
         # A chave vai no cliente, não em cada chamada: esquecer de passá-la em
-        # um comando novo viraria um 401 sem explicação.
+        # um comando novo viraria um 401 sem explicação. No container o compose copia
+        # `ADMIN_API_KEY` para `KURO_API_KEY`, e numa rotação ela é `nova,antiga`: vai a nova.
+        api_key = current_key(api_key)
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
         # CA que não existe: o httpx estoura um FileNotFoundError aqui mesmo, antes de
         # qualquer comando tratar o erro. Vira um TlsError na primeira chamada, com a saída
@@ -164,9 +169,10 @@ class Client:
 
     def integration(self, agent_type: str) -> dict[str, Any]:
         """Contrato pronto pra quem vai chamar o agente de outro módulo."""
-        return self._request(
-            "GET", f"/agents/{agent_type}/integration", params={"base_url": self.base_url}
-        )
+        # O endereço pelo qual esta CLI chegou só serve de exemplo se for de fora: de dentro
+        # do container (ou pelo loopback de um túnel) quem sabe a URL pública é o servidor.
+        params = None if is_loopback(self.base_url) else {"base_url": self.base_url}
+        return self._request("GET", f"/agents/{agent_type}/integration", params=params)
 
     def send_feedback(self, agent_type: str, session_id: str, feedback: str) -> dict[str, Any]:
         return self._request(
@@ -319,6 +325,30 @@ class Client:
 
     def search_collection(self, name: str, query: str, limit: int) -> list[dict[str, Any]]:
         return self._request("GET", f"/collections/{name}/search", params={"query": query, "limit": limit})
+
+    # -- fontes de site (documents/web_sync.py) ------------------------------
+
+    def list_sources(self, name: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/collections/{name}/sources")
+
+    def create_source(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", f"/collections/{name}/sources", json=payload)
+
+    def get_source(self, name: str, source_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/collections/{name}/sources/{source_id}")
+
+    def update_source(self, name: str, source_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("PATCH", f"/collections/{name}/sources/{source_id}", json=payload)
+
+    def sync_source(self, name: str, source_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/collections/{name}/sources/{source_id}/sync")
+
+    def delete_source(self, name: str, source_id: str, keep_documents: bool = False) -> None:
+        self._request(
+            "DELETE",
+            f"/collections/{name}/sources/{source_id}",
+            params={"keep_documents": str(keep_documents).lower()},
+        )
 
     # -- observabilidade -----------------------------------------------------
 

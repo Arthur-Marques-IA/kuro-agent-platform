@@ -30,6 +30,7 @@ from agent_service.config import get_settings
 from agent_service.observability.tracing import FEEDBACK, get_langfuse, trace_id_for_run
 
 RunStatus = Literal["success", "error", "interrupted"]
+RunSort = Literal["recent", "cost", "latency"]
 
 _LEVEL_BY_STATUS: dict[RunStatus, str] = {"success": "DEFAULT", "error": "ERROR", "interrupted": "WARNING"}
 _STATUS_BY_LEVEL: dict[str, RunStatus] = {"ERROR": "error", "WARNING": "interrupted"}
@@ -212,6 +213,12 @@ class RunQuery:
     """Tira os testes do Playground (`metadata.dry_run = "true"`)."""
     sample: int | None = None
     """Amostra aleatória deste tamanho, em vez das mais recentes (sem paginação)."""
+    agent_types: tuple[str, ...] = ()
+    """Só estes agentes (qualquer um deles). Soma-se a `agent_type`, que fica para quem filtra um só."""
+    statuses: tuple[RunStatus, ...] = ()
+    """Só estes status (qualquer um deles) — ex.: `error` + `interrupted`, o "falharam" do panorama."""
+    sort: RunSort = "recent"
+    """`cost`/`latency`: as mais caras/lentas primeiro, sem os runs sem esse valor — só no trace store local."""
 
 
 class TraceStore(Protocol):
@@ -269,6 +276,37 @@ class _Usage:
             self.cost_usd = (self.cost_usd or 0) + cost
         if observation.get("model"):
             self.model = observation["model"]
+
+
+def _root_filters(query: RunQuery) -> list[dict[str, Any]]:
+    """Os filtros de `RunQuery` que a API de observações do Langfuse entende. Os da fila de
+    revisão, a busca e a metadata ficam de fora: só existem no trace store local."""
+    filters: list[dict[str, Any]] = []
+    if query.agent_type:
+        filters.append({"type": "string", "column": "traceName", "operator": "=", "value": query.agent_type})
+    # Um valor só segue com `=`, o filtro de sempre; `any of` fica para quando há vários.
+    if len(query.agent_types) == 1:
+        filters.append({"type": "string", "column": "traceName", "operator": "=", "value": query.agent_types[0]})
+    elif query.agent_types:
+        filters.append({"type": "stringOptions", "column": "traceName", "operator": "any of", "value": list(query.agent_types)})
+    if query.prompt_version is not None:
+        filters.append({"type": "string", "column": "version", "operator": "=", "value": f"{_VERSION_PREFIX}{query.prompt_version}"})
+    if query.status:
+        filters.append({"type": "string", "column": "level", "operator": "=", "value": _LEVEL_BY_STATUS[query.status]})
+    levels = [_LEVEL_BY_STATUS[status] for status in query.statuses]
+    if len(levels) == 1:
+        filters.append({"type": "string", "column": "level", "operator": "=", "value": levels[0]})
+    elif levels:
+        filters.append({"type": "stringOptions", "column": "level", "operator": "any of", "value": levels})
+    if query.user_id:
+        filters.append({"type": "string", "column": "userId", "operator": "=", "value": query.user_id})
+    if query.session_id:
+        filters.append({"type": "string", "column": "sessionId", "operator": "=", "value": query.session_id})
+    if query.since:
+        filters.append({"type": "datetime", "column": "startTime", "operator": ">=", "value": _iso(query.since)})
+    if query.until:
+        filters.append({"type": "datetime", "column": "startTime", "operator": "<", "value": _iso(query.until)})
+    return filters
 
 
 class LangfuseTraceStore:
@@ -347,20 +385,7 @@ class LangfuseTraceStore:
         filters = self._scope_filters(query.tenant_id) + [
             {"type": "boolean", "column": "isRootObservation", "operator": "=", "value": True},
         ]
-        if query.agent_type:
-            filters.append({"type": "string", "column": "traceName", "operator": "=", "value": query.agent_type})
-        if query.prompt_version is not None:
-            filters.append({"type": "string", "column": "version", "operator": "=", "value": f"{_VERSION_PREFIX}{query.prompt_version}"})
-        if query.status:
-            filters.append({"type": "string", "column": "level", "operator": "=", "value": _LEVEL_BY_STATUS[query.status]})
-        if query.user_id:
-            filters.append({"type": "string", "column": "userId", "operator": "=", "value": query.user_id})
-        if query.session_id:
-            filters.append({"type": "string", "column": "sessionId", "operator": "=", "value": query.session_id})
-        if query.since:
-            filters.append({"type": "datetime", "column": "startTime", "operator": ">=", "value": _iso(query.since)})
-        if query.until:
-            filters.append({"type": "datetime", "column": "startTime", "operator": "<", "value": _iso(query.until)})
+        filters.extend(_root_filters(query))
 
         page = self._observations(filters, fields="basic,io,metadata,metrics", limit=query.limit, cursor=query.cursor)
         roots = [r for r in page.get("data", []) if (r.get("metadata") or {}).get("run_id")]
@@ -430,20 +455,7 @@ class LangfuseTraceStore:
         filters = self._scope_filters(query.tenant_id) + [
             {"type": "boolean", "column": "isRootObservation", "operator": "=", "value": True},
         ]
-        if query.agent_type:
-            filters.append({"type": "string", "column": "traceName", "operator": "=", "value": query.agent_type})
-        if query.prompt_version is not None:
-            filters.append({"type": "string", "column": "version", "operator": "=", "value": f"{_VERSION_PREFIX}{query.prompt_version}"})
-        if query.status:
-            filters.append({"type": "string", "column": "level", "operator": "=", "value": _LEVEL_BY_STATUS[query.status]})
-        if query.user_id:
-            filters.append({"type": "string", "column": "userId", "operator": "=", "value": query.user_id})
-        if query.session_id:
-            filters.append({"type": "string", "column": "sessionId", "operator": "=", "value": query.session_id})
-        if query.since:
-            filters.append({"type": "datetime", "column": "startTime", "operator": ">=", "value": _iso(query.since)})
-        if query.until:
-            filters.append({"type": "datetime", "column": "startTime", "operator": "<", "value": _iso(query.until)})
+        filters.extend(_root_filters(query))
 
         page = self._observations(filters, fields="basic,metadata,metrics", limit=_AGGREGATE_SCAN_LIMIT)
         data = page.get("data", [])

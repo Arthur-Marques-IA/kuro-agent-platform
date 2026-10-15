@@ -1,4 +1,4 @@
-import { backendUrl, proxyJson } from "@/lib/api";
+import { backendApiKey, backendUrl, proxyJson } from "@/lib/api";
 
 const LIST_PARAMS = ["limit", "page", "sort_by", "sort_order", "knowledge_id"];
 
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   // multipart e a chamada não passa por `proxyJson`. Sem isto, o upload era o
   // único caminho do console que dava 401 com as chaves ligadas.
   const headers = new Headers();
-  const apiKey = process.env.AGENT_SERVICE_API_KEY;
+  const apiKey = backendApiKey();
   if (apiKey) headers.set("Authorization", `Bearer ${apiKey}`);
   let upstream: Response;
   try {

@@ -28,11 +28,17 @@ class Settings(BaseSettings):
     # Autenticação da API (ver agent_service/api/auth.py)
     admin_api_key: str | None = None
     """Chave com acesso total: CRUD de agentes/tools/credenciais e leitura de
-    traces e sessões. É a do console e da CLI (`KURO_API_KEY`)."""
+    traces e sessões. É a do console e da CLI (`KURO_API_KEY`). Aceita uma lista
+    separada por vírgula para rotacionar (`nova,antiga`); ver `split_keys`."""
     runtime_api_key: str | None = None
     """Chave que só executa: `/chat`, `/chat/stream`, `/analyze` e scores. É a que
     vai para os outros módulos da plataforma — se vazar, não lê conversa alheia
-    nem troca prompt."""
+    nem troca prompt. Também aceita lista (`nova,antiga`)."""
+
+    cors_origins: str | None = None
+    """Sites (no navegador) que podem chamar a API, separados por vírgula. Vazio = a lista
+    padrão do AgentOS (localhost:3000 e os domínios do Agno); `none` = nenhum. Ver
+    `api/cors.py`. O console não precisa disto: ele chama a API pelo servidor."""
 
     # Criptografia das chaves de provedor de modelo salvas pela UI (`/model-providers`)
     credentials_encryption_key: str | None = None
@@ -63,6 +69,9 @@ class Settings(BaseSettings):
     `timeout_seconds` do run, que só começa quando ele ganha a vaga. 0 desliga a
     fila (503 imediato, o comportamento antigo). Mantenha abaixo do timeout de
     quem chama."""
+    idempotency_ttl_hours: int = 24
+    """Por quanto tempo um `Idempotency-Key` de `/chat`/`/analyze` devolve a resposta
+    guardada (`api/idempotency.py`). Passou disso, a mesma chave roda de novo."""
     aux_model_id: str | None = None
     """Modelo das tarefas de apoio — extrair memória de longo prazo e resumir a
     sessão. Vazio = o modelo do próprio agente. Um modelo barato aqui (ex.:
@@ -114,6 +123,20 @@ class Settings(BaseSettings):
     públicos, que é o padrão: sem isso uma tool alcança o Postgres, o Redis e o
     metadata da nuvem a partir de dentro do container."""
 
+    # Sites como fonte de uma collection (ver agent_service/documents/web_sync.py)
+    web_source_max_pages: int = 500
+    """Teto de páginas por fonte, qualquer que seja o `max_pages` pedido."""
+    web_source_concurrency: int = 3
+    """Páginas processadas ao mesmo tempo por fonte (download + formatação)."""
+    web_source_request_delay_ms: int = 300
+    """Intervalo mínimo entre duas requisições ao mesmo site — educação com quem hospeda."""
+    web_source_user_agent: str = "KuroBot/1.0 (+https://github.com/Arthur-Marques-IA)"
+    """Como o crawler se apresenta; é este nome que o `robots.txt` do site enxerga."""
+    web_source_scheduler: bool = True
+    """Ressincroniza as fontes com `refresh` diário/semanal/mensal. Desligue em
+    réplicas extras se houver mais de uma (a trava no banco evita sync duplo, mas
+    não precisa de todas olhando)."""
+
     # Tools — kind="python" (ver agent_service/tools/python_tool.py)
     custom_python_tools_enabled: bool = False
     """Desligado por padrão: tools Python rodam num namespace restrito, mas
@@ -126,3 +149,15 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def split_keys(value: str | None) -> list[str]:
+    """`ADMIN_API_KEY`/`RUNTIME_API_KEY` (e o `KURO_API_KEY` que o compose copia delas) como
+    lista: `nova,antiga` durante uma rotação. A primeira é a atual — a que um cliente manda."""
+    return [k.strip() for k in (value or "").split(",") if k.strip()]
+
+
+def current_key(value: str | None) -> str | None:
+    """A chave que um cliente deve mandar quando a variável traz uma lista (a primeira)."""
+    keys = split_keys(value)
+    return keys[0] if keys else None

@@ -8,8 +8,8 @@ from typing import Any
 
 import typer
 
-from agent_service.cli.chat import read_attachments, resolve_dependencies, stdin_is_tty
-from agent_service.cli.common import EXIT_USAGE, call, console, emit, fail, parse_pairs, state
+from agent_service.cli.chat import read_attachments, resolve_dependencies, sources_lines, stdin_is_tty
+from agent_service.cli.common import EXIT_USAGE, call, console, emit, err_console, fail, parse_pairs, state
 
 DEFAULT_ATTACHMENT_PROMPT = "Analise o(s) anexo(s)."
 
@@ -68,4 +68,12 @@ def analyze(
     if dry_run:
         body["dry_run"] = True
     result = call(st, st.client.analyze, body)
-    emit(st, result, lambda r: console.print_json(json.dumps(r["result"], ensure_ascii=False)))
+    emit(st, result, _render)
+
+
+def _render(result: dict[str, Any]) -> None:
+    console.print_json(json.dumps(result["result"], ensure_ascii=False))
+    if result.get("sources"):
+        err_console.print("[dim]fontes:[/]", highlight=False)
+        for line in sources_lines(result["sources"]):
+            err_console.print(line, highlight=False)

@@ -147,8 +147,9 @@ services:
       # Sem prefixo NEXT_PUBLIC_: fica no servidor do Next, nunca no browser.
       AGENT_SERVICE_API_KEY: ${ADMIN_API_KEY:-}
       # Só para exibir exemplos de integração (cURL etc.) no console — é o
-      # endereço pelo qual outros módulos alcançam o agent-service.
-      AGENT_SERVICE_PUBLIC_URL: http://localhost:58000
+      # endereço pelo qual outros módulos alcançam o agent-service. Vazio, quem
+      # decide é o agent-service (KURO_PUBLIC_URL, KURO_API_DOMAIN, profile `ip`).
+      AGENT_SERVICE_PUBLIC_URL: ${AGENT_SERVICE_PUBLIC_URL:-}
     ports:
       - "${FRONTEND_BIND:-127.0.0.1:3000}:3000"
     depends_on:

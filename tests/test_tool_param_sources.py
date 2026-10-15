@@ -125,7 +125,8 @@ def test_header_from_dependency_can_have_a_real_header_name():
             {"name": "assunto", "type": "string", "location": "body", "required": True},
         ],
     })
-    assert required_dependencies(config) == ["idempotency_key"]
+    # Preenchida pelo servidor (etapa action ou header Idempotency-Key): não se declara.
+    assert required_dependencies(config) == []
     fn = build_api_function(tool_name="chamado", description=None, config=config)
     assert fn.parameters["properties"].keys() == {"assunto"}
     with RedeFalsa({"ok": True}) as rede, dependencies_scope({"idempotency_key": "abc:abrir:123"}):

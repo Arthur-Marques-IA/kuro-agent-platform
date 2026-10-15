@@ -30,6 +30,7 @@ se configura pelo console dá para configurar pela CLI, e vice-versa:
 | Embedder de cada collection | `/collections/embedders` | `collections embedders` | diálogo nova coleção |
 | Indexar texto e arquivo | `/collections/{n}/documents`, `/files` | `collections add`, `add -f` | abas Texto e Arquivo |
 | Listar e apagar documento indexado | `/collections/{n}/documents` | `collections docs\|rm-doc` | tabela da coleção |
+| Sites: coletar, acompanhar, ressincronizar | `/collections/{n}/sources` | `collections add-site\|sources\|sync\|set-site\|rm-site` | aba Site e painel Sites |
 | Provedores e credenciais de modelo | `/model-providers`, `/model-credentials` | `providers`, `credentials` | Chaves de API |
 | Modelos disponíveis no provedor (ao vivo) | `/model-providers/{p}/models` | `providers models <p>` | seletor de modelo do agente |
 | Execuções, traces e scores | `/observability/*` | `runs ...`, `dash` | Logs |
@@ -39,8 +40,7 @@ se configura pelo console dá para configurar pela CLI, e vice-versa:
 | Conversas salvas, renomear e apagar | `/sessions` | `sessions list\|show\|rename\|delete` | Conversas |
 
 As exceções são limitações reais, não esquecimento:
-**indexar por URL** só funciona na coleção padrão (é o pipeline do AgentOS que
-não aceita escolher a coleção); **`runs tail`**, que acompanha execuções ao
+**`runs tail`**, que acompanha execuções ao
 vivo, existe só na CLI (no console, a lista de Logs atualiza sozinha);
 **testar uma chave de API antes de salvá-la** existe só no console, porque na
 CLI o caminho é cadastrar e rodar `credentials test`; e o que é fluxo de CI —
@@ -132,6 +132,9 @@ mesma conversa. Use `--new-session` para recomeçar. Com um agente procedural, o
 `[2/4 problema] faltando: descricao`, e `kuro agents procedures <agente> [sessão]` mostra o
 funil ou o estado de uma conversa.
 
+Com um agente que consulta uma base de conhecimento, o rodapé de `chat` e de `analyze` lista as
+fontes (`[1] Política de trocas — https://...  (0.91)`); com `--json`, elas vêm em `sources`.
+
 **Ensinar com feedback**
 
 ```bash
@@ -179,6 +182,8 @@ uv run kuro collections add manuais -f manual.pdf   # indexa um arquivo
 uv run kuro collections docs manuais            # o que está indexado, com o status
 uv run kuro collections rm-doc manuais <id> --yes   # tira um documento da base
 uv run kuro collections search manuais "prazo de garantia"
+uv run kuro collections add-site manuais https://docs.exemplo.com/guia --refresh weekly --wait
+uv run kuro collections sources manuais         # sites e o status da sincronização
 uv run kuro credentials test <credential_id>    # valida a chave sem gastar tokens
 uv run kuro health                              # serviço, Langfuse e provedores
 ```

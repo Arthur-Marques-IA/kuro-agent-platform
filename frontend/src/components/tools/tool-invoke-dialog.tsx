@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Play } from "lucide-react";
 import { errorMessage, requestJson } from "@/lib/http";
 import { parseDependencies } from "@/lib/agent-meta";
-import type { ToolDetail, ToolInvokeResult, ToolSummary } from "@/lib/types";
+import type { ApiToolParam, ToolDetail, ToolInvokeResult, ToolSummary } from "@/lib/types";
+import { fieldsFromToolParams } from "@/lib/dependencies-form";
 import { Button } from "@/components/ui/button";
 import { CodeBlock } from "@/components/ui/code-block";
 import { Dialog, DialogBody, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, Spinner } from "@/components/ui/primitives";
 import { Select } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
+import { DependenciesForm } from "@/components/schema/dependencies-form";
 import { DryRunToggle, useDryRun } from "@/components/tools/dry-run-toggle";
 import { TOOL_FAILURE_META } from "@/lib/tool-failures";
 
@@ -19,8 +20,8 @@ export function ToolInvokeDialog({ tool, onOpenChange }: { tool: ToolSummary; on
   const [detail, setDetail] = useState<ToolDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [functionName, setFunctionName] = useState("");
-  const [argumentsText, setArgumentsText] = useState("{}");
-  const [dependenciesText, setDependenciesText] = useState("{}");
+  const [argumentsText, setArgumentsText] = useState("");
+  const [dependenciesText, setDependenciesText] = useState("");
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ToolInvokeResult | null>(null);
   const [dryRun, setDryRun] = useDryRun();
@@ -41,14 +42,19 @@ export function ToolInvokeDialog({ tool, onOpenChange }: { tool: ToolSummary; on
     };
   }, [tool.tool_name]);
 
-  const argumentsCheck = parseDependencies(argumentsText === "{}" ? "" : argumentsText);
-  const dependenciesCheck = parseDependencies(dependenciesText === "{}" ? "" : dependenciesText);
-  // Parâmetro `source="dependency"` não vem dos argumentos: no /chat quem o
-  // preenche é o servidor, a partir do `dependencies` da requisição. Sem poder
-  // simular isso aqui, uma tool com esse tipo de parâmetro não era testável.
-  const usaDependencies = ((detail?.config as { parameters?: { source?: string }[] } | undefined)?.parameters ?? []).some(
-    (p) => p.source === "dependency"
+  const argumentsCheck = parseDependencies(argumentsText);
+  const dependenciesCheck = parseDependencies(dependenciesText);
+  // Tool `kind="api"` declara os parâmetros: os de origem "modelo" viram o formulário dos argumentos e os de
+  // origem "dependência" o do `dependencies` (no /chat quem os preenche é o servidor, a partir do `dependencies`
+  // da requisição). Builtin e python não descrevem os argumentos aqui: o formulário cai no chave/valor.
+  const { args: argFields, deps: depFields } = useMemo(
+    () =>
+      fieldsFromToolParams(
+        tool.kind === "api" ? (detail?.config as { parameters?: ApiToolParam[] } | undefined)?.parameters : undefined
+      ),
+    [detail, tool.kind]
   );
+  const usaDependencies = depFields.length > 0;
 
   async function run() {
     if (argumentsCheck.error || dependenciesCheck.error) return;
@@ -106,32 +112,38 @@ export function ToolInvokeDialog({ tool, onOpenChange }: { tool: ToolSummary; on
 
         {usaDependencies && (
           <Field
-            label="Dependencies (JSON)"
-            htmlFor="invoke-deps"
+            label="Dependencies"
             error={dependenciesCheck.error}
             hint="Simula o dependencies do /chat — é daqui que saem os parâmetros com origem 'dependência'."
           >
-            <Textarea
-              id="invoke-deps"
+            <DependenciesForm
+              fields={depFields}
               value={dependenciesText}
-              onChange={(e) => setDependenciesText(e.target.value)}
-              rows={3}
-              className="font-mono text-[13px]"
-              spellCheck={false}
+              onChange={setDependenciesText}
+              invalid={Boolean(dependenciesCheck.error)}
+              jsonRows={3}
+              placeholder='{"cpf": "000.000.000-00"}'
             />
           </Field>
         )}
 
-        <Field label="Argumentos (JSON)" htmlFor="invoke-args" error={argumentsCheck.error}>
-          <Textarea
-            id="invoke-args"
-            value={argumentsText}
-            onChange={(e) => setArgumentsText(e.target.value)}
-            rows={5}
-            className="font-mono text-xs"
-            placeholder='{"a": 1, "b": 2}'
-          />
-        </Field>
+        {detail && (
+          <Field
+            label="Argumentos"
+            error={argumentsCheck.error}
+            hint={argFields.length === 0 ? "O que o modelo mandaria na chamada — chave/valor ou JSON." : undefined}
+          >
+            <DependenciesForm
+              fields={argFields}
+              value={argumentsText}
+              onChange={setArgumentsText}
+              invalid={Boolean(argumentsCheck.error)}
+              jsonRows={5}
+              placeholder='{"a": 1, "b": 2}'
+              label="argumentos"
+            />
+          </Field>
+        )}
 
         {avisaDryRun && <DryRunToggle checked={dryRun} onChange={setDryRun} />}
 

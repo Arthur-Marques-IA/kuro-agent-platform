@@ -12,18 +12,20 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing, asynccontextmanager
-from typing import Any
+from typing import Annotated, Any
 
 from agno.agent import Agent
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
 
 from agno.run.agent import RunEvent
 
+from agent_service.api import idempotency
 from agent_service.agents.attachments import AttachmentError, AttachmentIn, build_media, describe_attachments
 from agent_service.agents.dependency_fields import DependencyValidationError, validate_dependencies
 from agent_service.agents.procedure_runner import (
@@ -35,7 +37,9 @@ from agent_service.agents.procedure_runner import (
 from agent_service.agents.registry import UnknownAgentTypeError, get_agent_with_definition, list_agent_types
 from agent_service.config import get_settings
 from agent_service.documents.collections import EmbedderError
+from agent_service.documents.retrieval import sources_from
 from agent_service.observability.tracing import RUN_FAILED, RunContext, RunTimeoutError, traced_run_events
+from agent_service.tools.context import set_idempotency_key
 from agent_service.tools.registry import ToolBuildError, UnknownToolError
 
 logger = logging.getLogger(__name__)
@@ -81,6 +85,45 @@ async def _run_slot() -> AsyncIterator[None]:
         yield
     finally:
         _slots.release()
+
+
+IdempotencyKey = Annotated[
+    str | None,
+    Header(
+        alias=idempotency.HEADER,
+        description="Repetir com a mesma chave (e o mesmo corpo) devolve a resposta guardada, sem rodar de novo; "
+        "409 se a primeira ainda está em andamento, 422 se o corpo for outro. As tools recebem a chave em "
+        "`dependencies.idempotency_key`. Vale por IDEMPOTENCY_TTL_HOURS (24 h).",
+    ),
+]
+
+
+async def _idempotent(
+    endpoint: str, request: BaseModel, key: str | None, handler: Callable[[], Awaitable[BaseModel]]
+) -> Any:
+    """Roda `handler` sob o `Idempotency-Key`, se veio (ver `api/idempotency.py`). Qualquer
+    falha libera a chave: a repetição roda de verdade, e o destino da tool deduplica."""
+    if key is None:
+        return await handler()
+    try:
+        key = idempotency.check_key(key)
+        body_hash = idempotency.request_hash(request.model_dump(mode="json"))
+        reservation = await run_in_threadpool(idempotency.reserve, endpoint, request.agent_type, key, body_hash)
+    except idempotency.IdempotencyError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    if reservation.id is None:
+        return JSONResponse(reservation.replay, headers={idempotency.REPLAYED_HEADER: "true"})
+    set_idempotency_key(key)
+    try:
+        response = await handler()
+    except BaseException:
+        # `shield`: um cancelamento (cliente desistiu) não pode deixar a chave presa em 409.
+        await asyncio.shield(run_in_threadpool(idempotency.release, reservation.id))
+        raise
+    finally:
+        set_idempotency_key(None)
+    await run_in_threadpool(idempotency.complete, reservation.id, response.model_dump(mode="json"))
+    return response
 
 
 def _timeout_for(definition: dict[str, Any]) -> float:
@@ -145,6 +188,25 @@ class ChatRequest(BaseModel):
         return value
 
 
+class Source(BaseModel):
+    """Um documento (ou página de site) da base de conhecimento que o agente
+    consultou no run — a citação da resposta. Os trechos do mesmo documento vêm
+    juntos; o texto de cada um está no trace (`GET /observability/runs/{run_id}`)."""
+
+    title: str | None = None
+    """O título da página (fonte de site) ou o nome do documento."""
+    document: str | None = None
+    source_url: str | None = None
+    """Só em fonte de site (ou documento que veio de uma URL)."""
+    content_id: str | None = None
+    """O documento na collection (`GET /collections/{nome}/docs`)."""
+    collection: str | None = None
+    score: float | None = None
+    """O melhor score entre os trechos deste documento (similaridade 0–1 ou o do reranker)."""
+    chunk_ids: list[str] = []
+    """Os trechos do documento que a busca devolveu, na ordem em que apareceram."""
+
+
 class ChatResponse(BaseModel):
     agent_type: str
     session_id: str
@@ -156,6 +218,10 @@ class ChatResponse(BaseModel):
     agent_version: int | None = None
     """Versão da configuração inteira que respondeu (`GET /agents/{t}/revisions`)."""
     config_hash: str | None = None
+    sources: list[Source] = []
+    """Os documentos da base de conhecimento que as buscas do run devolveram,
+    deduplicados e do mais relevante para o menos (`[]` sem busca). É o que o
+    agente leu, não necessariamente o que ele citou no texto."""
     state: dict[str, Any] | None = None
     """Só em agente `kind="procedural"`: a etapa atual, o que foi coletado, o que
     falta e, quando `done`, o `result`. Quem integra sabe quando acabou sem
@@ -291,9 +357,15 @@ def _check_input_size(text: str, field: str) -> None:
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest) -> ChatResponse:
+async def chat(request: ChatRequest, idempotency_key: IdempotencyKey = None) -> ChatResponse:
     _check_input_size(request.message, "message")
+    return await _idempotent("chat", request, idempotency_key, lambda: _chat(request, idempotency_key))
+
+
+async def _chat(request: ChatRequest, idempotency_key: str | None) -> ChatResponse:
     agent, run = await run_in_threadpool(_resolve, request, "chat")
+    if idempotency_key:
+        run.metadata["idempotency_key"] = idempotency_key.strip()
     if is_procedural(run):
         return await _chat_procedural(request, agent, run)
 
@@ -319,6 +391,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         trace_id=run.trace_id,
         agent_version=run.agent_version,
         config_hash=run.config_hash,
+        sources=sources_from(run.knowledge_searches),
     )
 
 
@@ -387,13 +460,19 @@ class AnalyzeResponse(BaseModel):
     agent_version: int | None = None
     """Versão da configuração inteira que decidiu (`GET /agents/{t}/revisions`)."""
     config_hash: str | None = None
+    sources: list[Source] = []
+    """Ver `ChatResponse.sources`."""
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
-async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
+async def analyze(request: AnalyzeRequest, idempotency_key: IdempotencyKey = None) -> AnalyzeResponse:
     """One-shot: sem sessão/histórico — devolve o `document` analisado como
     objeto estruturado (`response_schema` do agente), não texto."""
     _check_input_size(request.document, "document")
+    return await _idempotent("analyze", request, idempotency_key, lambda: _analyze(request, idempotency_key))
+
+
+async def _analyze(request: AnalyzeRequest, idempotency_key: str | None) -> AnalyzeResponse:
     try:
         # I/O síncrono no Postgres — fora do event loop (ver `_resolve`).
         agent, definition = await run_in_threadpool(get_agent_with_definition, request.agent_type)
@@ -422,7 +501,8 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         agent_version=definition.get("agent_version"),
         config_hash=definition.get("config_hash"),
         timeout_seconds=_timeout_for(definition),
-        metadata=_run_metadata(request.metadata, request.dry_run),
+        metadata=_run_metadata(request.metadata, request.dry_run)
+        | ({"idempotency_key": idempotency_key.strip()} if idempotency_key else {}),
         dry_run=request.dry_run,
         user_id=request.user_id or "analysis",
         session_id=request.session_id or f"analyze-{uuid.uuid4().hex}",
@@ -466,11 +546,12 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         trace_id=run.trace_id,
         agent_version=run.agent_version,
         config_hash=run.config_hash,
+        sources=sources_from(run.knowledge_searches),
     )
 
 
 @router.post("/chat/stream")
-async def chat_stream(request: ChatRequest) -> EventSourceResponse:
+async def chat_stream(request: ChatRequest, idempotency_key: IdempotencyKey = None) -> EventSourceResponse:
     """Streaming via POST (não GET): a mensagem do usuário vai no corpo, não
     na query string — evita acabar em log de acesso. `EventSource` do browser
     só faz GET, então o cliente precisa consumir isso com `fetch` + leitura
@@ -478,8 +559,18 @@ async def chat_stream(request: ChatRequest) -> EventSourceResponse:
 
     Eventos: `run` ({run_id, trace_id}, antes de tudo), `message` ({content}, a
     cada trecho), `usage` (métricas do run), `error` ({message}), `state` (só em
-    agente procedural: o mesmo `state` do `/chat`, antes do `done`) e `done`.
+    agente procedural: o mesmo `state` do `/chat`, antes do `done`), `sources`
+    ({sources}: o mesmo `sources` do `/chat`, antes do `done`, só quando o run
+    terminou sem erro) e `done`.
+
+    Não aceita `Idempotency-Key` (422): a resposta sai aos pedaços e não há o que guardar
+    para devolver a quem repete — ignorar o header daria uma proteção que não existe.
     """
+    if idempotency_key is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{idempotency.HEADER} não vale no /chat/stream: use o /chat para uma chamada que pode ser repetida.",
+        )
     agent, run = await run_in_threadpool(_resolve, request, "chat.stream")
     trace_id = run.trace_id
 
@@ -511,6 +602,7 @@ async def chat_stream(request: ChatRequest) -> EventSourceResponse:
                         yield item
                 yield {"event": "done", "data": "{}"}
                 return
+            failed = False
             async with _run_slot(), aclosing(traced_run_events(agent, run)) as events:
                 async for event in events:
                     if event.event == RunEvent.run_content.value and event.content:
@@ -518,7 +610,11 @@ async def chat_stream(request: ChatRequest) -> EventSourceResponse:
                     elif event.event == RunEvent.run_completed.value and event.metrics:
                         yield {"event": "usage", "data": json.dumps(event.metrics.to_dict())}
                     elif event.event == RunEvent.run_error.value:
+                        failed = True
                         yield {"event": "error", "data": json.dumps({"message": event.content or RUN_FAILED})}
+            if not failed:
+                sources = sources_from(run.knowledge_searches)
+                yield {"event": "sources", "data": json.dumps({"sources": sources}, default=str)}
         except HTTPException as exc:  # sem vaga: o status já saiu (200), então vira evento
             yield {"event": "error", "data": json.dumps({"message": exc.detail, "status": exc.status_code})}
         except RunTimeoutError as exc:

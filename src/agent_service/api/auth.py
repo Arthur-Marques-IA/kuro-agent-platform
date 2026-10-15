@@ -21,8 +21,11 @@ conversa. Uma dependência por router deixaria justamente essas de fora, que é 
 tipo de falha que não aparece em teste de rota nenhuma.
 
 As chaves vêm do ambiente (`ADMIN_API_KEY`, `RUNTIME_API_KEY`), não de uma
-tabela. Para um piloto com um cliente, é o tamanho certo: rotacionar é trocar a
-variável e reiniciar. Várias chaves, com revogação e `last_used_at`, é o passo
+tabela. Cada variável aceita **uma lista separada por vírgula**, para rotacionar
+sem derrubar ninguém: `RUNTIME_API_KEY=nova,antiga` vale as duas até os clientes
+trocarem, e depois `RUNTIME_API_KEY=nova`. A primeira é a "atual" — é a que o
+próprio serviço usa quando chama a si mesmo (o MCP em `/mcp`, a CLI no container,
+o console). Várias chaves por integração, com revogação e `last_used_at`, é o passo
 seguinte (ROADMAP H0) e precisa de tabela e CRUD.
 
 **Sem nenhuma chave configurada, o serviço fica aberto** — é o comportamento de
@@ -37,7 +40,7 @@ from typing import Literal
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from agent_service.config import get_settings
+from agent_service.config import get_settings, split_keys
 
 Scope = Literal["runtime", "admin"]
 
@@ -52,24 +55,39 @@ continuam acessíveis: `curl -H "Authorization: Bearer $ADMIN_API_KEY"
 http://.../openapi.json`. Com o serviço aberto (sem chave configurada), abrir
 `/docs` no navegador segue funcionando como antes."""
 
-RUNTIME_PATHS = frozenset({"/chat", "/chat/stream", "/analyze", "/observability/scores", "/observability/references"})
-"""O que a chave `runtime` alcança — executar um agente e avaliar a execução.
+RUNTIME_PATHS = frozenset(
+    {
+        "/chat",
+        "/chat/stream",
+        "/analyze",
+        "/observability/scores",
+        "/observability/references",
+        "/integration/openapi.json",
+    }
+)
+"""O que a chave `runtime` alcança — executar um agente, avaliar a execução e ler o
+OpenAPI dessas rotas (só delas: `api/integration_routes.py`).
 Tudo que não está aqui (nem em PUBLIC_PATHS nem em RUNTIME_PATTERNS) exige `admin`."""
 
-RUNTIME_PATTERNS = (re.compile(r"^/agents/[^/]+/procedures/[^/]+$"),)
-"""Caminhos com parâmetro que a chave `runtime` também alcança. Só o estado de uma
-conversa com um agente procedural (`GET`, a única rota nesse caminho): quem integra
-precisa ler o `state` de uma sessão que ele mesmo conduz. O funil do agente
-(`/agents/{t}/procedures`) e o resto de `/agents` continuam `admin`."""
+RUNTIME_PATTERNS = (
+    re.compile(r"^/agents/[^/]+/procedures/[^/]+$"),
+    re.compile(r"^/agents/[^/]+/openapi\.json$"),
+)
+"""Caminhos com parâmetro que a chave `runtime` também alcança: o estado de uma conversa
+com um agente procedural (`GET`, a única rota nesse caminho) — quem integra precisa ler o
+`state` de uma sessão que ele mesmo conduz — e o OpenAPI de um agente (só as rotas de
+runtime, sem instructions nem tools). O funil do agente (`/agents/{t}/procedures`), o
+contrato (`/agents/{t}/integration`) e o resto de `/agents` continuam `admin`."""
 
 
-def configured_keys() -> dict[Scope, str]:
+def configured_keys() -> dict[Scope, list[str]]:
+    """As chaves válidas de cada escopo — mais de uma durante uma rotação."""
     settings = get_settings()
-    chaves: dict[Scope, str] = {}
-    if settings.admin_api_key:
-        chaves["admin"] = settings.admin_api_key
-    if settings.runtime_api_key:
-        chaves["runtime"] = settings.runtime_api_key
+    chaves: dict[Scope, list[str]] = {}
+    if admin := split_keys(settings.admin_api_key):
+        chaves["admin"] = admin
+    if runtime := split_keys(settings.runtime_api_key):
+        chaves["runtime"] = runtime
     return chaves
 
 
@@ -89,8 +107,9 @@ def _presented_key(request: Request) -> str | None:
 def _scope_of(key: str) -> Scope | None:
     """`compare_digest` em vez de `==`: comparação de segredo não deve vazar,
     pelo tempo de resposta, quantos caracteres bateram."""
-    for scope, valor in configured_keys().items():
-        if secrets.compare_digest(key, valor):
+    for scope, valores in configured_keys().items():
+        # Compara com todas, sem parar na primeira que bate: o tempo não diz qual delas é.
+        if sum(secrets.compare_digest(key.encode(), v.encode()) for v in valores):
             return scope
     return None
 
@@ -116,10 +135,21 @@ def _authorized(presented: Scope | None, needed: Scope) -> bool:
     return presented == "admin" or presented == needed
 
 
+def _is_preflight(request: Request) -> bool:
+    """O `OPTIONS` que o navegador manda antes de uma chamada de outra origem. Ele nunca leva
+    a chave (o navegador não deixa), então exigi-la quebrava o CORS de qualquer página. Passar
+    não executa rota nenhuma: o CORSMiddleware responde sozinho, ou a rota dá 405."""
+    return (
+        request.method == "OPTIONS"
+        and "origin" in request.headers
+        and "access-control-request-method" in request.headers
+    )
+
+
 def install(app: FastAPI) -> None:
     @app.middleware("http")
     async def api_key_middleware(request: Request, call_next):  # noqa: ANN001, ANN202
-        if not auth_enabled():
+        if not auth_enabled() or _is_preflight(request):
             return await call_next(request)
 
         needed = required_scope(request.url.path)

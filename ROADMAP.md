@@ -399,9 +399,10 @@ Regras de design:
 A paridade fechou. O upload de arquivo saiu do `/knowledge/content` do AgentOS
 (que só alimenta a collection padrão) para uma rota própria,
 `POST /collections/{nome}/files`, que resolve a collection por nome e usa o
-embedder dela. Sobraram três exceções, todas com motivo declarado na [matriz](docs/cli.md#paridade-entre-api-cli-e-console):
-indexar por **URL** (ainda no pipeline do AgentOS, só na padrão), **`runs tail`**
-e **testar uma chave antes de salvá-la**. O fluxo de CI (`eval`, `runs export`,
+embedder dela. Sobraram duas exceções, com motivo declarado na [matriz](docs/cli.md#paridade-entre-api-cli-e-console):
+**`runs tail`** e **testar uma chave antes de salvá-la**. A terceira — indexar por **URL**, que
+dependia do pipeline do AgentOS e só alimentava a padrão — virou fonte de site em qualquer
+collection (`/collections/{nome}/sources`). O fluxo de CI (`eval`, `runs export`,
 `agents export`/`apply -f dir`, `--dry-run`) é só da CLI de propósito: trabalha com
 arquivos do repositório de quem mantém os agentes. Versões da configuração,
 promote e concordância do shadow estão também no console.

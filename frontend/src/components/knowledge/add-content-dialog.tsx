@@ -5,6 +5,7 @@ import { FileText, FileUp, Globe, Upload, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { errorMessage, requestJson } from "@/lib/http";
 import { formatBytes } from "@/lib/format";
+import type { SourceMode, SourceRefresh } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,13 +16,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, Spinner } from "@/components/ui/primitives";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
-import { useWorkspace } from "@/components/workspace/workspace-provider";
 
-type Mode = "text" | "file" | "url";
+type Mode = "text" | "file" | "site";
 
 export function AddContentDialog({
   open,
@@ -50,6 +51,12 @@ function isValidUrl(value: string) {
   }
 }
 
+const SITE_MODE_HINT: Record<SourceMode, string> = {
+  crawl: "Segue os links do mesmo site, só abaixo do caminho da URL (ex.: /docs/…), respeitando o robots.txt.",
+  sitemap: "Usa o sitemap da URL — ou o anunciado no robots.txt, ou /sitemap.xml.",
+  page: "Indexa só esta página.",
+};
+
 function AddContentForm({
   collection,
   onClose,
@@ -61,17 +68,17 @@ function AddContentForm({
 }) {
   const id = useId();
   const toast = useToast();
-  const { collections } = useWorkspace();
   const [mode, setMode] = useState<Mode>("text");
-  // Ver o comentário em handleSubmit: o upload do AgentOS não escolhe coleção,
-  // então arquivo/URL só valem na que ele alimenta (o backend diz qual é).
-  // URL continua presa ao pipeline do AgentOS, que só escreve na coleção padrão.
-  // Arquivo não: `POST /collections/{nome}/files` indexa em qualquer coleção,
-  // com o embedder dela.
-  const urlAllowed = Boolean(collections.find((c) => c.name === collection)?.is_default);
   const [name, setName] = useState("");
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
+  // Site: o backend coleta, formata e indexa em background, em qualquer coleção
+  // (`POST /collections/{nome}/sources`), com o embedder dela.
+  const [siteMode, setSiteMode] = useState<SourceMode>("crawl");
+  const [maxPages, setMaxPages] = useState("50");
+  const [refresh, setRefresh] = useState<SourceRefresh>("weekly");
+  const [formatPages, setFormatPages] = useState(true);
+  const [exclude, setExclude] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -101,20 +108,29 @@ function AddContentForm({
           fallbackError: "Falha no upload do arquivo",
         });
       } else {
-        // URL ainda passa pelo pipeline do AgentOS (`/knowledge/content`), que
-        // escreve na coleção padrão — ele não aceita escolher a coleção.
-        const form = new FormData();
-        form.set("url", url.trim());
-        if (name.trim()) form.set("name", name.trim());
-        await requestJson("/api/knowledge/content", {
+        await requestJson(`/api/collections/${encodeURIComponent(collection)}/sources`, {
           method: "POST",
-          body: form,
-          fallbackError: "Falha ao enviar a URL",
+          json: {
+            url: url.trim(),
+            mode: siteMode,
+            refresh,
+            format: formatPages,
+            label: name.trim() || undefined,
+            max_pages: siteMode === "page" ? undefined : Number(maxPages) || undefined,
+            exclude: exclude
+              .split(/[\n,]/)
+              .map((pattern) => pattern.trim())
+              .filter(Boolean),
+          },
+          fallbackError: "Falha ao cadastrar o site",
         });
       }
       toast({
-        title: "Conteúdo enviado",
-        description: "A indexação continua em segundo plano — o status aparece na lista.",
+        title: mode === "site" ? "Site cadastrado" : "Conteúdo enviado",
+        description:
+          mode === "site"
+            ? "A coleta começou — acompanhe as páginas em “Sites”."
+            : "A indexação continua em segundo plano — o status aparece na lista.",
         variant: "success",
       });
       onAdded();
@@ -133,21 +149,20 @@ function AddContentForm({
         <DialogDescription>
           Vai para a coleção <span className="font-mono text-foreground">{collection}</span> e é indexado com
           embeddings para busca semântica.
-          {!urlAllowed && " URL ainda só funciona na coleção padrão; arquivo e texto valem em qualquer uma."}
         </DialogDescription>
       </DialogHeader>
 
       <DialogBody className="flex flex-col gap-5">
         <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)} variant="pill">
-          <TabsList className={cn("grid w-full", urlAllowed ? "grid-cols-3" : "grid-cols-2")}>
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="text">
               <FileText /> Texto
             </TabsTrigger>
             <TabsTrigger value="file">
               <FileUp /> Arquivo
             </TabsTrigger>
-            <TabsTrigger value="url" disabled={!urlAllowed}>
-              <Globe /> URL
+            <TabsTrigger value="site">
+              <Globe /> Site
             </TabsTrigger>
           </TabsList>
 
@@ -212,11 +227,11 @@ function AddContentForm({
             )}
           </TabsContent>
 
-          <TabsContent value="url" className="mt-5">
+          <TabsContent value="site" className="mt-5 flex flex-col gap-4">
             <Field
               label="URL"
               htmlFor={`${id}-url`}
-              hint="O conteúdo da página é baixado e indexado pelo backend."
+              hint={SITE_MODE_HINT[siteMode]}
               error={url && !isValidUrl(url) ? "Informe uma URL http(s) válida." : null}
             >
               <Input
@@ -224,18 +239,89 @@ function AddContentForm({
                 type="url"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://exemplo.com/politica-de-reembolso"
+                placeholder="https://docs.exemplo.com/guia"
               />
             </Field>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="O que coletar" htmlFor={`${id}-site-mode`}>
+                <Select
+                  id={`${id}-site-mode`}
+                  value={siteMode}
+                  onChange={(e) => setSiteMode(e.target.value as SourceMode)}
+                >
+                  <option value="crawl">Site (seguir links)</option>
+                  <option value="sitemap">Sitemap</option>
+                  <option value="page">Só esta página</option>
+                </Select>
+              </Field>
+              <Field label="Máx. de páginas" htmlFor={`${id}-max-pages`}>
+                <Input
+                  id={`${id}-max-pages`}
+                  type="number"
+                  min={1}
+                  max={5000}
+                  value={siteMode === "page" ? "1" : maxPages}
+                  disabled={siteMode === "page"}
+                  onChange={(e) => setMaxPages(e.target.value)}
+                />
+              </Field>
+              <Field label="Atualizar" htmlFor={`${id}-refresh`}>
+                <Select
+                  id={`${id}-refresh`}
+                  value={refresh}
+                  onChange={(e) => setRefresh(e.target.value as SourceRefresh)}
+                >
+                  <option value="never">Só manualmente</option>
+                  <option value="daily">Todo dia</option>
+                  <option value="weekly">Toda semana</option>
+                  <option value="monthly">Todo mês</option>
+                </Select>
+              </Field>
+            </div>
+            {siteMode !== "page" && (
+              <Field
+                label="Ignorar caminhos (opcional)"
+                htmlFor={`${id}-exclude`}
+                hint="Globs separados por vírgula, ex.: /blog/*"
+              >
+                <Input
+                  id={`${id}-exclude`}
+                  value={exclude}
+                  onChange={(e) => setExclude(e.target.value)}
+                  placeholder="/blog/*, /changelog/*"
+                />
+              </Field>
+            )}
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border px-3 py-2.5 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 accent-primary"
+                checked={formatPages}
+                onChange={(e) => setFormatPages(e.target.checked)}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">Formatar cada página com um agente</span>
+                <span className="text-xs text-muted-foreground">
+                  Organiza títulos, listas e tabelas sem reescrever o texto. Se o resultado não bater com a página, o
+                  texto extraído é usado no lugar.
+                </span>
+              </span>
+            </label>
           </TabsContent>
         </Tabs>
 
-        <Field label="Nome (opcional)" htmlFor={`${id}-name`} hint="Ajuda a identificar o documento na lista.">
+        <Field
+          label="Nome (opcional)"
+          htmlFor={`${id}-name`}
+          hint={mode === "site" ? "Como o site aparece na lista." : "Ajuda a identificar o documento na lista."}
+        >
           <Input
             id={`${id}-name`}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={mode === "file" && file ? file.name : "ex.: política-de-reembolso"}
+            placeholder={
+              mode === "file" && file ? file.name : mode === "site" ? "ex.: Central de ajuda" : "ex.: política-de-reembolso"
+            }
           />
         </Field>
       </DialogBody>

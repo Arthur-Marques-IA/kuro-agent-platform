@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { parseSseStream } from "@/lib/sse";
 import { apiUrl, readErrorMessage } from "@/lib/http";
 import { createId } from "@/lib/id";
-import type { Attachment, ChatMessage, ProcedureState, UsageMetrics } from "@/lib/types";
+import type { Attachment, ChatMessage, ChatSource, ProcedureState, UsageMetrics } from "@/lib/types";
 
 interface SendOptions {
   text: string;
@@ -106,6 +106,9 @@ export function useChat({
           } else if (sseEvent.event === "run") {
             const { run_id } = JSON.parse(sseEvent.data) as { run_id?: string };
             if (run_id) patchMessage(assistantId, (m) => ({ ...m, runId: run_id }));
+          } else if (sseEvent.event === "sources") {
+            const { sources } = JSON.parse(sseEvent.data) as { sources?: ChatSource[] };
+            if (sources?.length) patchMessage(assistantId, (m) => ({ ...m, sources }));
           } else if (sseEvent.event === "state") {
             setProcedureState(JSON.parse(sseEvent.data) as ProcedureState);
           } else if (sseEvent.event === "error") {

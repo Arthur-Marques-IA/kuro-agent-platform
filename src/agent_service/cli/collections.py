@@ -5,6 +5,7 @@ Um agente consulta uma collection quando aponta para ela:
 """
 
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -255,6 +256,188 @@ def search_collection(
             console.print("[dim]nada encontrado[/]")
             return
         for i, doc in enumerate(items, 1):
-            console.print(f"[bold cyan]{i}.[/] {doc['content'][:500]}", highlight=False)
+            origem = doc.get("source_url") or doc.get("document") or ""
+            score = f" [dim]{doc['score']:.2f}[/]" if doc.get("score") is not None else ""
+            console.print(f"[bold cyan]{i}.[/]{score} [dim]{origem}[/]", highlight=False)
+            console.print(f"   {doc['content'][:500]}", highlight=False)
 
     emit(st, results, render)
+
+
+# -- sites -----------------------------------------------------------------------------
+
+_STATUS_COR = {"ready": "green", "partial": "yellow", "running": "cyan", "pending": "cyan", "failed": "red"}
+_TERMINAL = ("ready", "partial", "failed")
+
+
+def _render_source(s: dict[str, Any]) -> None:
+    cor = _STATUS_COR.get(s["status"], "white")
+    p = s.get("progress") or {}
+    falhas = f", [red]{s['pages_failed']} com falha[/]" if s["pages_failed"] else ""
+    console.print(
+        f"[cyan]{s['id']}[/] {s['url']} [dim]({s['mode']}, refresh {s['refresh']})[/] — [{cor}]{s['status']}[/] "
+        f"· {s['pages_indexed']} páginas indexadas{falhas}",
+        highlight=False,
+    )
+    if s["status"] == "running" and p:
+        console.print(f"   [dim]{p.get('done', 0)}/{p.get('discovered', 0)} páginas processadas[/]")
+    if s.get("status_message"):
+        console.print(f"   [dim]{s['status_message']}[/]", highlight=False)
+
+
+def _render_source_detail(s: dict[str, Any]) -> None:
+    _render_source(s)
+    pages = s.get("pages") or []
+    if not pages:
+        return
+    table = Table(show_edge=False, header_style="bold")
+    for column in ("url", "status", "trechos", "formatação", "detalhe"):
+        table.add_column(column)
+    for page in pages:
+        cor = {"indexed": "green", "failed": "red"}.get(page["status"], "yellow")
+        table.add_row(
+            page["url"],
+            f"[{cor}]{page['status']}[/]",
+            str(page.get("chunks") or 0),
+            page.get("formatted") or "—",
+            page.get("error") or "",
+        )
+    console.print(table)
+
+
+def _wait(st: Any, name: str, source_id: str, timeout: float) -> dict[str, Any]:
+    """Acompanha a sincronização até terminar (ou estourar `timeout`)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        source = call(st, st.client.get_source, name, source_id)
+        if source["status"] in _TERMINAL or time.monotonic() > deadline:
+            return source
+        if st.interactive:
+            p = source.get("progress") or {}
+            console.print(f"[dim]… {p.get('done', 0)}/{p.get('discovered', 0)} páginas[/]")
+        time.sleep(2)
+
+
+def _finish(st: Any, source: dict[str, Any]) -> None:
+    emit(st, source, _render_source)
+    if source["status"] == "failed":
+        raise typer.Exit(1)
+
+
+@app.command("add-site")
+def add_site(
+    ctx: typer.Context,
+    name: str,
+    url: str,
+    mode: str = typer.Option(
+        "crawl",
+        "--mode",
+        "-m",
+        help="crawl (segue links abaixo do caminho da URL), sitemap (as páginas do sitemap) ou page (só a URL).",
+    ),
+    max_pages: int | None = typer.Option(None, "--max-pages", min=1, help="Teto de páginas (padrão 50)."),
+    max_depth: int | None = typer.Option(None, "--max-depth", min=0, help="Saltos de link no crawl (padrão 3)."),
+    include: list[str] = typer.Option([], "--include", help="Glob de caminho que entra, ex. '/docs/*'. Repetível."),
+    exclude: list[str] = typer.Option([], "--exclude", help="Glob de caminho que fica fora, ex. '/blog/*'. Repetível."),
+    no_format: bool = typer.Option(False, "--no-format", help="Sem o agente formatador: indexa o texto extraído."),
+    formatter_provider: str | None = typer.Option(None, "--formatter-provider", help="Provedor do formatador."),
+    formatter_model: str | None = typer.Option(None, "--formatter-model", help="Modelo do formatador."),
+    refresh: str = typer.Option("never", "--refresh", help="Ressincronizar: never, daily, weekly ou monthly."),
+    label: str | None = typer.Option(None, "--label", "-l"),
+    wait: bool = typer.Option(False, "--wait", "-w", help="Espera a primeira sincronização terminar."),
+    timeout: float = typer.Option(900, "--timeout", help="Com --wait: quanto esperar, em segundos."),
+) -> None:
+    """Indexa um site na collection e (opcionalmente) o mantém sincronizado.
+
+    Cada página é baixada (respeitando o robots.txt), tem o conteúdo principal
+    extraído, passa por um agente que organiza o Markdown sem reescrever, e vira
+    trechos por seção — cada um com a URL de origem, que aparece no trace.
+
+    Ex.: `kuro collections add-site manuais https://docs.exemplo.com/guia --refresh weekly --wait`"""
+    st = state(ctx)
+    if mode not in ("crawl", "sitemap", "page"):
+        fail(st, "--mode deve ser crawl, sitemap ou page", EXIT_USAGE)
+    payload = {
+        "url": url,
+        "mode": mode,
+        "refresh": refresh,
+        "label": label,
+        "max_pages": max_pages,
+        "max_depth": max_depth,
+        "include": include or None,
+        "exclude": exclude or None,
+        "format": False if no_format else None,
+        "formatter_provider": formatter_provider,
+        "formatter_model_id": formatter_model,
+    }
+    source = call(st, st.client.create_source, name, {k: v for k, v in payload.items() if v is not None})
+    _finish(st, _wait(st, name, source["id"], timeout) if wait else source)
+
+
+@app.command("sources")
+def list_sources(ctx: typer.Context, name: str, source_id: str | None = typer.Argument(None)) -> None:
+    """Sites da collection e o estado da sincronização; com o id, as páginas de um deles."""
+    st = state(ctx)
+    if source_id:
+        emit(st, call(st, st.client.get_source, name, source_id), _render_source_detail)
+        return
+
+    def render(rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            console.print(f"Nenhum site. Adicione com `kuro collections add-site {name} <url>`.")
+        for row in rows:
+            _render_source(row)
+
+    emit(st, call(st, st.client.list_sources, name), render)
+
+
+@app.command("sync")
+def sync_source(
+    ctx: typer.Context,
+    name: str,
+    source_id: str,
+    wait: bool = typer.Option(False, "--wait", "-w", help="Espera terminar."),
+    timeout: float = typer.Option(900, "--timeout"),
+) -> None:
+    """Coleta o site de novo agora: entra o que é novo, troca o que mudou, sai o que sumiu."""
+    st = state(ctx)
+    source = call(st, st.client.sync_source, name, source_id)
+    _finish(st, _wait(st, name, source_id, timeout) if wait else source)
+
+
+@app.command("set-site")
+def set_site(
+    ctx: typer.Context,
+    name: str,
+    source_id: str,
+    pairs: list[str] = typer.Argument(
+        ...,
+        help="campo=valor: refresh, label, max_pages, max_depth, include, exclude, format, "
+        "formatter_provider, formatter_model_id.",
+    ),
+) -> None:
+    """Altera o agendamento ou as opções de coleta de um site (vale a partir do próximo sync)."""
+    st = state(ctx)
+    changes = parse_pairs(st, pairs, "campo")
+    emit(st, call(st, st.client.update_source, name, source_id, changes), _render_source)
+
+
+@app.command("rm-site")
+def remove_site(
+    ctx: typer.Context,
+    name: str,
+    source_id: str,
+    keep_documents: bool = typer.Option(
+        False, "--keep-documents", help="Tira só o cadastro; as páginas continuam na base."
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Não pede confirmação (obrigatório sem TTY)."),
+) -> None:
+    """Remove o site da collection — e, sem --keep-documents, as páginas dele da base."""
+    st = state(ctx)
+    if not yes:
+        if not st.interactive:
+            fail(st, "confirme com --yes para remover sem TTY", EXIT_USAGE)
+        if not typer.confirm(f"Remover o site {source_id!r} de {name!r}?"):
+            raise typer.Exit()
+    call(st, st.client.delete_source, name, source_id, keep_documents)
+    emit(st, {"deleted": source_id}, lambda _: console.print(f"[green]✓[/] site removido de {name}"))

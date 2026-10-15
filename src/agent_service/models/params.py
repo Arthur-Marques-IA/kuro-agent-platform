@@ -20,8 +20,13 @@ fica em `provider_kwargs`, para o resto do serviço não saber disso.
   (`o*`, `gpt-5*`) — nos outros não há o que ajustar e o nível é ignorado.
 
 Anthropic e Ollama ainda não: são recusados no cadastro, em vez de ignorados.
-`thinking_budget` (Gemini) continua aceito como ajuste fino e, quando vem junto,
+`thinking_budget` (Gemini 2.x) continua aceito como ajuste fino e, quando vem junto,
 vale no lugar do nível.
+
+No Gemini 3 em diante, `temperature`, `top_p` e `thinking_budget` não são mais enviados:
+o Google passou a recusar os três (erro / 400 INVALID_ARGUMENT) e o modelo já usa o
+amostrador padrão. Os campos ainda são aceitos no cadastro (agentes antigos não quebram),
+mas ignorados nesses modelos; use `reasoning` (`thinking_level`).
 
 `prompt_cache` liga o cache do prefixo (instructions + tools) no Claude: `5m` ou
 `1h` de validade (o de 1h custa mais para gravar e compensa em tráfego espaçado).
@@ -94,6 +99,15 @@ def validate_model_params(params: Any, provider: str | None) -> dict[str, Any] |
     return normalized or None
 
 
+_GEMINI_LEGACY_ONLY = ("temperature", "top_p", "thinking_budget")
+
+
+def _is_modern_gemini(model_id: str) -> bool:
+    """Gemini 3 em diante (e os apelidos `-latest`); sem `model_id`, não presume nada."""
+    model = model_id.lower()
+    return model.startswith("gemini") and not model.startswith(("gemini-1", "gemini-2"))
+
+
 def _reasoning_kwargs(provider: str, model_id: str, level: str) -> dict[str, Any]:
     model = model_id.lower()
     if provider == "google":
@@ -113,6 +127,11 @@ def provider_kwargs(provider: str, params: dict[str, Any] | None, model_id: str 
     if not params:
         return {}
     kwargs: dict[str, Any] = {}
+    modern_gemini = provider == "google" and _is_modern_gemini(model_id)
+    if modern_gemini:
+        # Gemini 3+: temperature/top_p/top_k dão erro e thinking_budget dá 400 — o modelo usa
+        # o amostrador padrão e o raciocínio só se ajusta por `reasoning` (thinking_level).
+        params = {k: v for k, v in params.items() if k not in _GEMINI_LEGACY_ONLY}
     if provider == "ollama":
         options = {}
         if "temperature" in params:

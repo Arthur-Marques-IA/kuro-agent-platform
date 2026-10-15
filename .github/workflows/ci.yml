@@ -39,6 +39,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run lint
+      - name: test
+        # A conta dos gráficos (src/lib/*.test.ts), com o test runner do próprio Node.
+        run: npm test
       - name: build
         # O build do Next é o que pega erro de tipo e de import que o lint deixa passar.
         run: npm run build
