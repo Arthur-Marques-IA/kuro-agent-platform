@@ -1063,6 +1063,63 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             report["hint"] = f"use since/agent_version, ou `kuro runs export -a {agent_type} -o casos.jsonl`"
         return report
 
+    # -- feedback por trecho recuperado (RAG) ---------------------------------
+
+    @server.tool(annotations=OVERWRITE)
+    def run_chunk_feedback(
+        run_id: RunId,
+        chunk_id: Annotated[
+            str, Field(description="chunk_id do trecho, em run_show: spans search_knowledge_base, metadata.references.results.")
+        ],
+        label: Annotated[
+            Literal["relevant", "irrelevant", "wrong"],
+            Field(description="relevant (era o trecho certo), irrelevant (não respondia) ou wrong (conteúdo errado/desatualizado)."),
+        ],
+        comment: Annotated[str | None, Field(description="Por que essa marcação.")] = None,
+        span_id: Annotated[str | None, Field(description="A span da busca, se o trecho voltou em mais de uma.")] = None,
+    ) -> dict[str, Any]:
+        """Marca um trecho que a busca de um run devolveu. Substitui a marcação anterior do
+        mesmo trecho. Só registra: nenhum documento é escondido ou despublicado."""
+        body = {
+            "run_id": run_id,
+            "chunk_id": chunk_id,
+            "label": label,
+            "comment": comment,
+            "span_id": span_id,
+            "created_by": "mcp",
+        }
+        return _call(client.chunk_feedback, body)
+
+    @server.tool(annotations=READ)
+    def chunk_feedback_flagged(
+        collection: Annotated[str | None, Field(description="Só desta collection. Sem ela, todas.")] = None,
+        label: Annotated[Literal["relevant", "irrelevant", "wrong"], Field(description="Qual marcação contar.")] = "wrong",
+    ) -> dict[str, Any]:
+        """Documentos com mais marcações (padrão: wrong, errado/desatualizado), com os runs
+        que as geraram — para alguém revisar o documento na fonte."""
+        return {"documents": _call(client.flagged_documents, collection=collection, label=label, limit=20)}
+
+    @server.tool(annotations=READ)
+    def chunk_feedback_export(
+        collection: Annotated[str | None, Field(description="Só desta collection.")] = None,
+        agent_type: AgentFilter = None,
+        since: Since = None,
+    ) -> dict[str, Any]:
+        """Gabarito de um eval de RAG a partir das marcações relevant: uma linha por pergunta
+        com query, collection, relevant_chunk_ids, relevant_content_ids e run_ids — o mesmo
+        JSONL de `kuro runs chunk-export`. O que não couber fica de fora (`omitted`)."""
+        cases = _call(client.export_chunk_feedback, collection=collection, agent_type=agent_type, since=since)
+        kept: list[dict[str, Any]] = []
+        for case in cases:
+            if kept and _size(kept + [case]) > MAX_RESPONSE:
+                break
+            kept.append(case)
+        report: dict[str, Any] = {"cases": kept, "count": len(kept)}
+        if len(kept) < len(cases):
+            report["omitted"] = len(cases) - len(kept)
+            report["hint"] = "filtre por collection/since, ou `kuro runs chunk-export -o gabarito.jsonl`"
+        return report
+
     # -- conversas guardadas --------------------------------------------------
 
     @server.tool(annotations=READ)

@@ -897,3 +897,26 @@ def test_sem_insecure_nao_ha_aviso(api):
     routes[("GET", "/agents")] = httpx.Response(200, json=[AGENT])
     result = _run("--json", "agents", "list")
     assert "--insecure" not in (result.stderr or "")
+
+
+def test_runs_chunk_feedback_marca_e_exporta(api, tmp_path):
+    routes, calls = api
+    routes[("POST", "/observability/chunk-feedback")] = httpx.Response(
+        201, json={"id": "f1", "label": "wrong", "document": "Tabela", "chunk_id": "c1"}
+    )
+    out = _run("--json", "runs", "chunk-feedback", "r1", "c1", "wrong", "--comment", "preço antigo", "--by", "ana")
+    assert out.exit_code == 0, out.output
+    assert json.loads(calls[-1].content) == {
+        "run_id": "r1", "chunk_id": "c1", "label": "wrong", "span_id": None, "comment": "preço antigo", "created_by": "ana"
+    }
+    assert _run("--json", "runs", "chunk-feedback", "r1", "c1", "talvez").exit_code == 2
+
+    routes[("GET", "/observability/chunk-feedback/export")] = httpx.Response(
+        200, json=[{"query": "garantia", "collection": "m", "relevant_chunk_ids": ["c1"], "relevant_content_ids": ["d"],
+                    "run_ids": ["r1"]}]
+    )
+    destino = tmp_path / "gabarito.jsonl"
+    out = _run("--json", "runs", "chunk-export", "-c", "m", "-o", str(destino))
+    assert out.exit_code == 0, out.output
+    assert calls[-1].url.params["collection"] == "m"
+    assert json.loads(destino.read_text(encoding="utf-8"))["query"] == "garantia"
