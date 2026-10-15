@@ -169,7 +169,10 @@ def update_source(collection_name: str, source_id: str, body: SourceUpdateIn) ->
     if body.refresh is not None:
         values["refresh"] = body.refresh
         values["next_sync_at"] = store.next_sync(body.refresh, source.get("last_synced_at"))
-    return store.update_source(source_id, **values)
+    updated = store.update_source(source_id, **values)
+    if body.refresh is not None:
+        web_sync.schedule(updated)
+    return updated
 
 
 @router.post("/{collection_name}/sources/{source_id}/sync", response_model=SourceOut, status_code=202)

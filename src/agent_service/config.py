@@ -133,9 +133,26 @@ class Settings(BaseSettings):
     web_source_user_agent: str = "KuroBot/1.0 (+https://github.com/Arthur-Marques-IA)"
     """Como o crawler se apresenta; é este nome que o `robots.txt` do site enxerga."""
     web_source_scheduler: bool = True
-    """Ressincroniza as fontes com `refresh` diário/semanal/mensal. Desligue em
-    réplicas extras se houver mais de uma (a trava no banco evita sync duplo, mas
-    não precisa de todas olhando)."""
+    """Ressincroniza as fontes com `refresh` diário/semanal/mensal (o próximo sync
+    entra na fila de jobs com `run_after` no futuro). Desligado, só o sync manual roda."""
+
+    # Fila de jobs no Postgres (ver agent_service/jobs/)
+    jobs_enabled: bool = True
+    """Roda o worker de jobs neste processo. Desligado, a réplica só enfileira
+    (outra réplica com o worker ligado executa)."""
+    jobs_concurrency: int = 2
+    """Jobs rodando ao mesmo tempo nesta réplica."""
+    jobs_poll_seconds: float = 5.0
+    """De quanto em quanto tempo o worker olha a fila quando nada o acordou."""
+    jobs_lease_seconds: int = 60
+    """Validade do lease de um job em execução (renovado a cada terço). Um processo
+    que morre libera o job para outra réplica depois disto."""
+    jobs_max_attempts: int = 3
+    """Tentativas de um job antes de virar `failed`."""
+    jobs_backoff_seconds: int = 30
+    """Espera antes da 2ª tentativa; dobra a cada uma (até 1 hora)."""
+    jobs_listen: bool = True
+    """`LISTEN/NOTIFY` para acordar o worker assim que algo entra na fila."""
 
     # Tools — kind="python" (ver agent_service/tools/python_tool.py)
     custom_python_tools_enabled: bool = False

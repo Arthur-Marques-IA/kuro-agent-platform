@@ -33,6 +33,14 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
 
 ### Novo
 
+- **Fila de jobs no Postgres.** A sincronização de sites passou a rodar como job de uma fila no
+  próprio banco (tabela `jobs`, sem broker novo): várias réplicas dividem o trabalho sem repetir
+  um job, um processo que cai no meio devolve o job à fila quando o lease vence, a falha é
+  repetida com backoff exponencial, e o `refresh` agendado é um job com `run_after` no futuro. A
+  API de sites não muda (202 no `POST .../sources` e no `.../sync`, 409 com um sync já na fila ou
+  rodando; um sync só agendado é puxado para agora). Novo para o operador: `GET /jobs`,
+  `GET /jobs/{id}`, `POST /jobs/{id}/retry|cancel` (admin) e `kuro jobs list|show|retry|cancel`.
+  Ver [fila de jobs](operacao.md#fila-de-jobs).
 - **Filtros dos Logs mais soltos, e KPIs que levam às execuções.** Panorama, Sessões e Execuções
   aceitam vários agentes (com busca, mostrando o `agent_type`), vários status e um intervalo de
   datas livre além dos atalhos; tudo fica na URL, e os links antigos (`agent=`, `status=`, `period=`)
@@ -278,15 +286,17 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
 - A migração `0007` roda sozinha no startup: acrescenta `agent_definitions.stages` e cria a
   tabela `procedure_runs`. Nada muda nos agentes que já existem, nem a versão da configuração deles.
 - A migração `0008` também roda sozinha: cria `knowledge_sources` e `knowledge_source_pages`
-  (os sites das collections). O agendador de ressincronização liga no startup. Um sync em
-  andamento renova um heartbeat a cada 30 s; sem sinal por 2 minutos (o processo caiu no meio),
-  ele é marcado `failed` e pode ser disparado de novo. A trava no banco impede dois syncs da mesma
-  fonte, inclusive entre réplicas; com mais de uma, deixe `WEB_SOURCE_SCHEDULER=true` em uma só.
+  (os sites das collections).
 - A migração `0009` também roda sozinha: cria `knowledge_sync_costs` (o gasto do formatador de
   sites por sincronização). Sincronizações anteriores a ela não entram no custo dos Logs.
 - A migração `0010` também roda sozinha: cria `idempotency_keys` (as chaves do header
   `Idempotency-Key`, com a resposta guardada). As vencidas somem sozinhas. Variável nova, opcional:
   `IDEMPOTENCY_TTL_HOURS` (24).
+- A migração `0011` também roda sozinha: cria a tabela `jobs` (a fila de jobs no Postgres). No
+  startup, cada fonte de site agendada ganha o seu próximo sync na fila, e a que ficou presa em
+  `running` vira `failed`. Nada a configurar; as variáveis `JOBS_*` são opcionais (ver
+  [fila de jobs](operacao.md#fila-de-jobs)). Com mais de uma réplica, todas podem ficar com
+  `JOBS_ENABLED=true` e `WEB_SOURCE_SCHEDULER=true`: a fila não roda o mesmo job duas vezes.
 - `AGENT_SERVICE_PUBLIC_URL` do console deixou de ter `http://localhost:58000` fixo no compose:
   vazia, a aba Integração mostra a URL que o agent-service conhece. Para forçar outra, defina-a no
   `.env`.

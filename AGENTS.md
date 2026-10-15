@@ -204,6 +204,8 @@ kuro --json collections add-site manuais https://docs.exemplo.com/guia --max-pag
 kuro --json collections sources manuais [<source_id>]        # status; com o id, página a página
 kuro --json collections sync manuais <source_id>             # coleta de novo (só reprocessa o que mudou)
 kuro --json collections rm-site manuais <source_id> --yes    # tira o site e as páginas dele
+kuro --json jobs list --status failed                       # a fila de jobs (syncs de site): contagem e jobs
+kuro --json jobs retry <job_id>                             # ou show / cancel
 # No trace, a span `search_knowledge_base` traz `metadata.references`: query, e cada trecho com
 # rank, score, document, content_id, chunk, section, source_url e o texto exato que o modelo leu.
 kuro --json agents set suporte knowledge_collection=manuais

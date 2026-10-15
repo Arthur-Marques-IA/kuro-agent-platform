@@ -13,6 +13,8 @@ from agent_service.api.collections_routes import CollectionIn, create_collection
 from agent_service.documents import sources_store as store
 from agent_service.documents import web, web_sync
 from agent_service.documents.web_formatter import Formatted, chunk_markdown, fidelity, segments
+from agent_service.jobs import store as jobs
+from agent_service.jobs.worker import Worker
 
 
 def pagina(titulo: str, corpo: str, links: list[str] = ()) -> str:
@@ -111,7 +113,7 @@ def base(monkeypatch):
 
 def sincronizar(source_id: str, site: Site, model=None):
     async def run():
-        assert store.claim_source(source_id)
+        store.mark_running(source_id)
         fetcher = site.fetcher()
         try:
             return await web_sync.sync_source(source_id, fetcher=fetcher, model=model)
@@ -243,8 +245,9 @@ def test_formatador_reprovado_cai_no_texto_extraido(colecao, base, monkeypatch):
 
 def test_sync_concorrente_e_recusado(colecao):
     sid = nova_fonte(colecao, "https://site.test/docs", mode="page")
-    assert store.claim_source(sid)
-    assert not store.claim_source(sid)
+    assert web_sync.start_sync(sid)
+    assert not web_sync.start_sync(sid)
+    assert len(jobs.list_jobs(dedupe_key=f"web_source:{sid}")) == 1
 
 
 # -- formatador e trechos ----------------------------------------------------------------
@@ -329,8 +332,9 @@ def test_api_cria_dispara_e_recusa_duplicada(colecao, monkeypatch):
     assert exc.value.status_code == 409
 
 
-def test_api_sync_dispara_no_event_loop_e_recusa_o_segundo(colecao, base, monkeypatch):
-    """A rota precisa ser `async`: numa thread do pool não há loop para criar a task."""
+def test_api_sync_enfileira_e_recusa_o_segundo(colecao, base, monkeypatch):
+    """O 202 sai com a fonte `running`; o segundo pedido, com o primeiro ainda na
+    fila, é 409; o worker roda o sync uma vez só."""
     chamadas = []
 
     async def sync_falso(source_id, **_):
@@ -344,8 +348,8 @@ def test_api_sync_dispara_no_event_loop_e_recusa_o_segundo(colecao, base, monkey
         primeira = await sources_routes.sync_source(colecao, sid)
         with pytest.raises(HTTPException) as exc:
             await sources_routes.sync_source(colecao, sid)
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        while await Worker().run_once():
+            pass
         return primeira, exc.value.status_code
 
     primeira, segunda = asyncio.run(run())
@@ -437,36 +441,52 @@ def test_apagar_documento_de_site_a_mao_faz_o_proximo_sync_trazer_de_volta(colec
     assert content_id in base.documentos
 
 
-def test_sync_sem_heartbeat_vira_falha_mas_o_vivo_nao(colecao):
-    from datetime import datetime, timedelta, timezone
-
-    vivo = nova_fonte(colecao, "https://site.test/a", mode="page")
-    morto = nova_fonte(colecao, "https://site.test/b", mode="page")
-    assert store.claim_source(vivo) and store.claim_source(morto)
-    store.update_source(morto, status="running")
-    with store._engine().begin() as conn:
-        conn.execute(
-            store.update(store.knowledge_sources)
-            .where(store.knowledge_sources.c.id == morto)
-            .values(updated_at=datetime.now(timezone.utc) - timedelta(minutes=10))
-        )
-    assert store.fail_stale_running() == 1
-    assert store.get_source(vivo)["status"] == "running"
-    assert store.get_source(morto)["status"] == "failed"
-    assert store.claim_source(morto)  # e pode ser disparado de novo
+@pytest.fixture(autouse=True)
+def fila_limpa():
+    """Os testes dividem o banco: job deixado por um não pode ser pego pelo worker de outro."""
+    with jobs._engine().begin() as conn:
+        conn.execute(jobs.update(jobs.jobs).where(jobs.jobs.c.status.in_(jobs.ACTIVE)).values(status="cancelled"))
 
 
-def test_agendador_so_pega_fonte_agendada_e_vencida(colecao):
-    from datetime import datetime, timedelta, timezone
+def test_sync_manual_puxa_o_agendado_para_agora(colecao):
+    sid = nova_fonte(colecao, "https://site.test/a", mode="page")
+    futuro = datetime.now(timezone.utc) + timedelta(days=1)
+    web_sync.schedule(store.update_source(sid, next_sync_at=futuro))
+    assert not web_sync.is_running(sid)
+    assert web_sync.start_sync(sid)  # 202, não 409: o agendado vira o de agora
+    ativos = [j for j in jobs.list_jobs(dedupe_key=f"web_source:{sid}") if j["status"] == "queued"]
+    assert len(ativos) == 1 and web_sync.is_running(sid)
 
-    passado = datetime.now(timezone.utc) - timedelta(hours=1)
-    vencida = nova_fonte(colecao, "https://site.test/a", mode="page")
-    manual = nova_fonte(colecao, "https://site.test/b", mode="page")
-    futura = nova_fonte(colecao, "https://site.test/c", mode="page")
-    store.update_source(vencida, next_sync_at=passado)
-    store.update_source(manual, refresh="never", next_sync_at=passado)
-    store.update_source(futura, next_sync_at=datetime.now(timezone.utc) + timedelta(days=1))
-    assert {s["id"] for s in store.due_sources()} & {vencida, manual, futura} == {vencida}
+
+def test_refresh_never_tira_da_fila_e_reconcile_agenda(colecao):
+    sid = nova_fonte(colecao, "https://site.test/a", mode="page")
+    chave = f"web_source:{sid}"
+    store.update_source(sid, next_sync_at=datetime.now(timezone.utc) + timedelta(days=3))
+    web_sync.reconcile()  # fonte semanal sem job (cadastrada antes da fila): ganha um
+    assert jobs.active_job(chave) is not None
+    sources_routes.update_source(colecao, sid, sources_routes.SourceUpdateIn(refresh="never"))
+    assert jobs.active_job(chave) is None
+    sources_routes.update_source(colecao, sid, sources_routes.SourceUpdateIn(refresh="daily"))
+    assert jobs.active_job(chave)["run_after"] is not None
+
+
+def test_reconcile_solta_fonte_presa_em_running(colecao):
+    sid = nova_fonte(colecao, "https://site.test/a", mode="page")
+    store.update_source(sid, status="running", refresh="never", next_sync_at=None)
+    web_sync.reconcile()
+    assert store.get_source(sid)["status"] == "failed"
+
+
+def test_job_de_sync_agenda_o_proximo_pelo_refresh(colecao, base, monkeypatch):
+    sid = nova_fonte(colecao, "https://site.test/docs/garantia", mode="page", format=False)
+    site, real = Site(), web.Fetcher
+    monkeypatch.setattr(web, "Fetcher", lambda: real(httpx.AsyncClient(transport=httpx.MockTransport(site.handler)), delay_ms=0))
+    assert web_sync.start_sync(sid)
+    assert asyncio.run(Worker().run_once()) == "succeeded"
+    assert store.get_source(sid)["status"] == "ready"
+    proximo = jobs.active_job(f"web_source:{sid}")
+    assert proximo["status"] == "queued"
+    assert web_sync._aware(proximo["run_after"]) > datetime.now(timezone.utc) + timedelta(days=6)
 
 
 def test_retriever_tambem_funciona_num_run_sincrono():

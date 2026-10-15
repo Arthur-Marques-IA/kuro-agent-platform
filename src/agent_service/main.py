@@ -19,6 +19,7 @@ from agent_service.api import auth, cors, errors, mcp_routes
 from agent_service.api.agents_routes import router as agents_router
 from agent_service.api.collections_routes import router as collections_router
 from agent_service.api.integration_routes import openapi_router as integration_openapi_router
+from agent_service.api.jobs_routes import router as jobs_router
 from agent_service.api.integration_routes import router as integration_router
 from agent_service.api.model_credentials_routes import router as model_credentials_router
 from agent_service.api.model_providers_routes import router as model_providers_router
@@ -31,6 +32,7 @@ from agent_service.db import get_db
 from agent_service.documents.collections import all_collections
 from agent_service.documents.store import seed_default_collection
 from agent_service.documents.web_sync import scheduler_lifespan
+from agent_service.jobs import worker as jobs_worker
 from agent_service.migrations import upgrade_database
 from agent_service.models.listing import warm_up as warm_up_model_listing
 from agent_service.observability.tracing import configure_tracing
@@ -56,8 +58,8 @@ mcp_route, mcp_lifespan = mcp_routes.build()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # O MCP e o agendador das fontes de site (`documents/web_sync.py`).
-    async with mcp_lifespan(app), scheduler_lifespan(app):
+    # O MCP, a fila de jobs (`jobs/worker.py`) e o acerto das fontes de site com ela.
+    async with mcp_lifespan(app), scheduler_lifespan(app), jobs_worker.lifespan(app):
         yield
 
 
@@ -67,6 +69,7 @@ base_app.include_router(router)
 base_app.include_router(agents_router)
 base_app.include_router(collections_router)
 base_app.include_router(sources_router)
+base_app.include_router(jobs_router)
 base_app.include_router(integration_router)
 base_app.include_router(integration_openapi_router)
 base_app.include_router(tools_router)

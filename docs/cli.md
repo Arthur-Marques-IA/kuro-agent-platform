@@ -38,6 +38,7 @@ se configura pelo console dá para configurar pela CLI, e vice-versa:
 | Shadow: referência e concordância | `/observability/references`, `/agreement` | `runs reference\|agreement` | aba Execuções (analistas) |
 | Dataset a partir do shadow | `/observability/export` | `runs export` | — |
 | Conversas salvas, renomear e apagar | `/sessions` | `sessions list\|show\|rename\|delete` | Conversas |
+| Fila de jobs (sync de sites): ver e destravar | `/jobs` | `jobs list\|show\|retry\|cancel` | — |
 
 As exceções são limitações reais, não esquecimento:
 **`runs tail`**, que acompanha execuções ao

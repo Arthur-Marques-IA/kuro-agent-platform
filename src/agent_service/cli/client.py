@@ -412,6 +412,21 @@ class Client:
     def delete_session(self, session_id: str, user_id: str | None = None) -> None:
         self._request("DELETE", f"/sessions/{session_id}", params={"user_id": user_id} if user_id else {})
 
+    # -- fila de jobs -------------------------------------------------------------
+
+    def list_jobs(self, *, status: str | None = None, kind: str | None = None, limit: int = 20) -> dict[str, Any]:
+        params = {k: v for k, v in {"status": status, "kind": kind, "limit": limit}.items() if v is not None}
+        return self._request("GET", "/jobs", params=params)
+
+    def get_job(self, job_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/jobs/{job_id}")
+
+    def retry_job(self, job_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/jobs/{job_id}/retry")
+
+    def cancel_job(self, job_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/jobs/{job_id}/cancel")
+
 
 _CONTEXT_MARK = "<additional context>"
 
