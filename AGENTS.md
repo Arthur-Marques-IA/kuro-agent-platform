@@ -22,7 +22,8 @@ foi aceito" — é diferente de serviço fora do ar, não adianta reiniciar cont
 tipadas, e o guia está em `docs/mcp.md`. Para conectá-lo a um serviço num servidor, a pessoa roda
 `kuro connect usuario@servidor` na máquina dela (MCP pelo SSH, sem porta aberta); com domínio, o
 serviço também atende o MCP em `/mcp`. Diferenças que importam:
-- `chat`, `analyze`, `tool_invoke` e `eval` rodam em `dry_run` por padrão;
+- `chat`, `analyze`, `tool_invoke` e `eval` rodam em `dry_run` por padrão, e `runs_list` deixa os
+  testes de fora — ache o seu run por `run_show(run_id)`, `runs_list(session_id=...)` ou `include_tests=true`;
 - pelo SSH e pela URL o MCP roda no servidor: `document_file`, `cases_file`, `rules_file` e o `file`
   de `collection_add` são recusados — mande o conteúdo inline (`document`, `cases`, `rules`, `text`);
 - `chat` não reaproveita a sessão da CLI, então repasse o `session_id` que ele devolve;

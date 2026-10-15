@@ -650,8 +650,12 @@ def integrate(ctx: typer.Context, agent_type: str) -> None:
 
 
 def _render_integration(c: dict[str, Any]) -> None:
-    console.print(f"[bold]{c['name']}[/] [dim]({c['agent_type']} · prompt v{c['prompt_version']})[/]")
-    console.print(f"POST {c['chat_url']}   [dim]streaming (SSE): POST {c['stream_url']}[/]")
+    versao = f"v{c['agent_version']}" if c.get("agent_version") else f"prompt v{c['prompt_version']}"
+    console.print(f"[bold]{c['name']}[/] [dim]({c['agent_type']} · {versao})[/]")
+    stream = f"   [dim]streaming (SSE): POST {c['stream_url']}[/]" if c.get("stream_url") else ""
+    console.print(f"POST {c['chat_url']}{stream}")
+    if c.get("openapi_url"):
+        console.print(f"[dim]OpenAPI (abre com a chave runtime): {c['openapi_url']}[/]")
 
     if c["dependencies"]:
         table = Table(show_edge=False, header_style="bold", title="dependencies", title_justify="left")
@@ -669,6 +673,10 @@ def _render_integration(c: dict[str, Any]) -> None:
 
     console.print("\n[bold]exemplo[/]")
     console.print(c["curl"], highlight=False)
+    if c.get("errors"):
+        console.print("\n[bold]erros[/]")
+        for erro in c["errors"]:
+            console.print(f"  [cyan]{erro['status']}[/] {erro['meaning']} [dim]→ {erro['action']}[/]")
     for aviso in c["warnings"]:
         console.print(f"[yellow]atenção:[/] {aviso}")
 

@@ -25,10 +25,26 @@ uma escolha do modelo. O sistema integrado confere o valor na fonte antes de usa
 
 ## 2. Acesso
 
-- URL: `https://<host>`. Suba o Kuro com o profile `tls`, porque a chave trafega no header.
+- URL: `https://<host>`. Suba o Kuro com o profile `tls`, porque a chave trafega no header. Sem
+  domínio próprio, `<ip-com-hífens>.sslip.io` serve para o piloto (ver
+  [operação](operacao.md#sem-domínio-próprio-sslipio)).
 - `Authorization: Bearer <RUNTIME_API_KEY>` para executar agentes (`/chat`, `/analyze`) e gravar
   score e referência. A chave `ADMIN_API_KEY` é para a CI que cria e publica agentes. Não use a
-  chave admin em produção.
+  chave admin em produção. A troca da chave runtime não derruba ninguém: por um tempo, a nova e a
+  antiga valem juntas ([rotacionar as chaves](operacao.md#rotacionar-as-chaves)).
+- **O contrato de cada agente** sai pronto de `GET /agents/{t}/integration` (chave admin;
+  `kuro agents integrate <t>`, a aba Integração do console ou a tool `agent_integration` do MCP):
+  endpoint com a URL pública do serviço, `dependencies` obrigatórias, campos do corpo, exemplo de
+  requisição e de resposta, eventos do stream e a tabela de erros. A URL vem de `KURO_PUBLIC_URL`,
+  `KURO_API_DOMAIN` ou do profile `ip`, nessa ordem.
+- **OpenAPI de quem integra:** `GET /integration/openapi.json` abre com a chave runtime e traz só as
+  rotas que ela alcança, para gerar o cliente (ex.: `openapi-generator` para PHP). O `/docs` e o
+  `/openapi.json` completos exigem a chave admin.
+- **OpenAPI de um agente só:** `GET /agents/{t}/openapi.json`, também com a chave runtime, traz só
+  as rotas que esse agente usa, com `agent_type` fixo (`enum` de um valor), as `dependencies`
+  tipadas (com `enum` e as obrigatórias) e, num analista, o `result` no formato do `response_schema`.
+  `servers` aponta para a URL pública. É o melhor para gerar o cliente e validar no seu CI. Não traz
+  instructions, tools nem modelo. O contrato (`agent_openapi_url`) traz o endereço.
 - `GET /ready` (aberta) responde 200 quando o processo está de pé e o banco responde, e 503 quando
   não. É ela que o circuit breaker deve olhar, e não o `/health`.
 
@@ -108,7 +124,7 @@ No `/chat/stream`, o mesmo campo chega no evento `sources` (`{"sources": [...]}`
 | 200 | Decisão válida contra o schema, com `enum` respeitado | Revalidar os números e executar |
 | 401 / 403 | Chave ausente ou de escopo errado | Erro de configuração: alertar, não repetir |
 | 404 | `agent_type` não existe | Erro de configuração: alertar, não repetir |
-| 409 | Agente procedural: outra mensagem da mesma sessão ainda está sendo processada | Esperar a resposta dela e reenviar |
+| 409 | Agente procedural: outra mensagem da mesma sessão ainda está sendo processada. Ou: a mesma `Idempotency-Key` ainda em andamento | Esperar a resposta dela e reenviar |
 | 502 / 504 num agente procedural | Pode ter vindo depois da ação já executada | Ler `GET /agents/{t}/procedures/{session_id}` antes do fallback |
 | 422 | Requisição inválida: dependency faltando ou de tipo errado, texto grande demais, agente não é `analysis` | Bug de quem chama: não repetir, alertar |
 | 502 | Falha do provedor de modelo ou saída que não fecha com o schema | **Fallback.** Pode tentar no próximo ciclo |
@@ -119,6 +135,35 @@ No `/chat/stream`, o mesmo campo chega no evento `sources` (`{"sources": [...]}`
 
 - **Repetir é seguro.** O `/analyze` não tem efeito colateral: repetir só gera outro run. Quem
   garante que a mesma mensagem não vire duas ações é o claim do seu sistema, como já acontece hoje.
+- **No `/chat`, repetir pode repetir a ação.** Num agente conversacional com tool de efeito colateral
+  (abrir chamado, fechar acordo), a repetição depois de um timeout roda o turno de novo: a tool é
+  chamada outra vez e o turno aparece duas vezes no histórico. Para repetir com segurança, mande o
+  header **`Idempotency-Key`** (ver abaixo).
+
+### Repetir sem duplicar: `Idempotency-Key`
+
+`/chat` e `/analyze` aceitam o header `Idempotency-Key: <uma chave por operação>` (um UUID serve;
+até 255 caracteres). Gere a chave antes da primeira tentativa e repita com a mesma:
+
+| Situação | Resposta |
+|---|---|
+| Primeira vez | Roda normalmente |
+| Mesma chave e mesmo corpo, a primeira já respondeu | A **resposta guardada** (o mesmo `run_id`), com o header `Idempotent-Replayed: true`. Nada roda de novo |
+| Mesma chave, a primeira ainda em andamento | **409**: espere alguns segundos e repita com a mesma chave |
+| Mesma chave com outro corpo | **422**: bug de quem chama (cada operação leva a sua chave) |
+| A primeira falhou (4xx, 502, 503, 504) | A chave é liberada: a repetição roda de verdade |
+
+- A chave vale por endpoint e agente durante `IDEMPOTENCY_TTL_HOURS` (24 h); depois disso, roda de novo.
+- **As tools recebem a mesma chave** em `dependencies.idempotency_key`, sem o agente declarar o
+  campo. Se a primeira tentativa falhou depois de a tool ter chamado o seu sistema, a repetição roda e
+  a tool chama de novo com a mesma chave: é por ela que o seu sistema reconhece o pedido repetido.
+  Declare o parâmetro de header na tool, como na etapa `action` abaixo, com `required: false` se nem
+  todo cliente manda o header. É uma chave por requisição: duas chamadas da mesma tool no mesmo turno
+  recebem a mesma.
+- O valor do header vence um `idempotency_key` mandado em `dependencies`, e fica no `metadata` do run
+  (`kuro runs list --meta idempotency_key=...`).
+- O `/chat/stream` recusa o header com 422: a resposta sai aos pedaços e não há o que guardar. Para
+  uma chamada que precisa ser repetida, use o `/chat`.
 - **O timeout do cliente deve cobrir a fila e o agente**: `QUEUE_MAX_WAIT_SECONDS + timeout_seconds
   + 5`. Com os padrões e um agente de 30 s, isso dá 65 s. Acima de `MAX_CONCURRENT_RUNS` (16
   execuções simultâneas), a chamada espera uma vaga por até `QUEUE_MAX_WAIT_SECONDS` (30 s) antes de

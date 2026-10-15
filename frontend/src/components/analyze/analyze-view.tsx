@@ -10,13 +10,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CodeBlock } from "@/components/ui/code-block";
-import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState, Field, SectionHeading, Spinner } from "@/components/ui/primitives";
 import { PageBody, PageHeader } from "@/components/workspace/page-header";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
 import { readAttachment } from "@/lib/attachments";
+import { parseDependencies } from "@/lib/agent-meta";
+import { DependenciesForm } from "@/components/schema/dependencies-form";
+
+const NO_FIELDS: never[] = [];
 
 /**
  * Onde se testa um agente `kind: "analysis"`. Ele não aparece no Playground
@@ -37,6 +40,7 @@ export function AnalyzeView() {
   const [dryRun, setDryRun] = useDryRun();
 
   const escolhido = analistas.find((a) => a.agent_type === agentType) ?? analistas[0];
+  const depsCheck = parseDependencies(deps);
 
   async function rodar() {
     if (!escolhido) return;
@@ -44,14 +48,8 @@ export function AnalyzeView() {
     setErro(null);
     setResultado(null);
     try {
-      let dependencies: Record<string, unknown> | undefined;
-      if (deps.trim()) {
-        try {
-          dependencies = JSON.parse(deps) as Record<string, unknown>;
-        } catch {
-          throw new Error("As dependencies precisam ser um objeto JSON válido.");
-        }
-      }
+      if (depsCheck.error) throw new Error(`Dependencies: ${depsCheck.error}`);
+      const dependencies = depsCheck.value ?? undefined;
       setResultado(
         await requestJson<AnalyzeResponse>("/api/analyze", {
           method: "POST",
@@ -120,20 +118,27 @@ export function AnalyzeView() {
               ))}
             </Select>
           </Field>
-          <Field
-            label="Dependencies (JSON)"
-            htmlFor="analyze-deps"
-            hint="Opcional — os mesmos campos que o /analyze aceita."
-          >
-            <Input
-              id="analyze-deps"
-              value={deps}
-              onChange={(e) => setDeps(e.target.value)}
-              placeholder='{"cliente_id": 42}'
-              className="font-mono text-xs"
-            />
-          </Field>
         </div>
+
+        <Field
+          label="Dependencies"
+          error={depsCheck.error}
+          hint={
+            escolhido && escolhido.dependency_fields.length > 0
+              ? "Os campos que este agente declara; obrigatórios com *. Campos extras também são enviados."
+              : "Opcional — este agente não declara campos; adicione os que quiser enviar."
+          }
+        >
+          <DependenciesForm
+            fields={escolhido?.dependency_fields ?? NO_FIELDS}
+            value={deps}
+            onChange={setDeps}
+            invalid={Boolean(depsCheck.error)}
+            jsonRows={4}
+            placeholder='{"cliente_id": 42}'
+            className="max-w-xl"
+          />
+        </Field>
 
         <Field
           label="Documento"
@@ -170,7 +175,10 @@ export function AnalyzeView() {
             </Badge>
           ))}
           <div className="flex-1" />
-          <Button onClick={() => void rodar()} disabled={rodando || (!document.trim() && anexos.length === 0)}>
+          <Button
+            onClick={() => void rodar()}
+            disabled={rodando || Boolean(depsCheck.error) || (!document.trim() && anexos.length === 0)}
+          >
             {rodando ? <Spinner /> : <Play />} Analisar
           </Button>
         </div>

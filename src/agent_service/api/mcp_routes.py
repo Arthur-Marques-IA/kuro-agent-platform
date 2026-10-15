@@ -30,7 +30,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import BaseRoute, Route
 
 from agent_service.cli.client import Client
-from agent_service.config import get_settings
+from agent_service.config import current_key, get_settings
 from agent_service.mcp_server import build_server
 
 PATH = "/mcp"
@@ -40,7 +40,7 @@ def _internal_client() -> Client:
     settings = get_settings()
     url = os.environ.get("KURO_MCP_API_URL") or f"http://127.0.0.1:{settings.app_port}"
     timeout = float(os.environ.get("KURO_TIMEOUT") or 300)
-    return Client(url, timeout=timeout, api_key=settings.admin_api_key or None)
+    return Client(url, timeout=timeout, api_key=current_key(settings.admin_api_key))
 
 
 def build() -> tuple[BaseRoute, Any]:

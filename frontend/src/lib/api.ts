@@ -18,7 +18,15 @@ export function backendUrl(path: string): string {
  * prefixo NEXT_PUBLIC_: ela nunca vai para o bundle do browser. É o mesmo
  * motivo de o BFF existir — quem fala com o backend é o servidor do Next.
  */
-const AGENT_SERVICE_API_KEY = process.env.AGENT_SERVICE_API_KEY;
+const AGENT_SERVICE_API_KEY = backendApiKey();
+
+/**
+ * A chave que o console manda. No compose ela é a `ADMIN_API_KEY`, que numa rotação
+ * traz duas separadas por vírgula (`nova,antiga`): vai a primeira, a atual.
+ */
+export function backendApiKey(): string | undefined {
+  return (process.env.AGENT_SERVICE_API_KEY ?? "").split(",").map((k) => k.trim()).find(Boolean);
+}
 
 /** Acrescenta o header de autenticação, preservando os headers da chamada. */
 function withAuth(init?: RequestInit): RequestInit {
@@ -33,7 +41,15 @@ function withAuth(init?: RequestInit): RequestInit {
  * montar exemplos de integração (cURL etc.), nunca para requisições.
  */
 export function publicApiUrl(): string {
-  return process.env.AGENT_SERVICE_PUBLIC_URL ?? "http://localhost:58000";
+  return configuredPublicApiUrl() ?? "http://localhost:58000";
+}
+
+/**
+ * A URL pública só quando alguém a configurou. Sem ela, o contrato de integração
+ * deixa o agent-service decidir (KURO_PUBLIC_URL, KURO_API_DOMAIN, profile `ip`).
+ */
+export function configuredPublicApiUrl(): string | undefined {
+  return process.env.AGENT_SERVICE_PUBLIC_URL?.trim() || undefined;
 }
 
 const NO_BODY_STATUSES = new Set([204, 205, 304]);

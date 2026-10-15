@@ -8,15 +8,15 @@ import { cn } from "@/lib/cn";
 import { formatNumber } from "@/lib/format";
 import { MEMORY_BACKENDS, modelLabel } from "@/lib/agent-meta";
 import type { AgentDefinition, ProcedureState } from "@/lib/types";
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
-import { Textarea } from "@/components/ui/textarea";
+import { DependenciesForm } from "@/components/schema/dependencies-form";
 import { AgentAvatar } from "@/components/agents/agent-avatar";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
 import { ProcedureSteps } from "@/components/chat/procedure-progress";
 
 const DEPENDENCIES_EXAMPLE = JSON.stringify({ nome: "Maria", cpf: "000.000.000-00", plano: "premium" }, null, 2);
+const NO_FIELDS: never[] = [];
 
 export function ChatInspector({
   agent,
@@ -164,29 +164,12 @@ export function ChatInspector({
             </>
           }
         >
-          {agent && agent.dependency_fields.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {agent.dependency_fields.map((field) => (
-                <Badge key={field.name} variant={field.required ? "warning" : "outline"} title={field.description || undefined}>
-                  {field.label}
-                  {field.required && " *"}
-                </Badge>
-              ))}
-            </div>
-          )}
-          <label htmlFor="chat-dependencies" className="sr-only">
-            dependencies (JSON)
-          </label>
-          <Textarea
-            id="chat-dependencies"
+          <DependenciesForm
+            fields={agent?.dependency_fields ?? NO_FIELDS}
             value={dependenciesText}
-            onChange={(e) => onDependenciesChange(e.target.value)}
-            rows={7}
-            spellCheck={false}
+            onChange={onDependenciesChange}
+            invalid={Boolean(dependenciesError)}
             placeholder={DEPENDENCIES_EXAMPLE}
-            aria-invalid={Boolean(dependenciesError)}
-            aria-describedby={`${id}-deps-status`}
-            className="resize-y font-mono text-xs leading-5"
           />
           <div className="mt-2 flex items-start justify-between gap-2">
             <p
@@ -243,7 +226,7 @@ export function ChatInspector({
                 </p>
               )}
               <Link
-                href={`/logs?user_id=${encodeURIComponent(userId)}`}
+                href={`/logs/sessions?user_id=${encodeURIComponent(userId)}`}
                 className="inline-flex items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
               >
                 <Users className="size-3" /> Meu histórico de uso

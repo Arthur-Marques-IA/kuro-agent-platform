@@ -12,6 +12,7 @@ verdade: o mesmo comando que o Claude Code vai rodar sobe o MCP e chama a tool `
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -77,8 +78,17 @@ def mcp_command(ssh: Ssh, container: str) -> list[str]:
     `claude` costuma ser um `.cmd`, e os argumentos passam pelo cmd.exe.
 
     `KURO_MCP_LOCAL_FILES=0`: o processo roda no container, então um caminho de arquivo
-    seria do servidor, não de quem pediu — as tools pedem o conteúdo inline."""
-    return [*ssh.base(), "docker", "exec", "-i", "-e", "KURO_MCP_LOCAL_FILES=0", container, "kuro-mcp"]
+    seria do servidor, não de quem pediu — as tools pedem o conteúdo inline.
+
+    Keepalive (`KEEPALIVE`): a sessão dura o dia inteiro, e com a rede caída (Wi-Fi trocado,
+    notebook que dormiu) a conexão fica meio aberta — a tool pendurava até o timeout do cliente.
+    Assim o ssh desiste em ~45 s e o cliente MCP vê o servidor cair, em vez de esperar calado."""
+    return [*ssh.base()[:-1], *KEEPALIVE, ssh.destination,
+            "docker", "exec", "-i", "-e", "KURO_MCP_LOCAL_FILES=0", container, "kuro-mcp"]
+
+
+KEEPALIVE = ("-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-o", "ConnectTimeout=15")
+"""Opções do ssh do comando registrado: um sinal a cada 15 s, desiste depois de 3 sem resposta."""
 
 
 def mcp_env() -> dict[str, str]:
@@ -101,6 +111,76 @@ class StepFailed(Exception):
         self.code = code
 
 
+class SshAuthFailed(StepFailed):
+    """O servidor respondeu, mas não deixou entrar sem interação. `reason` diz por quê, porque
+    a saída de cada caso é outra:
+
+    - `password`: sem chave aceita, e o servidor aceita senha — dá para instalar a chave com ela;
+    - `passphrase`: a chave daqui tem senha de proteção e não está carregada num ssh-agent — o
+      Claude Code não tem como digitá-la; carregar no agent resolve, instalar outra chave não;
+    - `key_only`: o servidor só aceita chave, e nenhuma daqui foi aceita — pedir senha não adianta.
+    """
+
+    def __init__(self, message: str, reason: str):
+        super().__init__(message, EXIT_UNAVAILABLE)
+        self.reason = reason
+
+
+AGENT_HELP = (
+    "Carregue a chave num ssh-agent, que o Claude Code usa sem perguntar nada: no Windows, num "
+    "PowerShell de administrador, `Get-Service ssh-agent | Set-Service -StartupType Automatic; "
+    "Start-Service ssh-agent` e depois `ssh-add {key}`; no macOS, `ssh-add --apple-use-keychain {key}`; "
+    "no Linux, `ssh-add {key}` numa sessão com agent (o Claude Code precisa ter sido aberto nela)."
+)
+
+
+def _private_keys(ssh: Ssh) -> list[Path]:
+    """As chaves que o ssh tentaria: a do `-i`, ou as padrão que existem."""
+    if ssh.identity:
+        return [Path(ssh.identity).expanduser()]
+    return [k for k in (Path.home() / ".ssh" / n for n in ("id_ed25519", "id_ecdsa", "id_rsa")) if k.exists()]
+
+
+def _locked_key(ssh: Ssh, runner: Runner) -> Path | None:
+    """Uma chave daqui com senha de proteção e nenhuma chave carregada no agent — ou `None`."""
+    locked = None
+    for key in _private_keys(ssh):
+        # Sem senha, `-y` imprime a chave pública; com senha, `-P ""` falha em vez de perguntar.
+        probe_key = runner(["ssh-keygen", "-y", "-P", "", "-f", str(key)], None, 15)
+        if probe_key.code != 0 and "passphrase" in (probe_key.err + probe_key.out).lower():
+            locked = locked or key
+    if locked is None:
+        return None
+    # 0: o agent tem chaves (então a chave foi oferecida e recusada); 1: agent vazio; 2: sem agent.
+    return locked if runner(["ssh-add", "-l"], None, 15).code != 0 else None
+
+
+def _auth_methods(err: str) -> set[str]:
+    """`Permission denied (publickey,password).` → {"publickey", "password"}."""
+    found = re.search(r"Permission denied \(([^)]*)\)", err)
+    return {m.strip() for m in found.group(1).split(",")} if found else set()
+
+
+def diagnose_auth(ssh: Ssh, runner: Runner, err: str) -> SshAuthFailed:
+    locked = _locked_key(ssh, runner)
+    if locked is not None:
+        return SshAuthFailed(
+            f"a chave SSH {locked} tem senha de proteção (passphrase) e não está carregada num ssh-agent: "
+            "o Claude Code não tem como digitá-la. " + AGENT_HELP.format(key=locked),
+            "passphrase",
+        )
+    methods = _auth_methods(err)
+    if methods and not methods & {"password", "keyboard-interactive"}:
+        keys = ", ".join(str(k) for k in _private_keys(ssh)) or "nenhuma chave em ~/.ssh"
+        return SshAuthFailed(
+            f"{ssh.destination} só aceita chave SSH ({', '.join(sorted(methods))}), e nenhuma daqui foi aceita "
+            f"({keys}). Ponha a sua chave pública no ~/.ssh/authorized_keys do servidor pelo console do "
+            "provedor da VPS (ou peça a quem tem acesso), ou aponte a chave certa com -i.",
+            "key_only",
+        )
+    return SshAuthFailed("o SSH pediu senha", "password")
+
+
 def check_ssh(ssh: Ssh, runner: Runner) -> None:
     # `accept-new` só neste teste: o primeiro acesso grava a chave do host (como o `ssh`
     # interativo perguntaria), e uma chave diferente da gravada continua sendo recusada.
@@ -109,7 +189,7 @@ def check_ssh(ssh: Ssh, runner: Runner) -> None:
         return
     err = first.err.strip()
     if "Permission denied" in err or "publickey" in err:
-        raise StepFailed("o SSH pediu senha", code=EXIT_UNAVAILABLE)
+        raise diagnose_auth(ssh, runner, err)
     if "Host key verification failed" in err or "REMOTE HOST IDENTIFICATION HAS CHANGED" in err:
         raise StepFailed(
             f"a chave do host {ssh.destination} não bate com a que está no seu known_hosts. Se o servidor foi "
@@ -227,16 +307,29 @@ def _public_key() -> Path | None:
     return None
 
 
-def install_key(ssh: Ssh) -> None:
+def install_key(ssh: Ssh, passphrase: bool = False) -> None:
     """Cria a chave (se não houver) e a instala no servidor, pedindo a senha uma vez.
-    Interativo: só roda com TTY, e o `ssh` pergunta a senha direto no terminal."""
+    Interativo: só roda com TTY, e o `ssh` pergunta a senha direto no terminal.
+
+    `passphrase`: a chave nova nasce com senha de proteção (o `ssh-keygen` pergunta) e vai para o
+    ssh-agent na hora — sem o agent, o Claude Code não teria como digitá-la a cada conexão."""
     pub = _public_key()
     if pub is None:
         key = Path.home() / ".ssh" / "id_ed25519"
         key.parent.mkdir(mode=0o700, exist_ok=True)
-        console.print(f"Criando a chave SSH {key} (sem senha de proteção; para pôr uma, rode `ssh-keygen` você mesmo).")
-        if subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(key), "-q"]).returncode != 0:
+        if passphrase:
+            console.print(f"Criando a chave SSH {key}: o ssh-keygen vai pedir a senha de proteção.")
+            created = subprocess.run(["ssh-keygen", "-t", "ed25519", "-f", str(key), "-q"]).returncode
+        else:
+            console.print(f"Criando a chave SSH {key} (sem senha de proteção; para pôr uma, use --passphrase).")
+            created = subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(key), "-q"]).returncode
+        if created != 0:
             raise StepFailed("o ssh-keygen falhou")
+        if passphrase and subprocess.run(["ssh-add", str(key)]).returncode != 0:
+            raise StepFailed(
+                f"a chave {key} foi criada, mas não consegui carregá-la no ssh-agent. " + AGENT_HELP.format(key=key)
+                + " Depois, rode o kuro connect de novo."
+            )
         pub = key.with_suffix(".pub")
     console.print(f"Instalando {pub.name} em {ssh.destination}: o ssh vai pedir a senha uma última vez.")
     # O Windows não tem ssh-copy-id: a chave vai pelo stdin.
@@ -260,6 +353,9 @@ def connect(
     scope: str = typer.Option("user", "--scope", "-s", help="Escopo do registro no Claude Code: user, project ou local."),
     print_only: bool = typer.Option(False, "--print", help="Não registra: só testa e mostra o comando e o .mcp.json."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Troca um registro com o mesmo nome sem perguntar."),
+    passphrase: bool = typer.Option(
+        False, "--passphrase", help="Se precisar criar a chave SSH, cria com senha de proteção e a carrega no ssh-agent."
+    ),
 ) -> None:
     """Conecta o servidor MCP do Kuro ao Claude Code pelo SSH — sem porta aberta, sem
     certificado e sem a chave de API na sua máquina. Rode na sua máquina:
@@ -282,8 +378,8 @@ def connect(
     try:
         try:
             check_ssh(ssh, run)
-        except StepFailed as exc:
-            if str(exc) != "o SSH pediu senha":
+        except SshAuthFailed as exc:
+            if exc.reason != "password":
                 raise
             if not st.interactive:
                 raise StepFailed(
@@ -293,7 +389,7 @@ def connect(
                 ) from exc
             if not typer.confirm(f"O SSH em {destination} pede senha. Instalar uma chave SSH para entrar sem senha?", default=True):
                 raise StepFailed("sem chave SSH o Claude Code não consegue entrar no servidor", EXIT_UNAVAILABLE) from exc
-            install_key(ssh)
+            install_key(ssh, passphrase)
             check_ssh(ssh, run)
         done(f"SSH em {destination} sem senha")
         target = find_container(ssh, run, container)

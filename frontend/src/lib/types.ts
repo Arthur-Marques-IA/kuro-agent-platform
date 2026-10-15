@@ -69,11 +69,38 @@ export interface DependencyContract {
   required_by_tools: string[];
 }
 
+/** Um campo do corpo do `/chat` ou do `/analyze`, como o contrato descreve. */
+export interface RequestFieldContract {
+  name: string;
+  type: string;
+  required: boolean;
+  description: string;
+}
+
+export interface StreamEventContract {
+  event: string;
+  /** A forma do `data` (JSON) desse evento. */
+  data: string;
+}
+
+export interface ErrorContract {
+  status: string;
+  meaning: string;
+  action: string;
+}
+
 export interface IntegrationContract {
   agent_type: string;
   name: string;
   kind: AgentKind;
   prompt_version: number;
+  agent_version?: number | null;
+  /** O endereço dos exemplos: o pedido, ou o público que o agent-service conhece. */
+  base_url: string;
+  /** `explicit` | `domain` | `ip` | `local` (o serviço só escuta no host). */
+  base_url_source: string;
+  /** OpenAPI só das rotas da chave `runtime` — abre com ela, diferente do `/docs`. */
+  openapi_url: string;
   /** `/chat` num conversacional, `/analyze` num analista. */
   endpoint: string;
   chat_url: string;
@@ -84,7 +111,12 @@ export interface IntegrationContract {
   /** Só em `kind: "procedural"`: onde ler o estado de uma conversa (`{session_id}` a trocar). */
   state_url?: string | null;
   dependencies: DependencyContract[];
+  request_fields: RequestFieldContract[];
   request_example: Record<string, unknown>;
+  response_example: Record<string, unknown>;
+  /** Eventos do stream, na ordem em que podem chegar. Vazio em analista. */
+  stream_events: StreamEventContract[];
+  errors: ErrorContract[];
   curl: string;
   warnings: string[];
 }

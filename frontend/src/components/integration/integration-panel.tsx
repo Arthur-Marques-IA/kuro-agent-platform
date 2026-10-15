@@ -9,7 +9,6 @@ import { Card } from "@/components/ui/card";
 import { CodeBlock } from "@/components/ui/code-block";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useWorkspace } from "@/components/workspace/workspace-provider";
 import { requestJson } from "@/lib/http";
 import { Skeleton } from "@/components/ui/primitives";
 import type { IntegrationContract } from "@/lib/types";
@@ -23,6 +22,11 @@ import type { IntegrationContract } from "@/lib/types";
  * `/analyze` com `document`) e sem o header de autenticação quando as chaves
  * estão ligadas — um cURL que não funciona é pior que exemplo nenhum, porque
  * manda quem integra procurar no lugar errado.
+ *
+ * Pelo mesmo motivo a referência (campos, eventos do stream, resposta e erros) também
+ * vem do contrato: a tabela escrita à mão aqui ficou sem `metadata`, `dry_run`,
+ * `attachments` e metade dos eventos do SSE. E a Base URL começa pela que o backend
+ * conhece (domínio, profile `ip`), não por um `localhost` fixo.
  */
 export function IntegrationPanel({
   agentType,
@@ -37,30 +41,31 @@ export function IntegrationPanel({
   dependencies?: Record<string, unknown> | null;
   showReference?: boolean;
 }) {
-  const { publicApiUrl } = useWorkspace();
   const hasRealDependencies = Boolean(dependencies && Object.keys(dependencies).length > 0);
   const [language, setLanguage] = useLocalStorage<SnippetLanguage>("agent-service:snippet-language", "curl");
   const [includeDependencies, setIncludeDependencies] = useState(true);
-  const [baseUrl, setBaseUrl] = useState(publicApiUrl);
+  /** `null` até a pessoa editar: aí quem decide a URL é o backend. */
+  const [baseUrlOverride, setBaseUrlOverride] = useState<string | null>(null);
   const [contract, setContract] = useState<IntegrationContract | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
   const analysis = contract?.kind === "analysis";
   const [streaming, setStreaming] = useState(true);
   const endpoint: ChatEndpoint = analysis ? "/analyze" : streaming ? "/chat/stream" : "/chat";
+  const baseUrl = (baseUrlOverride ?? contract?.base_url ?? "").replace(/\/+$/, "");
 
   useEffect(() => {
     let vivo = true;
-    requestJson<IntegrationContract>(
-      `/api/agents/${encodeURIComponent(agentType)}/integration?base_url=${encodeURIComponent(baseUrl)}`,
-      { fallbackError: "Falha ao ler o contrato de integração" }
-    )
+    const query = baseUrlOverride?.trim() ? `?base_url=${encodeURIComponent(baseUrlOverride.trim())}` : "";
+    requestJson<IntegrationContract>(`/api/agents/${encodeURIComponent(agentType)}/integration${query}`, {
+      fallbackError: "Falha ao ler o contrato de integração",
+    })
       .then((data) => vivo && setContract(data))
       .catch((err) => vivo && setErro(String(err)));
     return () => {
       vivo = false;
     };
-  }, [agentType, baseUrl]);
+  }, [agentType, baseUrlOverride]);
 
   /** O corpo vem do backend; só a sessão real da tela (quando há uma) entra por cima. */
   const payload = useMemo(() => {
@@ -78,10 +83,7 @@ export function IntegrationPanel({
   const temDependencies = (contract?.dependencies.length ?? 0) > 0 || hasRealDependencies;
   const requiresAuth = contract?.curl.includes("Authorization") ?? false;
 
-  const code =
-    contract && payload
-      ? buildSnippet(language, { baseUrl: baseUrl.replace(/\/+$/, ""), endpoint, payload, requiresAuth })
-      : "";
+  const code = contract && payload ? buildSnippet(language, { baseUrl, endpoint, payload, requiresAuth }) : "";
   const languageLabel = SNIPPET_LANGUAGES.find((l) => l.value === language)?.label ?? language;
 
   if (erro) {
@@ -123,8 +125,8 @@ export function IntegrationPanel({
           <label className="flex min-w-0 flex-1 items-center gap-2 text-[13px]">
             <span className="shrink-0 text-muted-foreground">Base URL</span>
             <Input
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
+              value={baseUrlOverride ?? contract.base_url}
+              onChange={(e) => setBaseUrlOverride(e.target.value.trim() ? e.target.value : null)}
               className="h-8 max-w-xs font-mono text-xs"
               spellCheck={false}
             />
@@ -142,6 +144,14 @@ export function IntegrationPanel({
             </label>
           )}
         </div>
+        {baseUrlOverride === null && contract.base_url_source === "local" && (
+          <p className="text-xs text-muted-foreground">
+            O serviço só escuta nesta máquina, então outro servidor não alcança esta URL. Para expor, defina{" "}
+            <code className="font-mono">KURO_API_DOMAIN</code> (sem domínio próprio:{" "}
+            <code className="font-mono">&lt;ip-com-hífens&gt;.sslip.io</code>, profile <code className="font-mono">tls</code>)
+            ou <code className="font-mono">KURO_PUBLIC_URL</code>; ou integre pela rede Docker.
+          </p>
+        )}
         <CodeBlock code={code} title={`POST ${endpoint} · ${languageLabel}`} />
       </div>
 
@@ -199,41 +209,13 @@ export function IntegrationPanel({
         </div>
       )}
 
-      {showReference && !analysis && <ApiReference baseUrl={baseUrl.replace(/\/+$/, "")} />}
+      {showReference && <ApiReference contract={contract} />}
     </div>
   );
 }
 
-const PARAMETERS = [
-  {
-    name: "user_id",
-    type: "string",
-    required: true,
-    description: "Identificador estável do usuário final na sua plataforma — base das memórias de longo prazo.",
-  },
-  {
-    name: "session_id",
-    type: "string",
-    required: true,
-    description: "Identificador da conversa. Reutilize entre mensagens para manter o histórico; gere outro para começar do zero.",
-  },
-  { name: "message", type: "string", required: true, description: "Texto da mensagem do usuário." },
-  {
-    name: "agent_type",
-    type: "string",
-    required: false,
-    description: "Slug do agente. Padrão: conversational.",
-  },
-  {
-    name: "dependencies",
-    type: "object",
-    required: false,
-    description:
-      "Metadados que você já tem sobre o usuário (cpf, nome, plano…). Viram contexto estruturado no prompt — não é uma tool call.",
-  },
-];
-
-function ApiReference({ baseUrl }: { baseUrl: string }) {
+function ApiReference({ contract }: { contract: IntegrationContract }) {
+  const analysis = contract.kind === "analysis";
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
@@ -241,14 +223,23 @@ function ApiReference({ baseUrl }: { baseUrl: string }) {
           <div>
             <h3 className="text-sm font-semibold">Corpo da requisição</h3>
             <p className="text-[13px] text-muted-foreground">
-              O mesmo JSON para <code className="font-mono text-xs">/chat</code> e{" "}
-              <code className="font-mono text-xs">/chat/stream</code>.
+              {analysis ? (
+                <>
+                  <code className="font-mono text-xs">POST /analyze</code>: one-shot, sem histórico.
+                </>
+              ) : (
+                <>
+                  O mesmo JSON para <code className="font-mono text-xs">/chat</code> e{" "}
+                  <code className="font-mono text-xs">/chat/stream</code>.
+                </>
+              )}
             </p>
           </div>
           <a
-            href={`${baseUrl}/docs`}
+            href="/api/integration/openapi"
             target="_blank"
             rel="noreferrer"
+            title={`Quem integra lê em ${contract.openapi_url}, com a chave runtime`}
             className="inline-flex shrink-0 items-center gap-1.5 text-[13px] text-primary hover:underline"
           >
             OpenAPI <ExternalLink className="size-3.5" />
@@ -265,7 +256,7 @@ function ApiReference({ baseUrl }: { baseUrl: string }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {PARAMETERS.map((param) => (
+                {contract.request_fields.map((param) => (
                   <tr key={param.name} className="align-top">
                     <td className="whitespace-nowrap px-4 py-3">
                       <code className="font-mono text-xs font-semibold">{param.name}</code>
@@ -281,36 +272,68 @@ function ApiReference({ baseUrl }: { baseUrl: string }) {
             </table>
           </div>
         </Card>
+        <p className="text-xs text-muted-foreground">
+          Quem integra lê o contrato em <code className="break-all font-mono">{contract.openapi_url}</code> com a chave
+          runtime (o <code className="font-mono">/docs</code> exige a chave admin).
+        </p>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="flex flex-col gap-2 p-5">
-          <p className="font-mono text-xs font-semibold">POST /chat</p>
+        <Card className="flex min-w-0 flex-col gap-2 p-5">
+          <p className="font-mono text-xs font-semibold">Resposta ({analysis ? "POST /analyze" : "POST /chat"})</p>
           <p className="text-[13px] text-muted-foreground">
-            Aguarda a execução completa e devolve JSON com <code className="font-mono text-xs">agent_type</code>,{" "}
-            <code className="font-mono text-xs">session_id</code> e <code className="font-mono text-xs">content</code>.
+            Guarde <code className="font-mono text-xs">run_id</code>,{" "}
+            <code className="font-mono text-xs">agent_version</code> e{" "}
+            <code className="font-mono text-xs">config_hash</code> junto da decisão: é o que diz qual configuração
+            respondeu. Os valores abaixo são ilustrativos.
           </p>
+          <CodeBlock code={JSON.stringify(contract.response_example, null, 2)} title="JSON" />
         </Card>
-        <Card className="flex flex-col gap-2 p-5">
-          <p className="font-mono text-xs font-semibold">POST /chat/stream</p>
-          <ul className="flex flex-col gap-1 text-[13px] text-muted-foreground">
-            <li>
-              <code className="font-mono text-xs text-foreground">event: message</code> — pedaços de texto{" "}
-              <code className="font-mono text-xs">{"{content}"}</code>
-            </li>
-            <li>
-              <code className="font-mono text-xs text-foreground">event: usage</code> — total de tokens, ao terminar
-            </li>
-            <li>
-              <code className="font-mono text-xs text-foreground">event: done</code> — fim do stream
-            </li>
-          </ul>
-          <p className="text-xs text-muted-foreground">
-            É POST: consuma com <code className="font-mono">fetch</code> lendo o stream, não com{" "}
-            <code className="font-mono">EventSource</code>.
-          </p>
+        {contract.stream_events.length > 0 && (
+          <Card className="flex flex-col gap-2 p-5">
+            <p className="font-mono text-xs font-semibold">POST /chat/stream</p>
+            <ul className="flex flex-col gap-1 text-[13px] text-muted-foreground">
+              {contract.stream_events.map((e) => (
+                <li key={e.event}>
+                  <code className="font-mono text-xs text-foreground">event: {e.event}</code> — {e.data}
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-muted-foreground">
+              O status HTTP do stream sai 200 antes de o agente rodar: falhas chegam como{" "}
+              <code className="font-mono">event: error</code>. É POST: consuma com{" "}
+              <code className="font-mono">fetch</code> lendo o stream, não com <code className="font-mono">EventSource</code>.
+            </p>
+          </Card>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <h3 className="text-sm font-semibold">Erros e fallback</h3>
+        <Card className="overflow-hidden">
+          <div className="scrollbar-thin overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left text-[13px]">
+              <thead className="border-b border-border bg-surface text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Status</th>
+                  <th className="px-4 py-2.5 font-medium">Significa</th>
+                  <th className="px-4 py-2.5 font-medium">O que fazer</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {contract.errors.map((e) => (
+                  <tr key={e.status} className="align-top">
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">{e.status}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{e.meaning}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{e.action}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       </div>
     </div>
   );
 }
+
