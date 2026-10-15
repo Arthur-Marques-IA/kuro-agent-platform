@@ -12,7 +12,7 @@ from agno.agent import Agent
 from pydantic import BaseModel
 
 from agent_service.db import get_db
-from agent_service.documents.collections import get_collection
+from agent_service.documents.collections import get_collection, resolve_search
 from agent_service.documents.retrieval import make_retriever
 from agent_service.models.provider import get_model
 
@@ -64,7 +64,7 @@ def build_agent(
     # O retriever faz a mesma busca e guarda quais trechos voltaram, para o trace
     # (`documents/retrieval.py`).
     knowledge = get_collection(knowledge_collection) if knowledge_collection else None
-    retriever = make_retriever(knowledge_collection, knowledge) if knowledge is not None else None
+    retriever = make_retriever(knowledge_collection, knowledge, resolve_search) if knowledge is not None else None
 
     pre_hooks = []
     post_hooks = []

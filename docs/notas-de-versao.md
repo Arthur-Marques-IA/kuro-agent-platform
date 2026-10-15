@@ -41,6 +41,23 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
   rodando; um sync só agendado é puxado para agora). Novo para o operador: `GET /jobs`,
   `GET /jobs/{id}`, `POST /jobs/{id}/retry|cancel` (admin) e `kuro jobs list|show|retry|cancel`.
   Ver [fila de jobs](operacao.md#fila-de-jobs).
+- **Busca híbrida e configuração de busca versionada por collection.** `POST /collections` aceita
+  `search_mode` (`vector`, o padrão e o comportamento de antes, ou `hybrid`: vetor + full-text do
+  Postgres), `language` (dicionário do full-text, `portuguese` por padrão; fixo depois da criação),
+  `max_results` (k, padrão 10) e `vector_weight` (0–1); `PUT /collections/{nome}` muda os três
+  últimos (`language` diferente do atual dá 422). `reranker` existe só como gancho: qualquer valor
+  dá 422 por enquanto. A collection devolve `search`, `version` e `config_hash`; cada mudança vira
+  uma versão em `GET /collections/{nome}/versions[/{versão}]`. O run grava `knowledge_collection`,
+  `collection_version` e `collection_config_hash` (em `/observability/runs`, filtráveis por
+  `knowledge_collection` e `collection_version`), e cada busca em `metadata.references` traz
+  `version`, `config_hash`, `search_mode` e `score_kind` (`similarity`, `hybrid` ou `rerank`).
+  `GET /collections/{nome}/search` sem `limit` passa a usar o k da collection (antes, 5) e traz
+  `score_kind`. CLI: `kuro collections create --mode/--language/--k/--vector-weight`,
+  `collections set search_mode=...`, `collections versions`, `runs list --collection
+  --collection-version`; MCP: os mesmos campos em `collection_create`/`collection_set`,
+  `collection_versions` e os filtros em `runs_list`. Console: painel "Como a busca funciona" na
+  tela de Conhecimento e a versão da base no trace. Collections existentes ficam como estavam
+  (vetorial, k=10) e ganham a v1. Ver [como a collection busca](conceitos.md#como-a-collection-busca).
 - **Filtros dos Logs mais soltos, e KPIs que levam às execuções.** Panorama, Sessões e Execuções
   aceitam vários agentes (com busca, mostrando o `agent_type`), vários status e um intervalo de
   datas livre além dos atalhos; tudo fica na URL, e os links antigos (`agent=`, `status=`, `period=`)
@@ -297,6 +314,10 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
   `running` vira `failed`. Nada a configurar; as variáveis `JOBS_*` são opcionais (ver
   [fila de jobs](operacao.md#fila-de-jobs)). Com mais de uma réplica, todas podem ficar com
   `JOBS_ENABLED=true` e `WEB_SOURCE_SCHEDULER=true`: a fila não roda o mesmo job duas vezes.
+- A migração `0012` também roda sozinha: acrescenta a configuração de busca em
+  `document_collections`, cria `collection_versions` (com a v1 de cada collection existente) e
+  acrescenta `knowledge_collection`, `collection_version` e `collection_config_hash` em `runs`.
+  Nenhuma collection muda de comportamento; runs anteriores ficam com esses campos nulos.
 - `AGENT_SERVICE_PUBLIC_URL` do console deixou de ter `http://localhost:58000` fixo no compose:
   vazia, a aba Integração mostra a URL que o agent-service conhece. Para forçar outra, defina-a no
   `.env`.

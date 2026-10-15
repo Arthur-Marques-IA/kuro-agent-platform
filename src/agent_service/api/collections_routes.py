@@ -11,9 +11,9 @@ Para upload de arquivo/URL com chunking, o AgentOS expõe `/knowledge/content`
 
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import inspect, text
 
@@ -32,6 +32,15 @@ from agent_service.documents.collections import (
     search,
 )
 from agent_service.documents.retrieval import describe_hits
+from agent_service.documents.search import (
+    DEFAULT_LANGUAGE,
+    MAX_RESULTS_LIMIT,
+    SearchConfig,
+    SearchConfigError,
+    validate,
+    validate_language,
+)
+from agent_service.documents import versions
 from agent_service.documents.embedder import (
     DEFAULT_EMBEDDER_PROVIDER,
     EMBEDDERS,
@@ -58,11 +67,45 @@ class CollectionIn(BaseModel):
     embedder_dimensions: int | None = Field(
         default=None, gt=0, le=8192, description="Só é preciso com um `embedder_model` fora do padrão do provedor."
     )
+    search_mode: Literal["vector", "hybrid"] | None = Field(
+        default=None, description="vector (padrão): só similaridade; hybrid: vetor + full-text do Postgres."
+    )
+    language: str | None = Field(
+        default=None,
+        description=f"Dicionário do full-text do Postgres ({DEFAULT_LANGUAGE} por padrão). Fixo depois de criada.",
+    )
+    max_results: int | None = Field(default=None, ge=1, le=MAX_RESULTS_LIMIT, description="Trechos por busca (k).")
+    vector_weight: float | None = Field(
+        default=None, ge=0, le=1, description="No híbrido, o peso do vetor (o resto é do full-text). Padrão 0,5."
+    )
+    reranker: str | None = Field(default=None, description="Gancho para reranker; nenhum suportado por enquanto.")
 
 
 class CollectionUpdateIn(BaseModel):
     label: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=1000)
+    search_mode: Literal["vector", "hybrid"] | None = None
+    max_results: int | None = Field(default=None, ge=1, le=MAX_RESULTS_LIMIT)
+    vector_weight: float | None = Field(default=None, ge=0, le=1)
+    reranker: str | None = None
+    language: str | None = Field(default=None, description="Não muda depois da criação: só aceita o valor atual.")
+
+
+class SearchConfigOut(BaseModel):
+    search_mode: str
+    language: str
+    max_results: int
+    vector_weight: float
+    reranker: str | None = None
+    score_kind: str
+    """O que o `score` dos trechos mede: similarity (vetorial), hybrid (vetor + texto) ou rerank."""
+
+
+class CollectionVersionOut(BaseModel):
+    version: int
+    config_hash: str
+    config: dict[str, Any]
+    created_at: datetime
 
 
 class CollectionOut(BaseModel):
@@ -75,6 +118,10 @@ class CollectionOut(BaseModel):
     embedder_provider: str
     embedder_model: str
     embedder_dimensions: int | None = None
+    search: SearchConfigOut
+    version: int | None = None
+    """Versão atual da configuração (embedder + busca), ver `documents/versions.py`."""
+    config_hash: str | None = None
     agents_using: list[str] = []
     """Agentes com `knowledge_collection` apontando para cá — avisa antes de excluir."""
     created_at: datetime
@@ -94,7 +141,10 @@ class SearchResult(BaseModel):
     content: str
     metadata: dict[str, Any] | None = None
     rank: int | None = None
-    score: float | None = Field(default=None, description="Similaridade (0–1) ou o score do reranker")
+    score: float | None = Field(
+        default=None, description="Similaridade (0–1), score híbrido (0–1) ou o do reranker — ver `score_kind`"
+    )
+    score_kind: str | None = None
     document: str | None = None
     content_id: str | None = None
     chunk_id: str | None = None
@@ -112,8 +162,12 @@ def _out(row: dict[str, Any]) -> dict[str, Any]:
     # `embedder_provider` sai preenchido mesmo para as collections anteriores à
     # coluna: quem lê precisa saber qual embedder responde, não se a linha é velha.
     spec = resolve_spec(row.get("embedder_provider"))
+    version, digest = versions.ensure_version(row["name"], row)
     return {
         **row,
+        "search": SearchConfig.from_row(row).public(),
+        "version": version,
+        "config_hash": digest,
         "embedder_provider": spec.provider,
         "embedder_model": row.get("embedder_model") or spec.default_model_id,
         "agents_using": _agents_using(row["name"]),
@@ -207,6 +261,18 @@ def create_collection(body: CollectionIn) -> dict[str, Any]:
         check_configured(body.embedder_provider, body.embedder_model)
     except (UnknownEmbedderProviderError, EmbedderNotConfiguredError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    search = {
+        "search_mode": body.search_mode,
+        "language": body.language or DEFAULT_LANGUAGE,
+        "max_results": body.max_results,
+        "vector_weight": body.vector_weight,
+        "reranker": body.reranker,
+    }
+    try:
+        validate(search)
+        validate_language(search["language"], get_db().db_engine)
+    except SearchConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     _reject_orphan_vectors(body.name)
     created = store.create_collection(
         name=body.name,
@@ -215,6 +281,7 @@ def create_collection(body: CollectionIn) -> dict[str, Any]:
         embedder_provider=(body.embedder_provider or DEFAULT_EMBEDDER_PROVIDER).lower(),
         embedder_model=body.embedder_model,
         embedder_dimensions=body.embedder_dimensions,
+        search={k: v for k, v in search.items() if v is not None},
     )
     return _out(created)
 
@@ -226,8 +293,41 @@ def get_collection_detail(collection_name: str) -> dict[str, Any]:
 
 @router.put("/{collection_name}", response_model=CollectionOut)
 def update_collection(collection_name: str, body: CollectionUpdateIn) -> dict[str, Any]:
+    """Os campos de busca mandados (inclusive `null`, que volta ao padrão) gravam
+    como vieram; os ausentes ficam. Mudar a busca gera uma versão nova."""
+    row = _row_or_404(collection_name)
+    sent = body.model_dump(exclude_unset=True)
+    current_language = SearchConfig.from_row(row).content_language
+    if "language" in sent and sent["language"] != current_language:
+        raise HTTPException(
+            status_code=422,
+            detail=f"language é fixo depois da criação (esta usa {current_language!r}): o dicionário decide "
+            "quais trechos casam. Para trocar, crie outra collection e reindexe.",
+        )
+    search = {k: v for k, v in sent.items() if k in store.SEARCH_FIELDS}
+    try:
+        validate(search)
+    except SearchConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _out(store.update_collection(collection_name, label=body.label, description=body.description, search=search))
+
+
+@router.get("/{collection_name}/versions", response_model=list[CollectionVersionOut])
+def list_collection_versions(collection_name: str) -> list[dict[str, Any]]:
+    """Histórico da configuração (embedder + busca), mais recente primeiro. Cada run
+    grava a versão com que buscou (`collection_version` em `/observability/runs`)."""
+    row = _row_or_404(collection_name)
+    versions.ensure_version(collection_name, row)
+    return versions.list_versions(collection_name)
+
+
+@router.get("/{collection_name}/versions/{version}", response_model=CollectionVersionOut)
+def get_collection_version(collection_name: str, version: int) -> dict[str, Any]:
     _row_or_404(collection_name)
-    return _out(store.update_collection(collection_name, label=body.label, description=body.description))
+    found = versions.get_version(collection_name, version)
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"{collection_name!r} não tem a versão {version}")
+    return found
 
 
 @router.delete("/{collection_name}", status_code=204)
@@ -359,11 +459,19 @@ async def delete_collection_document(collection_name: str, content_id: str) -> N
 
 
 @router.get("/{collection_name}/search", response_model=list[SearchResult])
-async def search_collection(collection_name: str, query: str, limit: int = 5) -> list[SearchResult]:
-    _row_or_404(collection_name)
+async def search_collection(
+    collection_name: str, query: str, limit: int | None = Query(default=None, ge=1, le=MAX_RESULTS_LIMIT)
+) -> list[SearchResult]:
+    """Sem `limit`, o k da collection: o mesmo que o agente enxerga."""
+    row = _row_or_404(collection_name)
     documents = await search(collection_name, query=query, limit=limit)
     hits = await describe_hits(get_collection(collection_name), documents)
+    kind = SearchConfig.from_row(row).score_kind
     return [
-        SearchResult(**{k: v for k, v in hit.items() if k in SearchResult.model_fields}, metadata=doc.meta_data)
+        SearchResult(
+            **{k: v for k, v in hit.items() if k in SearchResult.model_fields},
+            metadata=doc.meta_data,
+            score_kind="rerank" if doc.reranking_score is not None else kind,
+        )
         for hit, doc in zip(hits, documents)
     ]

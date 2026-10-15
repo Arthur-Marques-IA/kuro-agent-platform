@@ -26,6 +26,7 @@ from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.utils.string import generate_id
 from agno.vectordb.pgvector import PgVector
+from agno.vectordb.search import SearchType
 from sqlalchemy import select
 
 from agent_service.config import get_settings
@@ -35,6 +36,7 @@ from agent_service.documents.embedder import (
     UnknownEmbedderProviderError,
     build_embedder,
 )
+from agent_service.documents.search import SearchConfig, build_reranker
 from agent_service.documents.store import SEED_COLLECTION, get_collection_row, list_collection_names
 
 
@@ -53,30 +55,55 @@ def get_collection(name: str) -> Knowledge:
     O embedder vem do cadastro da collection (`documents/store.py`), não de uma
     constante: coleção sem provedor gravado continua no Gemini, que é o que
     todas usavam antes. O cache é por (nome, embedder) porque uma rotação de
-    credencial só é relevante no restart — a chave já está dentro do cliente."""
-    row = get_collection_row(name) or {}
+    credencial só é relevante no restart — a chave já está dentro do cliente.
+
+    A configuração de busca (`documents/search.py`) também entra na chave: mudar
+    o modo ou o k monta outra `Knowledge` na próxima busca, sem restart."""
+    return _from_row(name, get_collection_row(name) or {})
+
+
+def _from_row(name: str, row: dict[str, Any]) -> Knowledge:
     return _build_collection(
         name,
         row.get("embedder_provider"),
         row.get("embedder_model"),
         row.get("embedder_dimensions"),
+        SearchConfig.from_row(row),
     )
 
 
 @lru_cache
 def _build_collection(
-    name: str, embedder_provider: str | None, embedder_model: str | None, embedder_dimensions: int | None
+    name: str,
+    embedder_provider: str | None,
+    embedder_model: str | None,
+    embedder_dimensions: int | None,
+    search: SearchConfig = SearchConfig(),
 ) -> Knowledge:
     vector_db = PgVector(
         table_name=f"knowledge_{name}",
         db_url=get_settings().database_url,
         embedder=build_embedder(embedder_provider, embedder_model, embedder_dimensions),
+        search_type=SearchType.hybrid if search.search_mode == "hybrid" else SearchType.vector,
+        vector_score_weight=search.vector_weight,
+        content_language=search.content_language,
+        reranker=build_reranker(search.reranker),
     )
     return Knowledge(
         name=name,
         vector_db=vector_db,
         contents_db=get_db(),
+        max_results=search.max_results,
     )
+
+
+def resolve_search(name: str) -> tuple[Knowledge, SearchConfig, tuple[int, str]]:
+    """A collection como está agora, a configuração de busca e a versão dela —
+    o que o retriever do agente usa a cada busca (`documents/retrieval.py`)."""
+    from agent_service.documents.versions import ensure_version
+
+    row = get_collection_row(name) or {"name": name}
+    return _from_row(name, row), SearchConfig.from_row(row), ensure_version(name, row)
 
 
 def default_collection_name() -> str:
@@ -243,6 +270,7 @@ async def _belongs(knowledge: Knowledge, content_id: str) -> bool:
         page += 1
 
 
-async def search(collection_name: str, *, query: str, limit: int = 5) -> list[Any]:
+async def search(collection_name: str, *, query: str, limit: int | None = None) -> list[Any]:
+    """Sem `limit`, o k da collection — o mesmo que o agente recebe."""
     knowledge = get_collection(collection_name)
-    return await knowledge.asearch(query=query, max_results=limit)
+    return await knowledge.asearch(query=query, max_results=limit or knowledge.max_results)

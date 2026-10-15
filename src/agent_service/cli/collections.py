@@ -22,7 +22,7 @@ def _render_list(rows: list[dict[str, Any]]) -> None:
         console.print("Nenhuma collection. Crie uma com `kuro collections create <nome> --label \"Manuais\"`.")
         return
     table = Table(show_edge=False, header_style="bold")
-    for column in ("name", "nome", "embedder", "descrição", "agentes"):
+    for column in ("name", "nome", "embedder", "busca", "descrição", "agentes"):
         table.add_column(column)
     for c in rows:
         seed = " [dim](seed)[/]" if c["is_seed"] else ""
@@ -31,10 +31,20 @@ def _render_list(rows: list[dict[str, Any]]) -> None:
             f"[cyan]{c['name']}[/]{seed}",
             c["label"],
             embedder,
+            _search_label(c),
             c["description"] or "—",
             ", ".join(c["agents_using"]) or "—",
         )
     console.print(table)
+
+
+def _search_label(c: dict[str, Any]) -> str:
+    s = c.get("search") or {}
+    if not s:
+        return "—"
+    modo = f"hybrid (vetor {s['vector_weight']:g})" if s["search_mode"] == "hybrid" else "vector"
+    versao = f" [dim]v{c['version']}[/]" if c.get("version") else ""
+    return f"{modo}, k={s['max_results']}, {s['language']}{versao}"
 
 
 @app.callback(invoke_without_command=True)
@@ -63,11 +73,20 @@ def create_collection(
     embedder_dimensions: int | None = typer.Option(
         None, "--embedder-dimensions", min=1, help="Só com um --embedder-model fora do padrão do provedor."
     ),
+    mode: str | None = typer.Option(None, "--mode", help="vector (padrão) ou hybrid (vetor + full-text do Postgres)."),
+    language: str | None = typer.Option(
+        None, "--language", help="Dicionário do full-text do Postgres (padrão portuguese). Não muda depois."
+    ),
+    max_results: int | None = typer.Option(None, "--k", "--max-results", min=1, max=50, help="Trechos por busca (padrão 10)."),
+    vector_weight: float | None = typer.Option(
+        None, "--vector-weight", min=0.0, max=1.0, help="No hybrid, o peso do vetor; o resto é do texto (padrão 0.5)."
+    ),
 ) -> None:
     """Cria uma collection (a tabela de vetores nasce na primeira ingestão).
 
-    O embedder fica fixo: a tabela `knowledge_<nome>` guarda vetores de um
-    embedder só. Para trocar, crie outra collection e reindexe."""
+    O embedder e o idioma ficam fixos: a tabela `knowledge_<nome>` guarda vetores
+    de um embedder só, e o idioma decide quais trechos o full-text casa. Para
+    trocar, crie outra collection e reindexe. Modo, k e peso mudam com `set`."""
     st = state(ctx)
     created = call(
         st,
@@ -79,13 +98,24 @@ def create_collection(
             "embedder_provider": embedder,
             "embedder_model": embedder_model,
             "embedder_dimensions": embedder_dimensions,
+            **{
+                k: v
+                for k, v in (
+                    ("search_mode", mode),
+                    ("language", language),
+                    ("max_results", max_results),
+                    ("vector_weight", vector_weight),
+                )
+                if v is not None
+            },
         },
     )
     emit(
         st,
         created,
         lambda c: console.print(
-            f"[green]✓[/] collection {c['name']} criada ({c['embedder_provider']}/{c['embedder_model']})"
+            f"[green]✓[/] collection {c['name']} criada ({c['embedder_provider']}/{c['embedder_model']}; "
+            f"{_search_label(c)})"
         ),
     )
 
@@ -101,19 +131,55 @@ def get_collection(ctx: typer.Context, name: str) -> None:
 def set_fields(
     ctx: typer.Context,
     name: str,
-    pairs: list[str] = typer.Argument(..., help='campo=valor. Editáveis: label, description.'),
+    pairs: list[str] = typer.Argument(
+        ..., help="campo=valor. Editáveis: label, description, search_mode, max_results, vector_weight, reranker."
+    ),
 ) -> None:
-    """Altera só os campos informados. O embedder não muda (ver `create`)."""
+    """Altera só os campos informados. Mudar a busca gera uma versão nova da collection
+    (`kuro collections versions`); `campo=null` volta ao padrão. O embedder e o
+    idioma não mudam (ver `create`).
+
+    Ex.: `kuro collections set manuais search_mode=hybrid vector_weight=0.7 max_results=8`."""
     st = state(ctx)
     changes = parse_pairs(st, pairs, "campo")
-    desconhecidos = sorted(set(changes) - {"label", "description"})
+    editaveis = {"label", "description", "search_mode", "max_results", "vector_weight", "reranker"}
+    desconhecidos = sorted(set(changes) - editaveis)
     if desconhecidos:
-        fail(st, f"campos não editáveis: {', '.join(desconhecidos)} (use: label, description)", EXIT_USAGE)
+        fail(st, f"campos não editáveis: {', '.join(desconhecidos)} (use: {', '.join(sorted(editaveis))})", EXIT_USAGE)
     emit(
         st,
         call(st, st.client.update_collection, name, changes),
-        lambda c: console.print(f"[green]✓[/] collection {c['name']} atualizada"),
+        lambda c: console.print(f"[green]✓[/] collection {c['name']} atualizada — {_search_label(c)}"),
     )
+
+
+@app.command("versions")
+def list_versions(
+    ctx: typer.Context,
+    name: str,
+    version: int | None = typer.Argument(None, help="Uma versão: mostra a configuração completa dela."),
+) -> None:
+    """Histórico da configuração (embedder + busca). Cada run grava a versão com que
+    buscou: `kuro runs list --collection <nome> --collection-version N`."""
+    st = state(ctx)
+    if version is not None:
+        emit(st, call(st, st.client.collection_version, name, version), lambda v: console.print_json(data=v["config"]))
+        return
+
+    def render(rows: list[dict[str, Any]]) -> None:
+        table = Table(show_edge=False, header_style="bold")
+        for column in ("versão", "hash", "busca", "criada"):
+            table.add_column(column)
+        for v in rows:
+            cfg = v["config"]
+            busca = cfg.get("search_mode", "vector")
+            if cfg.get("vector_weight") is not None:
+                busca += f" (vetor {cfg['vector_weight']:g})"
+            busca += f", k={cfg.get('max_results')}, {cfg.get('language') or 'english'}"
+            table.add_row(f"v{v['version']}", v["config_hash"], busca, str(v["created_at"])[:19])
+        console.print(table)
+
+    emit(st, call(st, st.client.collection_versions, name), render)
 
 
 @app.command("embedders")
@@ -245,9 +311,11 @@ def search_collection(
     ctx: typer.Context,
     name: str,
     query: str,
-    limit: int = typer.Option(5, "--limit", "-n", min=1, max=50),
+    limit: int | None = typer.Option(None, "--limit", "-n", min=1, max=50, help="Padrão: o k da collection."),
 ) -> None:
-    """Busca semântica na collection — o mesmo que o agente enxerga."""
+    """Busca na collection — o mesmo que o agente enxerga (modo, k e idioma dela).
+
+    O score depende do modo: similaridade (vector), vetor + texto (hybrid) ou o do reranker."""
     st = state(ctx)
     results = call(st, st.client.search_collection, name, query, limit)
 
@@ -257,7 +325,8 @@ def search_collection(
             return
         for i, doc in enumerate(items, 1):
             origem = doc.get("source_url") or doc.get("document") or ""
-            score = f" [dim]{doc['score']:.2f}[/]" if doc.get("score") is not None else ""
+            kind = f" {doc['score_kind']}" if doc.get("score_kind") else ""
+            score = f" [dim]{doc['score']:.2f}{kind}[/]" if doc.get("score") is not None else ""
             console.print(f"[bold cyan]{i}.[/]{score} [dim]{origem}[/]", highlight=False)
             console.print(f"   {doc['content'][:500]}", highlight=False)
 

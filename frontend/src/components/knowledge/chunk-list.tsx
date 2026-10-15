@@ -3,12 +3,21 @@
 import { useState } from "react";
 import { ExternalLink, FileText } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { RetrievedChunk } from "@/lib/types";
+import type { RetrievedChunk, ScoreKind } from "@/lib/types";
 import { CopyButton } from "@/components/ui/copy-button";
 
 /** Trechos recuperados da base, em ordem de relevância — o mesmo desenho na busca
  *  da collection e no trace de um run (o que o agente de fato leu). */
-export function ChunkList({ chunks, label = "Trechos recuperados" }: { chunks: RetrievedChunk[]; label?: string }) {
+export function ChunkList({
+  chunks,
+  label = "Trechos recuperados",
+  scoreKind,
+}: {
+  chunks: RetrievedChunk[];
+  label?: string;
+  /** O que o score mede, quando a busca inteira diz (no trace); senão, o de cada trecho. */
+  scoreKind?: ScoreKind | null;
+}) {
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
 
   function toggle(index: number) {
@@ -41,7 +50,7 @@ export function ChunkList({ chunks, label = "Trechos recuperados" }: { chunks: R
               )}
               {position.length > 0 && <span className="shrink-0">{position.join(" · ")}</span>}
               <span className="ml-auto flex shrink-0 items-center gap-2">
-                {chunk.score != null && <ScoreMeter score={chunk.score} />}
+                {chunk.score != null && <ScoreMeter score={chunk.score} kind={chunk.score_kind ?? scoreKind} />}
                 <CopyButton value={chunk.content} label="Copiar trecho" className="size-6" />
               </span>
             </div>
@@ -80,10 +89,24 @@ export function ChunkList({ chunks, label = "Trechos recuperados" }: { chunks: R
   );
 }
 
-function ScoreMeter({ score }: { score: number }) {
+export const SCORE_KIND_LABEL: Record<ScoreKind, { short: string; long: string }> = {
+  similarity: { short: "similaridade", long: "Similaridade do vetor (1 − distância cosseno)" },
+  hybrid: {
+    short: "híbrido",
+    long: "Score híbrido: peso × similaridade do vetor + (1 − peso) × ranking do full-text, normalizados em 0–1",
+  },
+  rerank: { short: "reranker", long: "Score do reranker" },
+};
+
+function ScoreMeter({ score, kind }: { score: number; kind?: ScoreKind | null }) {
   const pct = Math.round(Math.min(Math.max(score, 0), 1) * 100);
+  const label = kind ? SCORE_KIND_LABEL[kind] : null;
   return (
-    <span className="flex items-center gap-1.5" title={`Relevância ${score.toFixed(3)}`}>
+    <span
+      className="flex items-center gap-1.5"
+      title={`${label?.long ?? "Relevância"}: ${score.toFixed(3)}`}
+    >
+      {label && <span>{label.short}</span>}
       <span className="relative block h-1.5 w-10 rounded-full bg-muted" aria-hidden>
         <span className="absolute inset-y-0 left-0 rounded-full bg-primary" style={{ width: `${pct}%` }} />
       </span>

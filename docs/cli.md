@@ -182,7 +182,11 @@ uv run kuro collections embedders               # quem gera os vetores, e quem j
 uv run kuro collections add manuais -f manual.pdf   # indexa um arquivo
 uv run kuro collections docs manuais            # o que está indexado, com o status
 uv run kuro collections rm-doc manuais <id> --yes   # tira um documento da base
-uv run kuro collections search manuais "prazo de garantia"
+uv run kuro collections search manuais "prazo de garantia"   # com o modo e o k da collection
+uv run kuro collections create manuais --label "Manuais" --mode hybrid --k 6   # busca híbrida
+uv run kuro collections set manuais search_mode=hybrid vector_weight=0.7    # vira uma versão nova
+uv run kuro collections versions manuais        # histórico da configuração de busca
+uv run kuro runs list --collection manuais --collection-version 2   # runs que buscaram com a v2
 uv run kuro collections add-site manuais https://docs.exemplo.com/guia --refresh weekly --wait
 uv run kuro collections sources manuais         # sites e o status da sincronização
 uv run kuro credentials test <credential_id>    # valida a chave sem gastar tokens

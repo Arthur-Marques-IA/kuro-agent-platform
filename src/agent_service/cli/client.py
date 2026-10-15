@@ -297,6 +297,12 @@ class Client:
     def update_collection(self, name: str, changes: dict[str, Any]) -> dict[str, Any]:
         return self._request("PUT", f"/collections/{name}", json=changes)
 
+    def collection_versions(self, name: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/collections/{name}/versions")
+
+    def collection_version(self, name: str, version: int) -> dict[str, Any]:
+        return self._request("GET", f"/collections/{name}/versions/{version}")
+
     def delete_collection(self, name: str) -> None:
         self._request("DELETE", f"/collections/{name}")
 
@@ -323,8 +329,9 @@ class Client:
     def delete_collection_document(self, name: str, content_id: str) -> None:
         self._request("DELETE", f"/collections/{name}/documents/{content_id}")
 
-    def search_collection(self, name: str, query: str, limit: int) -> list[dict[str, Any]]:
-        return self._request("GET", f"/collections/{name}/search", params={"query": query, "limit": limit})
+    def search_collection(self, name: str, query: str, limit: int | None = None) -> list[dict[str, Any]]:
+        params = {"query": query, **({"limit": limit} if limit else {})}
+        return self._request("GET", f"/collections/{name}/search", params=params)
 
     # -- fontes de site (documents/web_sync.py) ------------------------------
 

@@ -160,6 +160,15 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
                 Config v{run.agent_version}
               </Badge>
             )}
+            {run.knowledge_collection && (
+              <Badge
+                variant="outline"
+                title={`Configuração de busca da collection (modo, idioma, k) · config_hash ${run.collection_config_hash ?? "—"}`}
+              >
+                Base {run.knowledge_collection}
+                {run.collection_version != null && ` v${run.collection_version}`}
+              </Badge>
+            )}
             {run.prompt_version != null && <Badge variant="outline">Prompt v{run.prompt_version}</Badge>}
             {run.model && <Badge variant="outline">{run.model}</Badge>}
             {run.endpoint && <Badge variant="outline">{run.endpoint}</Badge>}
@@ -463,6 +472,12 @@ function ReferencesSection({ references, output }: { references: RetrievalRefere
           <Link href={`/knowledge?collection=${encodeURIComponent(references.collection)}`} className="font-mono hover:underline">
             {references.collection}
           </Link>
+          {references.version != null && (
+            <span title={`config_hash ${references.config_hash ?? "—"}`}> v{references.version}</span>
+          )}
+          {references.search_mode && (
+            <span> · busca {references.search_mode === "hybrid" ? "híbrida (vetor + texto)" : "vetorial"}</span>
+          )}
         </h3>
         <button type="button" onClick={() => setRaw((v) => !v)} className="text-[11px] text-muted-foreground hover:text-foreground">
           {raw ? "Ver trechos" : "Ver texto enviado ao modelo"}
@@ -475,7 +490,7 @@ function ReferencesSection({ references, output }: { references: RetrievalRefere
           A busca não encontrou nada — o agente respondeu sem trechos da base.
         </p>
       ) : (
-        <ChunkList chunks={results} label="Trechos consultados" />
+        <ChunkList chunks={results} label="Trechos consultados" scoreKind={references.score_kind} />
       )}
     </section>
   );

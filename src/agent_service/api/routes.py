@@ -504,6 +504,7 @@ async def _analyze(request: AnalyzeRequest, idempotency_key: str | None) -> Anal
         metadata=_run_metadata(request.metadata, request.dry_run)
         | ({"idempotency_key": idempotency_key.strip()} if idempotency_key else {}),
         dry_run=request.dry_run,
+        definition=definition,
         user_id=request.user_id or "analysis",
         session_id=request.session_id or f"analyze-{uuid.uuid4().hex}",
         message=request.document,

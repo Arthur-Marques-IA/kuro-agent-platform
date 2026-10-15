@@ -332,6 +332,56 @@ silenciosamente errada. Para trocar, crie outra collection e reindexe. Um
 `--embedder-dimensions`, pelo mesmo motivo. Collections criadas antes disto
 continuam no Gemini, sem reindexar.
 
+### Como a collection busca
+
+Cada collection tem a sua configuração de busca:
+
+| Campo | O que faz | Muda depois? |
+|---|---|---|
+| `search_mode` | `vector` (padrão): só a similaridade do vetor. `hybrid`: soma o full-text do Postgres, o que ajuda com códigos, siglas e nomes exatos (`E-42`, `XR-5000`) | sim |
+| `max_results` | quantos trechos cada busca devolve (o k), de 1 a 50; padrão 10 | sim |
+| `vector_weight` | no híbrido, o peso do vetor de 0 a 1; o resto é do texto; padrão 0,5 | sim |
+| `language` | o dicionário do full-text (`portuguese` em collections novas, `english`, `simple`...) | não |
+| `reranker` | gancho para reordenar os trechos; nenhum suportado ainda | sim |
+
+```bash
+uv run kuro collections create manuais --label "Manuais" --mode hybrid --k 6
+uv run kuro collections set manuais search_mode=hybrid vector_weight=0.7 max_results=8
+uv run kuro collections versions manuais          # o histórico da configuração
+```
+
+No híbrido, o `score` de cada trecho é `peso × similaridade + (1 − peso) × texto`, com a
+similaridade em `1 − distância cosseno` e o texto em `r / (r + 0,1)` sobre o `ts_rank_cd` do
+Postgres, os dois de 0 a 1. É por isso que cada busca no trace, e cada resultado de
+`/collections/{nome}/search`, traz `score_kind`: `similarity` (vetorial), `hybrid` ou `rerank`
+— o mesmo número não quer dizer a mesma coisa nos três.
+
+O idioma é fixo como o embedder: o dicionário decide quais palavras casam ("garantias" com
+"garantia"), e trocar no meio mudaria a busca sem ninguém mexer nos documentos. Para outro idioma,
+crie outra collection. Collections anteriores a esta configuração ficam em `english`, o padrão do
+Agno, o que só faz diferença se alguém ligar o híbrido nelas. Hoje o full-text é calculado na hora
+para todas as linhas (o Agno não filtra por `@@` nem usa índice), então numa collection muito
+grande o híbrido custa uma varredura da tabela.
+
+Não há reranker: os do Agno pedem dependência pesada (sentence-transformers) ou um serviço externo
+com chave (Cohere, Infinity, Bedrock). O ponto de entrada é `RERANKERS` em
+`documents/search.py`; um nome registrado ali passa a ser aceito no cadastro.
+
+### Versões da busca
+
+Toda mudança na configuração de busca (ou no embedder) vira uma versão da collection, como as
+[versões da configuração do agente](#versões-e-melhoria-contínua): voltar a uma configuração anterior
+reaproveita o número dela. Cada run grava `knowledge_collection`, `collection_version` e
+`collection_config_hash` — a versão da primeira busca que fez ou, sem busca, a atual. Um agente
+na mesma `agent_version` que passou a responder diferente porque a base mudou aparece assim:
+
+```bash
+uv run kuro runs list --collection manuais --collection-version 3
+uv run kuro runs show <run_id>                    # "base manuais v3 (...)" no cabeçalho
+```
+
+A mudança vale na próxima busca, sem reiniciar e sem mudar a versão do agente.
+
 ## Memória
 
 | Camada | Alcance | Como liga |

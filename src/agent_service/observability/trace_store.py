@@ -60,6 +60,11 @@ class RunSummary(BaseModel):
     agent_version: int | None = None
     """Versão da configuração inteira (`agents/versions.py`) — `None` em runs antigos."""
     config_hash: str | None = None
+    knowledge_collection: str | None = None
+    """Collection que o agente consultava e a versão da configuração de busca dela
+    (`documents/versions.py`) — `None` sem base ou em runs antigos."""
+    collection_version: int | None = None
+    collection_config_hash: str | None = None
     endpoint: str | None = None
     user_id: str | None = None
     session_id: str | None = None
@@ -185,6 +190,9 @@ class RunQuery:
     """`None` lista todos os agentes (para a página `/observability` do console)."""
     prompt_version: int | None = None
     agent_version: int | None = None
+    knowledge_collection: str | None = None
+    collection_version: int | None = None
+    """Só runs com esta versão da configuração de busca (combine com `knowledge_collection`)."""
     status: RunStatus | None = None
     user_id: str | None = None
     session_id: str | None = None

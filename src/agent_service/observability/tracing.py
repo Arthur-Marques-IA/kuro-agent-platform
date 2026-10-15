@@ -424,8 +424,33 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
         if record.model is None:
             record.model = next((span.model for span in record.spans if span.model), None)
         _add_extra_spans(record, run.extra_spans)
+        _set_collection_version(record, run)
         record.ended_at = datetime.now(timezone.utc)
         run_store.record_run(record)
+
+
+def _set_collection_version(record: Any, run: RunContext) -> None:
+    """A versão da configuração de busca com que o run consultou a base.
+
+    A da primeira busca, que é a que de fato respondeu; sem busca, a atual da
+    collection (o agente tinha a base, só não precisou dela)."""
+    collection = (run.definition or {}).get("knowledge_collection")
+    if not collection:
+        return
+    record.knowledge_collection = collection
+    searched = next((s for s in run.knowledge_searches if s.get("version") is not None), None)
+    if searched is not None:
+        record.collection_version, record.collection_config_hash = searched["version"], searched.get("config_hash")
+        return
+    try:
+        from agent_service.documents.store import get_collection_row
+        from agent_service.documents.versions import ensure_version
+
+        row = get_collection_row(collection)
+        if row is not None:
+            record.collection_version, record.collection_config_hash = ensure_version(collection, row)
+    except Exception:
+        logger.warning("Não consegui ler a versão da collection %r para o run", collection, exc_info=True)
 
 
 def _add_extra_spans(record: Any, spans: tuple[Any, ...]) -> None:
