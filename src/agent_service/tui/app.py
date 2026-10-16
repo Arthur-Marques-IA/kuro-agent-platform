@@ -942,6 +942,13 @@ class KuroDash(App):
             self.focus_panel()
 
     def action_tab(self, pane: str) -> None:
+        # Solta o foco da aba que sai antes de trocar. Um widget focado numa aba escondida
+        # ainda pode emitir um `DescendantFocus` atrasado, e o TabbedContent responde a ele
+        # ativando a aba do widget: a troca era desfeita logo depois de acontecer.
+        if self.focused is not None and self.screen is self.main:
+            target = self.main.query_one(f"#{pane}")
+            if target not in self.focused.ancestors_with_self:
+                self.set_focus(None)
         self.main.query_one(TabbedContent).active = pane
 
     def action_switch_tab(self, step: int) -> None:
