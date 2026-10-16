@@ -9,6 +9,7 @@ Collections de documentos ficam em `api/collections_routes.py`.
 """
 
 import asyncio
+import dataclasses
 import json
 import logging
 import uuid
@@ -369,19 +370,25 @@ async def _chat(request: ChatRequest, idempotency_key: str | None) -> ChatRespon
     if is_procedural(run):
         return await _chat_procedural(request, agent, run)
 
-    chunks: list[str] = []
-    final_content: str | None = None
-    async with _run_slot(), aclosing(traced_run_events(agent, run)) as events:
-        try:
-            async for event in events:
-                if event.event == RunEvent.run_content.value and isinstance(event.content, str):
-                    chunks.append(event.content)
-                elif event.event == RunEvent.run_completed.value and isinstance(event.content, str):
-                    final_content = event.content
-                elif event.event == RunEvent.run_error.value:
-                    raise HTTPException(status_code=502, detail=event.content or RUN_FAILED)
-        except RunTimeoutError as exc:
-            raise HTTPException(status_code=504, detail=str(exc)) from exc
+    async with _run_slot():
+        for attempt in range(get_settings().empty_response_retries + 1):
+            if attempt:
+                run = _retry_of(run)
+            chunks: list[str] = []
+            final_content: str | None = None
+            async with aclosing(traced_run_events(agent, run)) as events:
+                try:
+                    async for event in events:
+                        if event.event == RunEvent.run_content.value and isinstance(event.content, str):
+                            chunks.append(event.content)
+                        elif event.event == RunEvent.run_completed.value and isinstance(event.content, str):
+                            final_content = event.content
+                        elif event.event == RunEvent.run_error.value:
+                            raise HTTPException(status_code=502, detail=event.content or RUN_FAILED)
+                except RunTimeoutError as exc:
+                    raise HTTPException(status_code=504, detail=str(exc)) from exc
+            if not run.empty_response:
+                break
 
     return ChatResponse(
         agent_type=request.agent_type,
@@ -392,6 +399,19 @@ async def _chat(request: ChatRequest, idempotency_key: str | None) -> ChatRespon
         agent_version=run.agent_version,
         config_hash=run.config_hash,
         sources=sources_from(run.knowledge_searches),
+    )
+
+
+def _retry_of(run: RunContext) -> RunContext:
+    """A nova tentativa de um run que voltou vazio: outro `run_id` (o vazio continua
+    no trace store, fora do histórico), com `metadata.retry_of` apontando para ele."""
+    logger.warning("Run %s do agente %r voltou vazio; tentando de novo", run.run_id, run.agent_type)
+    return dataclasses.replace(
+        run,
+        run_id=str(uuid.uuid4()),
+        metadata={**run.metadata, "retry_of": run.run_id},
+        knowledge_searches=[],
+        empty_response=False,
     )
 
 
@@ -562,7 +582,9 @@ async def chat_stream(request: ChatRequest, idempotency_key: IdempotencyKey = No
     cada trecho), `usage` (métricas do run), `error` ({message}), `state` (só em
     agente procedural: o mesmo `state` do `/chat`, antes do `done`), `sources`
     ({sources}: o mesmo `sources` do `/chat`, antes do `done`, só quando o run
-    terminou sem erro) e `done`.
+    terminou sem erro) e `done`. Um run que termina sem texto e sem tool é
+    repetido (`EMPTY_RESPONSE_RETRIES`): a nova tentativa abre com outro evento
+    `run`, com o `run_id` novo e `retry_of`.
 
     Não aceita `Idempotency-Key` (422): a resposta sai aos pedaços e não há o que guardar
     para devolver a quem repete — ignorar o header daria uma proteção que não existe.
@@ -604,17 +626,30 @@ async def chat_stream(request: ChatRequest, idempotency_key: IdempotencyKey = No
                 yield {"event": "done", "data": "{}"}
                 return
             failed = False
-            async with _run_slot(), aclosing(traced_run_events(agent, run)) as events:
-                async for event in events:
-                    if event.event == RunEvent.run_content.value and event.content:
-                        yield {"event": "message", "data": json.dumps({"content": event.content})}
-                    elif event.event == RunEvent.run_completed.value and event.metrics:
-                        yield {"event": "usage", "data": json.dumps(event.metrics.to_dict())}
-                    elif event.event == RunEvent.run_error.value:
-                        failed = True
-                        yield {"event": "error", "data": json.dumps({"message": event.content or RUN_FAILED})}
+            current = run
+            async with _run_slot():
+                for attempt in range(get_settings().empty_response_retries + 1):
+                    if attempt:
+                        current = _retry_of(current)
+                        retry = {
+                            "run_id": current.run_id,
+                            "trace_id": current.trace_id,
+                            "retry_of": current.metadata["retry_of"],
+                        }
+                        yield {"event": "run", "data": json.dumps(run_event | retry)}
+                    async with aclosing(traced_run_events(agent, current)) as events:
+                        async for event in events:
+                            if event.event == RunEvent.run_content.value and event.content:
+                                yield {"event": "message", "data": json.dumps({"content": event.content})}
+                            elif event.event == RunEvent.run_completed.value and event.metrics:
+                                yield {"event": "usage", "data": json.dumps(event.metrics.to_dict())}
+                            elif event.event == RunEvent.run_error.value:
+                                failed = True
+                                yield {"event": "error", "data": json.dumps({"message": event.content or RUN_FAILED})}
+                    if failed or not current.empty_response:
+                        break
             if not failed:
-                sources = sources_from(run.knowledge_searches)
+                sources = sources_from(current.knowledge_searches)
                 yield {"event": "sources", "data": json.dumps({"sources": sources}, default=str)}
         except HTTPException as exc:  # sem vaga: o status já saiu (200), então vira evento
             yield {"event": "error", "data": json.dumps({"message": exc.detail, "status": exc.status_code})}

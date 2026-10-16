@@ -285,6 +285,15 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
 
 ### Corrigido
 
+- Um run de `/chat` ou `/chat/stream` que terminava sem texto e sem chamar tool (ex.: o Gemini 2.5
+  Flash devolvendo 0 tokens de saída no 1º turno de uma sessão nova) entrava no histórico da sessão:
+  quem tentava de novo ficava com a fala do usuário duplicada e uma resposta vazia, reenviadas nas
+  próximas `num_history_runs` rodadas. Agora esse run sai do histórico (continua em
+  `observability/runs`, com `metadata.empty_response=true`) e o serviço tenta de novo sozinho, até
+  `EMPTY_RESPONSE_RETRIES` vezes (padrão `1`; `0` desliga). A resposta traz o `run_id` da tentativa
+  que valeu, com `metadata.retry_of` apontando para o vazio; no `/chat/stream` a nova tentativa abre
+  com outro evento `run` (com `retry_of`). Esgotadas as tentativas, `content` continua vindo `""` —
+  quem integra e já repete por conta própria pode seguir fazendo isso sem reenviar nada duplicado.
 - Com a autenticação ligada, o preflight de CORS (`OPTIONS`, que o navegador manda sem a chave)
   recebia 401, e nenhuma página em outro domínio conseguia chamar a API, nem as origens liberadas.
   O preflight passa a ser respondido pelo CORS; a chamada de verdade continua exigindo a chave.

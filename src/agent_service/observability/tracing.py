@@ -113,6 +113,11 @@ class RunContext:
     o Langfuse o run roda noutra task, e a rota precisa ler isso no fim para
     montar as `sources` da resposta."""
 
+    empty_response: bool = field(default=False, compare=False)
+    """O run terminou sem erro, mas sem texto e sem chamar tool. Preenchido no fim
+    do run; ele fica no trace store e sai do histórico da sessão (ver
+    `_exclude_from_history`), para quem tenta de novo não reenviar a fala vazia."""
+
     @property
     def attachment_counts(self) -> dict[str, int]:
         """Quantos anexos de cada tipo — vai pro Langfuse no lugar do conteúdo."""
@@ -404,6 +409,10 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
             if record.model is None and isinstance(getattr(event, "model", None), str):
                 record.model = event.model or None
             yield event
+        if record.status == "success" and not (final_content or "".join(chunks)).strip() and not any(s.type == "TOOL" for s in record.spans):
+            object.__setattr__(run, "empty_response", True)  # RunContext é frozen
+            record.metadata["empty_response"] = "true"
+            await asyncio.to_thread(_exclude_from_history, agent, run)
     except (asyncio.CancelledError, GeneratorExit):
         record.status = "interrupted"
         record.status_message = RUN_INTERRUPTED
@@ -427,6 +436,29 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
         _set_collection_version(record, run)
         record.ended_at = datetime.now(timezone.utc)
         run_store.record_run(record)
+
+
+def _exclude_from_history(agent: Agent, run: RunContext) -> None:
+    """Tira um run vazio do histórico que o Agno reenvia nas próximas rodadas.
+
+    O Agno grava o run na sessão de qualquer jeito — a fala do usuário e uma
+    resposta vazia. Marcado como `error`, ele entra em `HISTORY_SKIP_STATUSES` e
+    deixa de ser lido como contexto, sem apagar nada da sessão."""
+    db = getattr(agent, "db", None)
+    if db is None:
+        return
+    try:
+        from agno.run.base import RunStatus
+
+        # Desde o Agno 2.7 os runs ficam numa tabela própria, com o status numa
+        # coluna que a leitura do histórico filtra.
+        target = db.get_run(run.run_id)
+        if target is None:
+            return
+        target.status = RunStatus.error
+        db.upsert_run(target, session_id=run.session_id, user_id=run.user_id)
+    except Exception:
+        logger.warning("Não consegui tirar o run vazio %s do histórico da sessão", run.run_id, exc_info=True)
 
 
 def _set_collection_version(record: Any, run: RunContext) -> None:

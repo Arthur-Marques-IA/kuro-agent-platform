@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     `timeout_seconds` do run, que só começa quando ele ganha a vaga. 0 desliga a
     fila (503 imediato, o comportamento antigo). Mantenha abaixo do timeout de
     quem chama."""
+    empty_response_retries: int = 1
+    """Quantas vezes o `/chat` (e o `/chat/stream`) roda de novo, sozinho, um run
+    que terminou sem texto e sem chamar tool (ex.: o Gemini devolvendo 0 tokens de
+    saída no 1º turno). O run vazio fica em `observability/runs` (com
+    `metadata.empty_response`), mas sai do histórico da sessão. 0 desliga."""
     idempotency_ttl_hours: int = 24
     """Por quanto tempo um `Idempotency-Key` de `/chat`/`/analyze` devolve a resposta
     guardada (`api/idempotency.py`). Passou disso, a mesma chave roda de novo."""
