@@ -104,8 +104,18 @@ async def describe_hits(knowledge: Knowledge, documents: list[Document]) -> list
     return [reference(doc, rank=i, content_id=content_ids.get(doc.id or "")) for i, doc in enumerate(documents, 1)]
 
 
-def make_retriever(collection_name: str, knowledge: Knowledge) -> Callable[..., Any]:
+def make_retriever(
+    collection_name: str,
+    knowledge: Knowledge,
+    resolve: Callable[[str], tuple[Knowledge, Any, tuple[int, str]]] | None = None,
+) -> Callable[..., Any]:
     """O `knowledge_retriever` de um agente com `knowledge_collection`.
+
+    `resolve` (`documents.collections.resolve_search`) devolve a collection como
+    está agora, a configuração de busca e a versão dela. O `Agent` montado fica em
+    cache no registry e não percebe um `collections set`; resolvendo a cada busca,
+    a mudança vale na hora e a versão registrada é a que de fato buscou. Sem
+    `resolve` (testes), usa `knowledge` e o `num_documents` que o Agno mandar.
 
     O Agno chama o mesmo retriever nos dois caminhos: no `arun` (o do serviço) ele
     aguarda o que voltar; num `run` síncrono, não. Por isso o retriever devolve a
@@ -113,16 +123,23 @@ def make_retriever(collection_name: str, knowledge: Knowledge) -> Callable[..., 
 
     async def aretrieve(query: str, num_documents: int | None, filters: Any, run_context: Any) -> list[dict[str, Any]] | None:
         user_id = getattr(run_context, "user_id", None)
-        documents = await knowledge.aretrieve(
-            query=query, max_results=num_documents, filters=filters, user_id=user_id
-        )
-        record_search(
-            {
-                "query": query,
-                "collection": collection_name,
-                "results": await describe_hits(knowledge, documents or []),
-            }
-        )
+        current, config, version = knowledge, None, None
+        if resolve is not None:
+            current, config, version = await asyncio.to_thread(resolve, collection_name)
+            # O `num_documents` do Agno vem do `max_results` da Knowledge que estava
+            # no Agent quando ele foi montado — o k atual é o da collection.
+            num_documents = config.max_results
+        documents = await current.aretrieve(query=query, max_results=num_documents, filters=filters, user_id=user_id)
+        entry: dict[str, Any] = {"query": query, "collection": collection_name}
+        if config is not None and version is not None:
+            entry.update(
+                version=version[0],
+                config_hash=version[1],
+                search_mode=config.search_mode,
+                score_kind=config.score_kind,
+            )
+        entry["results"] = await describe_hits(current, documents or [])
+        record_search(entry)
         if not documents:
             return None
         # O mesmo formato que o Agno mandaria ao modelo sem retriever próprio.

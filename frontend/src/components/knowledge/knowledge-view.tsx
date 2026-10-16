@@ -34,6 +34,7 @@ import { PageBody, PageHeader } from "@/components/workspace/page-header";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
 import { AddContentDialog } from "@/components/knowledge/add-content-dialog";
 import { NewCollectionDialog } from "@/components/knowledge/new-collection-dialog";
+import { SearchSettings } from "@/components/knowledge/search-settings";
 import { SearchPanel } from "@/components/knowledge/search-panel";
 import { SourcesPanel } from "@/components/knowledge/sources-panel";
 
@@ -415,7 +416,10 @@ export function KnowledgeView({
           </section>
           </div>
 
-          <SearchPanel collection={collection} />
+          <div className="flex min-w-0 flex-col gap-6">
+            {current && <SearchSettings collection={current} onSaved={() => router.refresh()} />}
+            <SearchPanel collection={collection} />
+          </div>
         </div>
       </PageBody>
 

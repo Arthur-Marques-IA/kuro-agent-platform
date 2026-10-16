@@ -15,6 +15,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     Integer,
     MetaData,
     String,
@@ -42,6 +43,14 @@ document_collections = Table(
     Column("embedder_provider", String, nullable=True),
     Column("embedder_model", String, nullable=True),
     Column("embedder_dimensions", Integer, nullable=True),
+    # Configuração de busca (ver documents/search.py). `NULL` = o padrão, que é o
+    # comportamento de antes destas colunas: busca vetorial com k=10. `language`
+    # fica fixo depois da criação, como o embedder.
+    Column("search_mode", String, nullable=True),
+    Column("language", String, nullable=True),
+    Column("max_results", Integer, nullable=True),
+    Column("vector_weight", Float, nullable=True),
+    Column("reranker", String, nullable=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
     Column(
         "updated_at",
@@ -63,7 +72,12 @@ def seed_default_collection() -> None:
     """A collection `general` original, para quem já tinha documentos nela."""
     if get_collection_row(SEED_COLLECTION) is None:
         create_collection(
-            name=SEED_COLLECTION, label="Geral", description="Base de conhecimento padrão.", is_seed=True
+            name=SEED_COLLECTION,
+            label="Geral",
+            description="Base de conhecimento padrão.",
+            is_seed=True,
+            # Instalação nova: o mesmo idioma de uma collection criada pela API.
+            search={"language": "portuguese"},
         )
 
 
@@ -96,6 +110,7 @@ def create_collection(
     embedder_provider: str | None = None,
     embedder_model: str | None = None,
     embedder_dimensions: int | None = None,
+    search: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """O embedder é gravado aqui e não muda depois: os vetores de
     `knowledge_<name>` têm a largura e a semântica de um embedder só."""
@@ -109,13 +124,26 @@ def create_collection(
                 embedder_provider=embedder_provider,
                 embedder_model=embedder_model,
                 embedder_dimensions=embedder_dimensions,
+                **(search or {}),
             )
         )
     return get_collection_row(name)  # type: ignore[return-value]
 
 
-def update_collection(name: str, *, label: str | None = None, description: str | None = None) -> dict[str, Any]:
+SEARCH_FIELDS = ("search_mode", "max_results", "vector_weight", "reranker")
+"""Campos de busca que podem mudar depois da criação (`language` não: ver documents/search.py)."""
+
+
+def update_collection(
+    name: str,
+    *,
+    label: str | None = None,
+    description: str | None = None,
+    search: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """`search` grava os campos de busca como vieram — `None` é um valor (volta ao padrão)."""
     values = {k: v for k, v in (("label", label), ("description", description)) if v is not None}
+    values.update({k: v for k, v in (search or {}).items() if k in SEARCH_FIELDS})
     if values:
         with get_db().db_engine.begin() as conn:
             conn.execute(update(document_collections).where(document_collections.c.name == name).values(**values))

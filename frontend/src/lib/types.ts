@@ -172,11 +172,15 @@ export interface AttachmentInfo {
 }
 
 /** Um trecho recuperado da base — na busca da collection e em `metadata.references` da span de busca. */
+/** O que o `score` de um trecho mede: similaridade do vetor, vetor + full-text (híbrido) ou o reranker. */
+export type ScoreKind = "similarity" | "hybrid" | "rerank";
+
 export interface RetrievedChunk {
   content: string;
   rank?: number | null;
-  /** Similaridade 0–1 (ou o score do reranker). */
+  /** 0–1; o que mede depende do `score_kind` da busca. */
   score?: number | null;
+  score_kind?: ScoreKind | null;
   document?: string | null;
   content_id?: string | null;
   chunk_id?: string | null;
@@ -254,6 +258,11 @@ export interface KnowledgeSourceDetail extends KnowledgeSource {
 export interface RetrievalReferences {
   query: string;
   collection: string;
+  /** Versão da configuração de busca que respondeu (ausente em runs antigos). */
+  version?: number | null;
+  config_hash?: string | null;
+  search_mode?: SearchMode | null;
+  score_kind?: ScoreKind | null;
   results: RetrievedChunk[];
 }
 
@@ -543,8 +552,35 @@ export interface EmbedderOption {
   configured: boolean;
 }
 
+export type SearchMode = "vector" | "hybrid";
+
+/** Configuração de busca de uma collection, com os padrões resolvidos. */
+export interface CollectionSearchConfig {
+  search_mode: SearchMode;
+  /** Dicionário do full-text do Postgres; fixo na criação. */
+  language: string;
+  /** Trechos por busca (k). */
+  max_results: number;
+  /** No híbrido, o peso do vetor (o resto é do full-text). */
+  vector_weight: number;
+  reranker: string | null;
+  score_kind: ScoreKind;
+}
+
+/** `GET /collections/{nome}/versions` — um snapshot imutável da configuração (embedder + busca). */
+export interface CollectionVersion {
+  version: number;
+  config_hash: string;
+  config: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface Collection {
   name: string;
+  search: CollectionSearchConfig;
+  /** Versão atual da configuração — a que os runs gravam em `collection_version`. */
+  version?: number | null;
+  config_hash?: string | null;
   /** Fixo na criação: a tabela de vetores é de um embedder só. */
   embedder_provider: string;
   embedder_model: string;
@@ -767,6 +803,10 @@ export interface RunSummary {
   /** Versão da configuração inteira que rodou; `null` em runs antigos. */
   agent_version?: number | null;
   config_hash?: string | null;
+  /** Collection consultada e a versão da configuração de busca dela. */
+  knowledge_collection?: string | null;
+  collection_version?: number | null;
+  collection_config_hash?: string | null;
   endpoint?: string | null;
   user_id?: string | null;
   session_id?: string | null;

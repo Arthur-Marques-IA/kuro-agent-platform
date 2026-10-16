@@ -229,7 +229,7 @@ def _extras(
         body["dry_run"] = True
 
 
-COLLECTION_FIELDS = ("label", "description")
+COLLECTION_FIELDS = ("label", "description", "search_mode", "max_results", "vector_weight", "reranker")
 """O que `PUT /collections/{nome}` aceita (`CollectionUpdateIn`)."""
 
 NO_LOCAL_FILES = (
@@ -910,6 +910,12 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             dict[str, str] | None,
             Field(description='Pela metadata que quem chamou mandou, ex.: {"conversation_id": "98231"}.'),
         ] = None,
+        knowledge_collection: Annotated[
+            str | None, Field(description="Só runs de agentes que consultavam esta collection.")
+        ] = None,
+        collection_version: Annotated[
+            int | None, Field(description="Só runs com esta versão da busca da collection (collection_versions).")
+        ] = None,
         complexity: Annotated[
             list[int] | None,
             Field(description="Complexidade 1 a 3 (tools de negócio distintas que o run chamou), ex.: [3] ou [2, 3]."),
@@ -943,6 +949,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             user_id=user_id,
             min_message_chars=min_chars,
             agent_version=agent_version,
+            knowledge_collection=knowledge_collection,
+            collection_version=collection_version,
             meta=[f"{k}={v}" for k, v in (meta or {}).items()] or None,
             complexity=complexity or None,
             tool_failed=True if tool_failed else None,
@@ -1131,10 +1139,25 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         embedder_dimensions: Annotated[
             int | None, Field(description="O tamanho do vetor que embedder_model devolve, ex.: 768.")
         ] = None,
+        search_mode: Annotated[
+            Literal["vector", "hybrid"] | None,
+            Field(description="vector (padrão): só similaridade; hybrid: vetor + full-text do Postgres (bom para "
+                  "códigos, siglas e nomes exatos)."),
+        ] = None,
+        language: Annotated[
+            str | None,
+            Field(description="Dicionário do full-text do Postgres, ex.: portuguese (padrão), english, simple. "
+                  "Definitivo, como o embedder."),
+        ] = None,
+        max_results: Annotated[int | None, Field(description="Trechos por busca, o k (1 a 50; padrão 10).")] = None,
+        vector_weight: Annotated[
+            float | None, Field(description="No hybrid, o peso do vetor de 0 a 1 (o resto é do texto; padrão 0.5).")
+        ] = None,
     ) -> dict[str, Any]:
-        """Cria uma base de conhecimento vazia. O embedder é escolhido aqui e NÃO muda depois
-        (a tabela de vetores é de um embedder só). Depois: collection_add ou
-        collection_add_site para indexar, e agent_set(knowledge_collection=name) no agente."""
+        """Cria uma base de conhecimento vazia. O embedder e o idioma são escolhidos aqui e NÃO
+        mudam depois (a tabela de vetores é de um embedder só). Modo, k e peso mudam com
+        collection_set. Depois: collection_add ou collection_add_site para indexar, e
+        agent_set(knowledge_collection=name) no agente."""
         payload = {
             "name": name,
             "label": label,
@@ -1142,6 +1165,10 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             "embedder_provider": embedder,
             "embedder_model": embedder_model,
             "embedder_dimensions": embedder_dimensions,
+            "search_mode": search_mode,
+            "language": language,
+            "max_results": max_results,
+            "vector_weight": vector_weight,
         }
         return _call(client.create_collection, {k: v for k, v in payload.items() if v is not None})
 
@@ -1150,15 +1177,32 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         name: CollectionName,
         changes: Annotated[
             dict[str, Any],
-            Field(description='Só label e description mudam, ex.: {"label": "Manuais v2"}.'),
+            Field(
+                description="label, description e a busca: search_mode (vector|hybrid), max_results (k), "
+                'vector_weight (0–1), reranker. Ex.: {"search_mode": "hybrid", "vector_weight": 0.7}; null volta ao padrão.'
+            ),
         ],
     ) -> dict[str, Any]:
-        """Altera o rótulo ou a descrição de uma collection. O embedder não muda: para outro,
-        crie uma collection nova e reindexe."""
-        if {"embedder", "embedder_provider", "embedder_model", "embedder_dimensions"} & set(changes):
-            raise ToolError("o embedder de uma collection não muda: crie outra (collection_create) e reindexe")
+        """Altera o rótulo, a descrição ou a configuração de busca de uma collection. Mudar a
+        busca gera uma versão nova (collection_versions), que os runs gravam. O embedder e o
+        idioma não mudam: para outros, crie uma collection nova e reindexe."""
+        if {"embedder", "embedder_provider", "embedder_model", "embedder_dimensions", "language"} & set(changes):
+            raise ToolError("o embedder e o idioma de uma collection não mudam: crie outra (collection_create) e reindexe")
         _fields_only(changes, COLLECTION_FIELDS)
         return _call(client.update_collection, name, changes)
+
+    @server.tool(annotations=READ)
+    def collection_versions(
+        name: CollectionName,
+        version: Annotated[int | None, Field(description="Uma versão: devolve só ela, com a configuração completa.")] = None,
+    ) -> dict[str, Any]:
+        """Histórico da configuração de busca da collection (embedder, modo, idioma, k, peso),
+        mais recente primeiro. Cada run grava `collection_version`: um agente na mesma versão
+        que passou a responder diferente pode ter mudado aqui. Filtre com
+        runs_list(knowledge_collection=..., collection_version=...)."""
+        if version is not None:
+            return _call(client.collection_version, name, version)
+        return _fit({"items": _call(client.collection_versions, name)})
 
     @server.tool(annotations=READ)
     def collection_docs(name: CollectionName) -> dict[str, Any]:
@@ -1169,9 +1213,10 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     def collection_search(
         name: CollectionName,
         query: Annotated[str, Field(description="O que buscar, em linguagem natural, ex.: prazo de garantia.")],
-        limit: Annotated[int, Field(description="Quantos trechos.")] = 5,
+        limit: Annotated[int | None, Field(description="Quantos trechos (padrão: o k da collection).")] = None,
     ) -> dict[str, Any]:
-        """Busca na collection — o mesmo que o agente enxerga."""
+        """Busca na collection — o mesmo que o agente enxerga (modo, k e idioma dela). Cada
+        trecho traz `score_kind`: similarity (vetorial), hybrid (vetor + texto) ou rerank."""
         return {"items": _clip(_call(client.search_collection, name, query, limit), 1500)}
 
     @server.tool(annotations=WRITE)

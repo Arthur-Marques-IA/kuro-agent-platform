@@ -188,6 +188,10 @@ def list_runs(
     sort: Annotated[
         RunSort, Query(description="`cost`/`latency`: as mais caras/lentas primeiro (sem os runs sem esse valor).")
     ] = "recent",
+    knowledge_collection: Annotated[str | None, Query(description="Só runs de agentes que consultavam esta collection.")] = None,
+    collection_version: Annotated[
+        int | None, Query(ge=1, description="Só runs com esta versão da configuração de busca da collection.")
+    ] = None,
 ) -> RunPage:
     """Execuções de todos os agentes (ou só dos `agent_type` pedidos), mais recentes
     primeiro, com tokens, custo e feedback — a página de Execuções do console usa isto.
@@ -223,6 +227,8 @@ def list_runs(
             "feedback": feedback,
             "exclude_dry_run": not include_dry_run,
             "sample": sample,
+            "knowledge_collection": knowledge_collection,
+            "collection_version": collection_version,
         },
         sort=sort,
     )

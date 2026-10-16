@@ -168,7 +168,7 @@ subiu; quem confirma que ele alcança o serviço é a tool `health`.
 | Execuções | `runs_list`, `run_show`, `runs_stats`, `runs_overview`, `runs_sessions`, `run_score` |
 | Modo shadow | `runs_agreement`, `runs_reference`, `runs_export` |
 | Conversas | `sessions_list`, `session_show`, `session_delete`\* |
-| Bases de conhecimento | `collections_list`, `collection_get`, `collection_embedders`, `collection_create`, `collection_set`, `collection_docs`, `collection_search`, `collection_add`, `collection_rm_doc`\*, `collection_add_site`, `collection_sources`, `collection_sync_site`, `collection_rm_site`\* |
+| Bases de conhecimento | `collections_list`, `collection_get`, `collection_embedders`, `collection_create`, `collection_set`, `collection_versions`, `collection_docs`, `collection_search`, `collection_add`, `collection_rm_doc`\*, `collection_add_site`, `collection_sources`, `collection_sync_site`, `collection_rm_site`\* |
 
 \* Pede confirmação ao usuário (ver abaixo).
 

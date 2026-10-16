@@ -78,6 +78,11 @@ runs = Table(
     # feedback): hash e número da versão em `agent_versions` (`agents/versions.py`).
     Column("config_hash", String, nullable=True),
     Column("agent_version", Integer, nullable=True),
+    # Configuração de busca da base consultada (`documents/versions.py`): o agente
+    # pode estar na mesma versão e responder diferente porque a collection mudou.
+    Column("knowledge_collection", String, nullable=True),
+    Column("collection_version", Integer, nullable=True),
+    Column("collection_config_hash", String, nullable=True),
     Column("endpoint", String, nullable=True),
     Column("user_id", String, nullable=True),
     Column("session_id", String, nullable=True, index=True),
@@ -202,6 +207,9 @@ class RunRecord:
     tenant_id: str = DEFAULT_TENANT
     agent_version: int | None = None
     config_hash: str | None = None
+    knowledge_collection: str | None = None
+    collection_version: int | None = None
+    collection_config_hash: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
 
 
@@ -263,6 +271,9 @@ def _write_run(record: RunRecord) -> None:
                 prompt_version=record.prompt_version,
                 config_hash=record.config_hash,
                 agent_version=record.agent_version,
+                knowledge_collection=record.knowledge_collection,
+                collection_version=record.collection_version,
+                collection_config_hash=record.collection_config_hash,
                 endpoint=record.endpoint,
                 user_id=record.user_id,
                 session_id=record.session_id,
@@ -365,6 +376,10 @@ def _filters(query: RunQuery, *, with_session: bool = False) -> list[Any]:
         conditions.append(runs.c.prompt_version == query.prompt_version)
     if query.agent_version is not None:
         conditions.append(runs.c.agent_version == query.agent_version)
+    if query.knowledge_collection:
+        conditions.append(runs.c.knowledge_collection == query.knowledge_collection)
+    if query.collection_version is not None:
+        conditions.append(runs.c.collection_version == query.collection_version)
     if query.status:
         conditions.append(runs.c.status == query.status)
     if query.statuses:
@@ -529,6 +544,9 @@ def _summary(
         prompt_version=row.prompt_version,
         agent_version=row.agent_version,
         config_hash=row.config_hash,
+        knowledge_collection=row.knowledge_collection,
+        collection_version=row.collection_version,
+        collection_config_hash=row.collection_config_hash,
         endpoint=row.endpoint,
         user_id=row.user_id,
         session_id=row.session_id,

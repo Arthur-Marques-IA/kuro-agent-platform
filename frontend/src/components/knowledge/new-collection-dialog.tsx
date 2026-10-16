@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useId, useState } from "react";
 import { errorMessage, requestJson } from "@/lib/http";
-import type { Collection, EmbedderOption } from "@/lib/types";
+import type { Collection, EmbedderOption, SearchMode } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -58,6 +58,8 @@ function NewCollectionForm({ onClose, onCreated }: { onClose: () => void; onCrea
   const [error, setError] = useState<string | null>(null);
   const [embedders, setEmbedders] = useState<EmbedderOption[] | null>(null);
   const [embedder, setEmbedder] = useState("google");
+  const [searchMode, setSearchMode] = useState<SearchMode>("vector");
+  const [language, setLanguage] = useState("portuguese");
 
   useEffect(() => {
     let vivo = true;
@@ -88,6 +90,8 @@ function NewCollectionForm({ onClose, onCreated }: { onClose: () => void; onCrea
           label: label.trim(),
           description: description.trim() || null,
           embedder_provider: embedder,
+          search_mode: searchMode,
+          language,
         }),
         fallbackError: "Falha ao criar coleção",
       });
@@ -158,6 +162,27 @@ function NewCollectionForm({ onClose, onCreated }: { onClose: () => void; onCrea
             ))}
           </Select>
         </Field>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Busca"
+            htmlFor={`${id}-mode`}
+            hint="Híbrida soma o full-text ao vetor: ajuda com códigos, siglas e nomes exatos. Muda depois."
+          >
+            <Select id={`${id}-mode`} value={searchMode} onChange={(e) => setSearchMode(e.target.value as SearchMode)}>
+              <option value="vector">Vetorial</option>
+              <option value="hybrid">Híbrida (vetor + texto)</option>
+            </Select>
+          </Field>
+          <Field label="Idioma do texto" htmlFor={`${id}-language`} hint="Dicionário do full-text. Não muda depois.">
+            <Select id={`${id}-language`} value={language} onChange={(e) => setLanguage(e.target.value)}>
+              <option value="portuguese">Português</option>
+              <option value="english">Inglês</option>
+              <option value="spanish">Espanhol</option>
+              <option value="simple">Sem idioma (simple)</option>
+            </Select>
+          </Field>
+        </div>
 
         <Field label="Descrição" htmlFor={`${id}-description`} hint="Opcional.">
           <Textarea

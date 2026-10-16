@@ -20,7 +20,8 @@ type SearchState =
 export function SearchPanel({ collection }: { collection: string }) {
   const id = useId();
   const [query, setQuery] = useState("");
-  const [limit, setLimit] = useState("5");
+  // Vazio = o k da coleção, o mesmo que o agente recebe.
+  const [limit, setLimit] = useState("");
   const [state, setState] = useState<SearchState>({ status: "idle" });
 
   async function handleSubmit(e: FormEvent) {
@@ -30,7 +31,7 @@ export function SearchPanel({ collection }: { collection: string }) {
     setState({ status: "loading" });
     try {
       const results = await requestJson<SearchResult[]>(
-        `/api/collections/${encodeURIComponent(collection)}/search?${new URLSearchParams({ query: q, limit })}`,
+        `/api/collections/${encodeURIComponent(collection)}/search?${new URLSearchParams({ query: q, ...(limit ? { limit } : {}) })}`,
         { fallbackError: "Falha na busca" }
       );
       setState({ status: "done", query: q, results });
@@ -43,9 +44,11 @@ export function SearchPanel({ collection }: { collection: string }) {
     <Card className="xl:sticky xl:top-0">
       <CardHeader className="pb-4">
         <CardTitle className="flex items-center gap-2">
-          <Search className="size-4 text-muted-foreground" /> Testar busca semântica
+          <Search className="size-4 text-muted-foreground" /> Testar busca
         </CardTitle>
-        <CardDescription>Veja quais trechos da coleção seriam recuperados para uma pergunta.</CardDescription>
+        <CardDescription>
+          Veja quais trechos o agente receberia para uma pergunta — com o modo, o idioma e o k desta coleção.
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <form onSubmit={handleSubmit} className="flex gap-2">
@@ -64,6 +67,7 @@ export function SearchPanel({ collection }: { collection: string }) {
             onChange={(e) => setLimit(e.target.value)}
             wrapperClassName="w-[4.5rem] shrink-0"
           >
+            <option value="">k</option>
             {["3", "5", "10"].map((value) => (
               <option key={value} value={value}>
                 {value}

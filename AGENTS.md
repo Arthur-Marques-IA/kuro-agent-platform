@@ -198,6 +198,11 @@ kuro --json collections add manuais -f manual.pdf             # arquivo (PDF, DO
 kuro --json collections docs manuais                          # o que está indexado, com o status
 kuro --json collections rm-doc manuais <content_id> --yes     # tira um documento da base (não tem volta)
 kuro --json collections search manuais "prazo de garantia"   # o mesmo que o agente enxerga (score, documento, origem)
+# Busca: --mode vector|hybrid, --k, --vector-weight e --language (fixo) no create; o resto muda com set.
+# Cada mudança vira versão (`collections versions`); o run grava collection_version e o trace o score_kind.
+kuro --json collections set manuais search_mode=hybrid vector_weight=0.7 max_results=8
+kuro --json collections versions manuais
+kuro --json runs list --collection manuais --collection-version 2
 # Sites: coleta em background (crawl | sitemap | page), robots.txt, egress travado, um agente
 # formata cada página sem reescrever (conferido; reprovado = texto extraído), ressincronização incremental.
 kuro --json collections add-site manuais https://docs.exemplo.com/guia --max-pages 100 --refresh weekly --wait

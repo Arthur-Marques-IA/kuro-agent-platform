@@ -43,6 +43,11 @@ def _render_trace(trace: dict[str, Any]) -> None:
     console.print(f"[bold]{run['agent_type']}[/] [dim]run {run['run_id']} · {run['status']} · {run['total_tokens']} tokens[/]")
     console.print(f"[cyan]mensagem:[/] {run.get('message') or '—'}", highlight=False)
     console.print(f"[magenta]resposta:[/] {run.get('output') or '—'}", highlight=False)
+    if run.get("agent_version"):
+        console.print(f"[dim]agente v{run['agent_version']} ({run.get('config_hash')})[/]", highlight=False)
+    if run.get("knowledge_collection"):
+        versao = f" v{run['collection_version']} ({run.get('collection_config_hash')})" if run.get("collection_version") else ""
+        console.print(f"[dim]base {run['knowledge_collection']}{versao}[/]", highlight=False)
 
     spans = trace["spans"]
     ids = {s["id"] for s in spans}
@@ -61,7 +66,8 @@ def _render_trace(trace: dict[str, Any]) -> None:
 @app.callback(invoke_without_command=True)
 def runs(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:  # defaults explícitos: chamar direto não resolve os typer.Option
-        list_runs(ctx, agent=None, status=None, session_id=None, user_id=None, limit=20, cursor=None, meta=[], version=None)
+        list_runs(ctx, agent=None, status=None, session_id=None, user_id=None, limit=20, cursor=None, meta=[], version=None,
+                  collection=None, collection_version=None)
 
 
 @app.command("list")
@@ -75,6 +81,10 @@ def list_runs(
     cursor: str | None = typer.Option(None, "--cursor"),
     meta: list[str] = typer.Option([], "--meta", "-m", help="Filtro por metadata chave=valor (repetível), ex.: conversation_id=123."),
     version: int | None = typer.Option(None, "--version", help="Só runs desta versão da configuração (agent_version)."),
+    collection: str | None = typer.Option(None, "--collection", help="Só runs de agentes que consultavam esta collection."),
+    collection_version: int | None = typer.Option(
+        None, "--collection-version", min=1, help="Só runs com esta versão da busca da collection (kuro collections versions)."
+    ),
     complexity: list[int] = typer.Option([], "--complexity", "-c", min=1, max=3, help="Só este nível de complexidade (repetível): 1, 2 ou 3."),
     tool_failed: bool = typer.Option(False, "--tool-failed", help="Só runs com alguma tool falhando."),
     side_effect: bool = typer.Option(False, "--side-effect", help="Só runs que chamaram tool com efeito colateral."),
@@ -97,6 +107,8 @@ def list_runs(
         cursor=cursor,
         meta=meta or None,
         agent_version=version,
+        knowledge_collection=collection,
+        collection_version=collection_version,
         complexity=complexity or None,
         tool_failed=True if tool_failed else None,
         side_effect=True if side_effect else None,
