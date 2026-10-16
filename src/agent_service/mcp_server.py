@@ -1323,15 +1323,22 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         ] = None,
         exclude: Annotated[list[str] | None, Field(description="Pula URLs com estes trechos de caminho.")] = None,
         format: Annotated[bool, Field(description="Um agente organiza o texto de cada página (sem reescrever).")] = True,
+        include_files: Annotated[
+            bool | None,
+            Field(description="Indexar também os PDF/DOCX/PPTX/XLSX linkados no escopo, sem formatador "
+                  "(padrão: sim; contam em max_pages)."),
+        ] = None,
         refresh: Annotated[
             Literal["never", "daily", "weekly", "monthly"], Field(description="Ressincronização automática.")
         ] = "never",
     ) -> dict[str, Any]:
         """Indexa um site na collection, em background: `crawl` segue links abaixo do caminho
         da URL, `sitemap` usa o sitemap, `page` só a URL. Cada página passa por um agente que
-        organiza o texto sem reescrever (`format=false` pula). Acompanhe com `collection_sources`."""
+        organiza o texto sem reescrever (`format=false` pula); os arquivos linkados (PDF, DOCX...)
+        entram lidos direto, com o número da página. Acompanhe com `collection_sources`."""
         payload = {"url": url, "mode": mode, "max_pages": max_pages, "max_depth": max_depth,
-                   "include": include, "exclude": exclude, "format": format, "refresh": refresh}
+                   "include": include, "exclude": exclude, "format": format, "include_files": include_files,
+                   "refresh": refresh}
         return _call(client.create_source, name, {k: v for k, v in payload.items() if v is not None})
 
     @server.tool(annotations=READ)

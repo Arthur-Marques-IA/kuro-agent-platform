@@ -267,7 +267,7 @@ o teto de `WEB_SOURCE_MAX_PAGES`. Cada página passa por:
 
 1. **Download seguro**: a mesma trava de egress das tools, conferida a cada salto de redirect (uma
    fonte não alcança a rede interna nem o metadata da nuvem); o `robots.txt` é respeitado com o
-   `User-Agent` de `WEB_SOURCE_USER_AGENT`; só HTML/texto, até 5 MB; intervalo mínimo entre
+   `User-Agent` de `WEB_SOURCE_USER_AGENT`; só HTML/texto, até 5 MB (arquivos: abaixo); intervalo mínimo entre
    requisições ao mesmo site.
 2. **Extração**: o conteúdo principal vira Markdown (títulos, listas, tabelas, código); menus,
    rodapés, banners de cookie e scripts ficam de fora.
@@ -286,6 +286,20 @@ Ressincronizar é incremental: o documento de cada página tem id fixo pela URL,
 alterada é **substituída** (não duplicada), a que não mudou nem é reprocessada, e a que sumiu do
 site (404, 410 ou fora da coleta) sai da base. Se o site não responder, nada é apagado. Com
 `--refresh daily|weekly|monthly` o serviço repete sozinho.
+
+**Arquivos linkados.** Os PDF, DOCX, PPTX e XLSX linkados nas páginas também entram (`--files`,
+o padrão nas fontes novas; `--no-files` desliga). Só os do mesmo escopo das páginas (mesmo host,
+abaixo do caminho, `include`/`exclude`) e dentro de `--max-pages`, depois das páginas. O download é
+o mesmo (egress a cada salto, `robots.txt`, ritmo por host), com teto próprio de
+`WEB_SOURCE_MAX_FILE_MB` (20 MB) e conferência do tipo: o `content-type` tem de ser o do arquivo
+(ou `application/octet-stream`) e os primeiros bytes também — um `.pdf` que responde uma página de
+login falha com o motivo. A leitura é pelos leitores do Agno, **sem** o agente formatador: o arquivo
+já vem estruturado, e reescrevê-lo só arriscaria a fidelidade. Cada trecho de um PDF leva `page`
+(a página física, 1, 2...) e de um PPTX o slide, além de `source_url` — no trace, "pág. N". O sync
+é o mesmo das páginas: id fixo pela URL, hash do arquivo (igual = nem é lido de novo), substituição
+e remoção quando some do site ou deixa de ser linkado. PDF escaneado (só imagem) ou com senha fica
+`skipped`, e `.doc`/`.xls`/`.ppt` (formato binário antigo) ficam de fora. Uma fonte criada antes
+desta opção continua sem arquivos até `kuro collections set-site <col> <id> include_files=true`.
 
 Apagar à mão (`collections rm-doc`) o documento de uma página de site tira a página da base só até
 o próximo sync, que a traz de volta. Para deixá-la de fora de vez, use `exclude`

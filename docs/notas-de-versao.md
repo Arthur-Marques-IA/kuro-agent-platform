@@ -70,6 +70,15 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
   `chunk_feedback_flagged` e `chunk_feedback_export`.
   Ver [conceitos](conceitos.md#feedback-por-trecho).
 
+- **A coleta de sites indexa os arquivos linkados.** PDF, DOCX, PPTX e XLSX linkados nas páginas,
+  do mesmo escopo da fonte e dentro de `max_pages` (depois das páginas), entram na collection lidos
+  pelos leitores do Agno, sem o agente formatador; cada trecho de PDF leva `page` (e o de PPTX, o
+  slide) e `source_url`. Opção `include_files` em `POST /collections/{n}/sources` e no `PATCH`:
+  **padrão `true` nas fontes novas**; uma fonte já cadastrada continua sem arquivos até
+  `include_files=true`. `GET .../sources/{id}` passa a trazer `kind` (`page` | `file`) em cada página.
+  CLI `kuro collections add-site --files/--no-files`, MCP `collection_add_site(include_files=...)`, e
+  no console uma caixa na aba Site e o selo "arquivo" no painel Sites. Nova variável
+  `WEB_SOURCE_MAX_FILE_MB` (20). Ver [sites como fonte](conceitos.md#sites-como-fonte).
 - **Filtros dos Logs mais soltos, e KPIs que levam às execuções.** Panorama, Sessões e Execuções
   aceitam vários agentes (com busca, mostrando o `agent_type`), vários status e um intervalo de
   datas livre além dos atalhos; tudo fica na URL, e os links antigos (`agent=`, `status=`, `period=`)

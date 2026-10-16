@@ -78,6 +78,7 @@ function AddContentForm({
   const [maxPages, setMaxPages] = useState("50");
   const [refresh, setRefresh] = useState<SourceRefresh>("weekly");
   const [formatPages, setFormatPages] = useState(true);
+  const [includeFiles, setIncludeFiles] = useState(true);
   const [exclude, setExclude] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -115,6 +116,7 @@ function AddContentForm({
             mode: siteMode,
             refresh,
             format: formatPages,
+            include_files: includeFiles,
             label: name.trim() || undefined,
             max_pages: siteMode === "page" ? undefined : Number(maxPages) || undefined,
             exclude: exclude
@@ -304,6 +306,21 @@ function AddContentForm({
                 <span className="text-xs text-muted-foreground">
                   Organiza títulos, listas e tabelas sem reescrever o texto. Se o resultado não bater com a página, o
                   texto extraído é usado no lugar.
+                </span>
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border px-3 py-2.5 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 accent-primary"
+                checked={includeFiles}
+                onChange={(e) => setIncludeFiles(e.target.checked)}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">Indexar os arquivos linkados</span>
+                <span className="text-xs text-muted-foreground">
+                  PDF, DOCX, PPTX e XLSX do mesmo site e caminho, lidos direto (sem o agente), com o número da página.
+                  Contam no limite de páginas.
                 </span>
               </span>
             </label>

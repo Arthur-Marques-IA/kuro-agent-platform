@@ -8,7 +8,9 @@ leitores de site do Agno, que baixam sem essa checagem:
 
 - cada salto é conferido (`acheck_url`), inclusive os de redirect, que são
   seguidos à mão (`follow_redirects=False`);
-- o corpo tem teto de tamanho e só HTML/texto/XML é aceito;
+- o corpo tem teto de tamanho e só HTML/texto/XML é aceito — ou, para os arquivos
+  linkados (PDF, DOCX, PPTX, XLSX), o tipo do arquivo, com teto próprio
+  (`WEB_SOURCE_MAX_FILE_MB`) e conferido pelos primeiros bytes;
 - o `robots.txt` do site é respeitado, com o `User-Agent` de `WEB_SOURCE_USER_AGENT`;
 - requisições ao mesmo host respeitam um intervalo mínimo.
 
@@ -46,6 +48,17 @@ SKIP_EXTENSIONS = frozenset(
     ".pdf .png .jpg .jpeg .gif .webp .svg .ico .css .js .json .zip .gz .tar .rar .7z .mp3 .mp4 .avi .mov "
     ".webm .woff .woff2 .ttf .eot .exe .dmg .apk .doc .docx .xls .xlsx .ppt .pptx .csv".split()
 )
+FILE_TYPES: dict[str, tuple[tuple[str, ...], bytes]] = {
+    ".pdf": (("application/pdf", "application/x-pdf"), b"%PDF-"),
+    ".docx": (("application/vnd.openxmlformats-officedocument.wordprocessingml.document",), b"PK"),
+    ".pptx": (("application/vnd.openxmlformats-officedocument.presentationml.presentation",), b"PK"),
+    ".xlsx": (("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",), b"PK"),
+}
+"""Arquivos linkados que a coleta indexa (`include_files`): extensão → (tipos aceitos,
+assinatura dos primeiros bytes). `.doc`, `.xls` e `.ppt` ficam de fora: o formato
+binário antigo não abre nos leitores do Agno (`python-docx` só lê o Open XML)."""
+GENERIC_FILE_TYPES = ("application/octet-stream", "binary/octet-stream", "application/download")
+"""Muito servidor entrega PDF assim; a assinatura dos bytes decide."""
 XML_DECLARATION = re.compile(r"^\s*<\?xml[^>]*\?>", re.I)
 TRACKING_PARAMS = re.compile(r"^(utm_[a-z]+|gclid|fbclid|mc_cid|mc_eid|ref|_ga)$", re.I)
 
@@ -88,6 +101,21 @@ def looks_like_page(url: str) -> bool:
     return dot == -1 or path[dot:] not in SKIP_EXTENSIONS
 
 
+def file_extension(url: str) -> str | None:
+    """A extensão de um arquivo que a coleta sabe ler (`.pdf`...), ou `None`."""
+    path = urlsplit(url).path.lower()
+    dot = path.rfind(".")
+    ext = path[dot:] if dot != -1 and "/" not in path[dot:] else ""
+    return ext if ext in FILE_TYPES else None
+
+
+def check_file(fetched: "Fetched", ext: str) -> None:
+    """O corpo é mesmo o arquivo? Um `.pdf` que responde HTML costuma ser página de
+    login ou um "não encontrado" com status 200 — e quebraria dentro do leitor."""
+    if not fetched.body.startswith(FILE_TYPES[ext][1]):
+        raise WebFetchError(f"o conteúdo não é um {ext[1:].upper()} ({fetched.content_type or 'sem tipo'})")
+
+
 class Fetcher:
     """Downloads de uma sincronização: trava de egress, robots, teto e ritmo."""
 
@@ -116,8 +144,12 @@ class Fetcher:
                 await asyncio.sleep(wait)
             self._last_request[host] = time.monotonic()
 
-    async def get(self, url: str, *, accept: tuple[str, ...] = HTML_TYPES + TEXT_TYPES) -> Fetched:
+    async def get(
+        self, url: str, *, accept: tuple[str, ...] = HTML_TYPES + TEXT_TYPES, max_bytes: int = MAX_PAGE_BYTES,
+        what: str = "página",
+    ) -> Fetched:
         current = url
+        too_big = f"{what} maior que {max_bytes // (1024 * 1024)} MB"
         for _ in range(MAX_REDIRECTS + 1):
             try:
                 await acheck_url(current)
@@ -138,13 +170,13 @@ class Fetcher:
                     if accept and not any(content_type.startswith(t) for t in accept):
                         raise WebFetchError(f"tipo de conteúdo não suportado: {content_type or '(vazio)'}")
                     declared = resp.headers.get("content-length")
-                    if declared and declared.isdigit() and int(declared) > MAX_PAGE_BYTES:
-                        raise WebFetchError(f"página maior que {MAX_PAGE_BYTES // (1024 * 1024)} MB")
+                    if declared and declared.isdigit() and int(declared) > max_bytes:
+                        raise WebFetchError(too_big)
                     body = bytearray()
                     async for chunk in resp.aiter_bytes():
                         body.extend(chunk)
-                        if len(body) > MAX_PAGE_BYTES:
-                            raise WebFetchError(f"página maior que {MAX_PAGE_BYTES // (1024 * 1024)} MB")
+                        if len(body) > max_bytes:
+                            raise WebFetchError(too_big)
                     return Fetched(url=current, status=resp.status_code, content_type=content_type, body=bytes(body))
             except httpx.HTTPError as exc:
                 raise WebFetchError(f"falha de rede: {type(exc).__name__}") from exc
@@ -228,6 +260,14 @@ class Scope:
         self.prefix = path if path.endswith("/") or "." not in path.rsplit("/", 1)[-1] else path.rsplit("/", 1)[0] + "/"
 
     def accepts(self, url: str) -> bool:
+        """Uma página do escopo (arquivos ficam de fora: `accepts_file`)."""
+        return looks_like_page(url) and self.in_scope(url)
+
+    def accepts_file(self, url: str) -> bool:
+        """Um arquivo legível (`FILE_TYPES`) do mesmo escopo das páginas."""
+        return file_extension(url) is not None and self.in_scope(url)
+
+    def in_scope(self, url: str) -> bool:
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or parts.netloc.lower() != self.host:
             return False
@@ -235,8 +275,6 @@ class Scope:
         if self.same_path and self.prefix not in ("", "/") and not (
             path == self.prefix.rstrip("/") or path.startswith(self.prefix.rstrip("/") + "/")
         ):
-            return False
-        if not looks_like_page(url):
             return False
         if self.include and not any(fnmatch.fnmatch(path, p) for p in self.include):
             return False

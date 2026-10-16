@@ -194,6 +194,7 @@ uv run kuro collections set manuais search_mode=hybrid vector_weight=0.7    # vi
 uv run kuro collections versions manuais        # histórico da configuração de busca
 uv run kuro runs list --collection manuais --collection-version 2   # runs que buscaram com a v2
 uv run kuro collections add-site manuais https://docs.exemplo.com/guia --refresh weekly --wait
+                                                # --no-files: sem os PDF/DOCX/PPTX/XLSX linkados
 uv run kuro collections sources manuais         # sites e o status da sincronização
 uv run kuro credentials test <credential_id>    # valida a chave sem gastar tokens
 uv run kuro health                              # serviço, Langfuse e provedores

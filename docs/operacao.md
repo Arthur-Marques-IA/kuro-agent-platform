@@ -176,6 +176,7 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `WEB_SOURCE_MAX_PAGES` | `500` | teto de páginas por site, qualquer que seja o `max_pages` pedido |
 | `WEB_SOURCE_CONCURRENCY` | `3` | páginas processadas ao mesmo tempo por site (download + formatação) |
 | `WEB_SOURCE_REQUEST_DELAY_MS` | `300` | intervalo mínimo entre requisições ao mesmo site |
+| `WEB_SOURCE_MAX_FILE_MB` | `20` | teto de cada arquivo linkado (PDF, DOCX...) que a coleta baixa; as páginas têm 5 MB |
 | `WEB_SOURCE_USER_AGENT` | `KuroBot/1.0 (...)` | como o coletor se apresenta (é o nome que o `robots.txt` enxerga) |
 | `WEB_SOURCE_SCHEDULER` | `true` | ressincroniza os sites com `refresh` agendado (o próximo sync entra na fila de jobs) |
 | `JOBS_ENABLED` | `true` | roda o worker da [fila de jobs](#fila-de-jobs) nesta réplica; desligado, ela só enfileira |

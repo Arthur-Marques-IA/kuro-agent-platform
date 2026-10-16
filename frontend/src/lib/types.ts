@@ -241,6 +241,8 @@ export interface KnowledgeSource {
     include?: string[];
     exclude?: string[];
     format?: boolean;
+    /** Indexar também os PDF/DOCX/PPTX/XLSX linkados no escopo (sem formatador). */
+    include_files?: boolean;
     formatter_provider?: string | null;
     formatter_model_id?: string | null;
   };
@@ -274,6 +276,8 @@ export interface KnowledgeSourcePage {
   status: "indexed" | "failed" | "skipped" | string;
   error?: string | null;
   formatted?: "agent" | "fallback" | "none" | null;
+  /** `file`: arquivo linkado (PDF, DOCX...), lido sem o formatador. */
+  kind?: "page" | "file";
   chunks: number;
   content_id?: string | null;
   fetched_at?: string | null;
