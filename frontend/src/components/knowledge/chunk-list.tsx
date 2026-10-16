@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { ExternalLink, FileText } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { RetrievedChunk, ScoreKind } from "@/lib/types";
@@ -12,11 +12,14 @@ export function ChunkList({
   chunks,
   label = "Trechos recuperados",
   scoreKind,
+  actions,
 }: {
   chunks: RetrievedChunk[];
   label?: string;
   /** O que o score mede, quando a busca inteira diz (no trace); senão, o de cada trecho. */
   scoreKind?: ScoreKind | null;
+  /** Ações por trecho (no trace: as marcações do operador). */
+  actions?: (chunk: RetrievedChunk) => ReactNode;
 }) {
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
 
@@ -54,6 +57,7 @@ export function ChunkList({
                 <CopyButton value={chunk.content} label="Copiar trecho" className="size-6" />
               </span>
             </div>
+            {actions && <div className="-mt-1 mb-1 flex justify-end">{actions(chunk)}</div>}
             {chunk.section && (
               <p className="mb-1 truncate text-[11px] text-muted-foreground" title={chunk.section}>
                 {chunk.section}

@@ -37,6 +37,7 @@ import { NewCollectionDialog } from "@/components/knowledge/new-collection-dialo
 import { SearchSettings } from "@/components/knowledge/search-settings";
 import { SearchPanel } from "@/components/knowledge/search-panel";
 import { SourcesPanel } from "@/components/knowledge/sources-panel";
+import { FlaggedDocumentsPanel } from "@/components/knowledge/flagged-documents-panel";
 
 const PAGE_SIZE = 20;
 const POLL_INTERVAL_MS = 3000;
@@ -251,6 +252,7 @@ export function KnowledgeView({
 
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="flex min-w-0 flex-col gap-6">
+          <FlaggedDocumentsPanel collection={collection} reloadKey={reloadKey} />
           <SourcesPanel collection={collection} reloadKey={reloadKey} onChanged={reload} />
           <section className="flex min-w-0 flex-col gap-3">
             <SectionHeading

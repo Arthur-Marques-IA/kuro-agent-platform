@@ -92,7 +92,8 @@ async def test_lists_tools_with_annotations_and_hides_confirmation_from_schema(a
     assert set(tools["agent_promote"].input_schema["properties"]) == {"source", "to"}
     assert tools["agents_list"].annotations.read_only_hint is True
     # `destructive_hint=False` significa "só acrescenta": quem sobrescreve ou apaga é True.
-    for name in ("agent_delete", "agent_promote", "agent_set", "agent_apply", "tool_apply", "feedback_send"):
+    for name in ("agent_delete", "agent_promote", "agent_set", "agent_apply", "tool_apply", "feedback_send",
+                 "run_chunk_feedback"):
         assert tools[name].annotations.destructive_hint is True, name
     for name in ("run_score", "collection_add"):
         assert tools[name].annotations.destructive_hint is False, name

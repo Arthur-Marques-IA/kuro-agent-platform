@@ -10,7 +10,7 @@ chamado (tokens, latência, custo) e cada tool call (argumentos, resultado,
 erro), com `user_id`, `session_id`, agente, versão do prompt e a `metadata` que
 quem chamou mandou. O `run_id` é gerado antes do run, então toda resposta aponta
 para o próprio trace. Tudo isso fica no trace store local (tabelas `runs`,
-`run_spans`, `run_scores`, `run_metadata` e `run_references` no Postgres do
+`run_spans`, `run_scores`, `run_metadata`, `run_references` e `chunk_feedback` no Postgres do
 serviço), gravado
 fora do caminho da resposta, com status sempre terminal (`success`, `error` ou
 `interrupted`), mais a versão da configuração que rodou (`agent_version`,
@@ -34,6 +34,10 @@ Filtros: `agent_type`, `prompt_version`, `status` (`success`/`error`/`interrupte
 `TRACE_STORE_BACKEND=langfuse` a leitura passa a vir da API do Langfuse, que
 não agrupa por sessão nem por dia: aí eles agregam só um lote das execuções
 recentes (o campo `scanned` diz quantas).
+
+Os trechos que o RAG devolveu também levam uma marcação do operador (relevante, irrelevante ou
+errado/desatualizado) em `/observability/chunk-feedback`. Ela só registra: nada é escondido do
+agente. O detalhe está em [conceitos](conceitos.md#feedback-por-trecho).
 
 O panorama dos Logs (`GET /observability/overview`) agrega o período num pedido só: totais
 contra o período anterior, a série por hora, dia ou semana (execuções por resultado, custo,

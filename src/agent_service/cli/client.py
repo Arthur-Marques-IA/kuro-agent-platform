@@ -392,6 +392,25 @@ class Client:
     def score(self, body: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/observability/scores", json=body)
 
+    def chunk_feedback(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/observability/chunk-feedback", json=body)
+
+    def list_chunk_feedback(self, **params: Any) -> list[dict[str, Any]]:
+        return self._request("GET", "/observability/chunk-feedback", params={k: v for k, v in params.items() if v is not None})
+
+    def delete_chunk_feedback(self, feedback_id: str) -> None:
+        self._request("DELETE", f"/observability/chunk-feedback/{feedback_id}")
+
+    def flagged_documents(self, **params: Any) -> list[dict[str, Any]]:
+        return self._request(
+            "GET", "/observability/chunk-feedback/flagged", params={k: v for k, v in params.items() if v is not None}
+        )
+
+    def export_chunk_feedback(self, **params: Any) -> list[dict[str, Any]]:
+        return self._request(
+            "GET", "/observability/chunk-feedback/export", params={k: v for k, v in params.items() if v is not None}
+        )
+
     # -- sessões (rotas do AgentOS, no Postgres) -----------------------------
     #
     # Não confundir com `/observability/sessions`: aquilo é um agrupamento das

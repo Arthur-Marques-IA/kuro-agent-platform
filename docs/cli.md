@@ -37,6 +37,9 @@ se configura pelo console dá para configurar pela CLI, e vice-versa:
 | Panorama (totais, agentes, tools falhando) | `/observability/overview` | `dash` (aba Panorama) | Logs |
 | Shadow: referência e concordância | `/observability/references`, `/agreement` | `runs reference\|agreement` | aba Execuções (analistas) |
 | Dataset a partir do shadow | `/observability/export` | `runs export` | — |
+| Feedback por trecho do RAG | `/observability/chunk-feedback` | `runs chunk-feedback\|chunk-unmark\|chunk-marks` | botões nos Trechos consultados |
+| Documentos marcados como errados | `/observability/chunk-feedback/flagged` | `runs chunk-flagged` | Conhecimento |
+| Gabarito de RAG (JSONL) | `/observability/chunk-feedback/export` | `runs chunk-export` | — |
 | Conversas salvas, renomear e apagar | `/sessions` | `sessions list\|show\|rename\|delete` | Conversas |
 | Fila de jobs (sync de sites): ver e destravar | `/jobs` | `jobs list\|show\|retry\|cancel` | — |
 
@@ -152,6 +155,9 @@ uv run kuro agents feedback suporte --rollback 2    # volta para as regras da v2
 uv run kuro runs list --agent suporte           # execuções com latência, tokens, custo e status
 uv run kuro runs show <run_id>                  # chamadas ao modelo, tools e avaliações
 uv run kuro runs score <run_id> 1 --comment "resposta correta"
+uv run kuro runs chunk-feedback <run_id> <chunk_id> wrong --comment "tabela de 2023"   # relevant | irrelevant | wrong
+uv run kuro runs chunk-flagged -c manuais       # documentos mais marcados como errados, com os runs
+uv run kuro runs chunk-export -c manuais -o gabarito.jsonl   # marcações relevant: pergunta → trechos
 uv run kuro runs tail --agent suporte           # acompanha as execuções ao vivo (Ctrl+C sai)
 uv run kuro runs stats --agent suporte          # total, erros, tokens, custo e série diária
 uv run kuro runs sessions --agent suporte       # execuções agrupadas por sessão (o mesmo recorte dos Logs)

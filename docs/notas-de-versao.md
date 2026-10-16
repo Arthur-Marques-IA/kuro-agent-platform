@@ -58,6 +58,18 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
   `collection_versions` e os filtros em `runs_list`. Console: painel "Como a busca funciona" na
   tela de Conhecimento e a versão da base no trace. Collections existentes ficam como estavam
   (vetorial, k=10) e ganham a v1. Ver [como a collection busca](conceitos.md#como-a-collection-busca).
+- **Feedback por trecho recuperado pelo RAG.** No trace de um run, cada cartão de "Trechos
+  consultados" ganha três botões discretos: relevante, irrelevante e errado/desatualizado, com
+  comentário opcional. Isso fica numa tabela própria (`chunk_feedback`, migração `0013`), com a
+  pergunta, a collection, o `content_id`, o `chunk_id`, quem marcou e quando. O Kuro só registra
+  e aponta: nenhum documento é escondido ou despublicado. A tela Conhecimento mostra os
+  documentos mais marcados como errados, com link para os runs.
+  API: `POST`/`GET /observability/chunk-feedback`, `DELETE .../{id}`, `GET .../flagged` e
+  `GET .../export` (gabarito de RAG: pergunta → trechos relevantes). CLI: `kuro runs
+  chunk-feedback|chunk-unmark|chunk-marks|chunk-flagged|chunk-export`. MCP: `run_chunk_feedback`,
+  `chunk_feedback_flagged` e `chunk_feedback_export`.
+  Ver [conceitos](conceitos.md#feedback-por-trecho).
+
 - **Filtros dos Logs mais soltos, e KPIs que levam às execuções.** Panorama, Sessões e Execuções
   aceitam vários agentes (com busca, mostrando o `agent_type`), vários status e um intervalo de
   datas livre além dos atalhos; tudo fica na URL, e os links antigos (`agent=`, `status=`, `period=`)
@@ -318,6 +330,7 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
   `document_collections`, cria `collection_versions` (com a v1 de cada collection existente) e
   acrescenta `knowledge_collection`, `collection_version` e `collection_config_hash` em `runs`.
   Nenhuma collection muda de comportamento; runs anteriores ficam com esses campos nulos.
+- A migração `0013` também roda sozinha: cria `chunk_feedback` (as marcações por trecho do RAG).
 - `AGENT_SERVICE_PUBLIC_URL` do console deixou de ter `http://localhost:58000` fixo no compose:
   vazia, a aba Integração mostra a URL que o agent-service conhece. Para forçar outra, defina-a no
   `.env`.

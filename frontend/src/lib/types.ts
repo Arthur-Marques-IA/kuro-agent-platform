@@ -191,6 +191,35 @@ export interface RetrievedChunk {
   page_title?: string | null;
 }
 
+/** Marcação do operador num trecho consultado (`/observability/chunk-feedback`). */
+export type ChunkLabel = "relevant" | "irrelevant" | "wrong";
+
+export interface ChunkFeedback {
+  id: string;
+  run_id: string;
+  span_id: string;
+  query: string;
+  collection?: string | null;
+  content_id?: string | null;
+  chunk_id: string;
+  document?: string | null;
+  label: ChunkLabel;
+  comment?: string | null;
+  created_by?: string | null;
+  created_at: string;
+}
+
+/** Documento com mais marcações (padrão: errado/desatualizado). */
+export interface FlaggedDocument {
+  content_id?: string | null;
+  document?: string | null;
+  collection?: string | null;
+  count: number;
+  last_at: string;
+  run_ids: string[];
+  comments: string[];
+}
+
 export interface SearchResult extends RetrievedChunk {
   metadata: Record<string, unknown> | null;
 }

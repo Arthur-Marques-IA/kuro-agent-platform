@@ -313,6 +313,35 @@ A resposta do `/chat`, do `/chat/stream` (evento `sources`) e do `/analyze` traz
 `content_id`, o melhor `score` e os `chunk_ids` — as citações, como num chatbot de documentação.
 O texto dos trechos fica só no trace. Formato em [integração](integracao.md#fontes-consultadas-sources).
 
+### Feedback por trecho
+
+No trace, quem opera marca cada trecho consultado: **relevante** (era o trecho certo),
+**irrelevante** (não respondia à pergunta) ou **errado/desatualizado** (o conteúdo do documento
+está incorreto), com um comentário opcional. Fica na tabela `chunk_feedback`: run, span, pergunta,
+collection, `content_id`, `chunk_id`, documento, rótulo, quem marcou e quando. Pergunta, collection
+e documento são copiados da span, não de quem chama. Marcar de novo o mesmo trecho da mesma busca
+troca o rótulo.
+
+O Kuro **só registra e aponta**. Nenhuma marcação esconde, despublica ou rebaixa um documento.
+A tela Conhecimento lista os documentos mais marcados como errados, com link para os runs, e o
+que fazer com eles é decisão de quem opera a fonte.
+
+As marcações `relevant` formam o gabarito de um eval de RAG (pergunta → trechos e documentos
+relevantes). O export devolve uma linha por pergunta e serve tanto para guardar um dataset quanto
+para subir só na hora de comparar:
+
+```bash
+uv run kuro runs chunk-feedback <run_id> <chunk_id> relevant      # o chunk_id está em metadata.references
+uv run kuro runs chunk-flagged -c manuais                         # mais marcados como errados
+uv run kuro runs chunk-export -c manuais -o gabarito.jsonl
+# {"query", "collection", "relevant_chunk_ids", "relevant_content_ids", "run_ids"} por linha
+```
+
+API: `POST /observability/chunk-feedback` com `{run_id, chunk_id, label, span_id?, comment?, created_by?}`
+(404 se o trecho não veio em nenhuma busca do run), `GET` com `run_id`/`collection`/`label`,
+`DELETE /observability/chunk-feedback/{id}`, `GET .../flagged` e `GET .../export`. Exige a chave
+`admin`, como o resto da observabilidade, menos scores e referências.
+
 ### Quem gera os vetores
 
 Cada collection escolhe o seu embedder **na criação**, entre `google` (padrão),

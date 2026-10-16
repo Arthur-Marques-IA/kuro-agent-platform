@@ -30,6 +30,7 @@ import { CopyButton } from "@/components/ui/copy-button";
 import { EmptyState, RelativeTime, SectionHeading, Skeleton, Spinner } from "@/components/ui/primitives";
 import { AgentAvatar } from "@/components/agents/agent-avatar";
 import { ChunkList } from "@/components/knowledge/chunk-list";
+import { ChunkFeedbackButtons, useChunkFeedback } from "@/components/knowledge/chunk-feedback";
 import { FeedbackCount, RunStatusBadge } from "@/components/observability/run-status";
 import { PageBody, PageHeader } from "@/components/workspace/page-header";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
@@ -130,6 +131,7 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
   const rows = useMemo(() => flattenTree(spans), [spans]);
   const [selectedId, setSelectedId] = useState<string | null>(rows[0]?.span.id ?? null);
   const selected = spans.find((s) => s.id === selectedId) ?? rows[0]?.span;
+  const chunkFeedback = useChunkFeedback(run.run_id, userId);
   const agentHref = `/agents/${encodeURIComponent(run.agent_type)}`;
   const agentLabel = run.agent_name ?? run.agent_type;
 
@@ -248,7 +250,7 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
             </div>
             <Waterfall rows={rows} run={trace.run} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
           </Card>
-          {selected && <SpanDetail key={selected.id} span={selected} />}
+          {selected && <SpanDetail key={selected.id} span={selected} feedback={chunkFeedback} />}
         </div>
 
         {(Object.keys(run.metadata ?? {}).length > 0 || trace.reference) && (
@@ -393,7 +395,7 @@ function Waterfall({
 
 // -- detalhe do span -------------------------------------------------------
 
-function SpanDetail({ span }: { span: TraceSpan }) {
+function SpanDetail({ span, feedback }: { span: TraceSpan; feedback: ReturnType<typeof useChunkFeedback> }) {
   const references = asReferences(span.metadata?.references);
   const { icon: Icon, label } = references ? { icon: Search, label: "Busca" } : spanType(span.type);
   // As referências têm seção própria; nos metadados elas seriam um JSON ilegível.
@@ -435,7 +437,7 @@ function SpanDetail({ span }: { span: TraceSpan }) {
       </div>
       <div className="flex flex-col gap-4 p-4">
         <IoSection title="Entrada" value={span.input} />
-        {references ? <ReferencesSection references={references} output={span.output} /> : <IoSection title="Saída" value={span.output} />}
+        {references ? <ReferencesSection references={references} output={span.output} spanId={span.id} feedback={feedback} /> : <IoSection title="Saída" value={span.output} />}
         {metadata.length > 0 && (
           <section className="flex flex-col gap-2">
             <h3 className="text-xs font-medium text-muted-foreground">Metadados</h3>
@@ -461,7 +463,17 @@ function asReferences(value: unknown): RetrievalReferences | null {
   return refs && typeof refs === "object" && Array.isArray(refs.results) ? refs : null;
 }
 
-function ReferencesSection({ references, output }: { references: RetrievalReferences; output: unknown }) {
+function ReferencesSection({
+  references,
+  output,
+  spanId,
+  feedback,
+}: {
+  references: RetrievalReferences;
+  output: unknown;
+  spanId: string;
+  feedback: ReturnType<typeof useChunkFeedback>;
+}) {
   const [raw, setRaw] = useState(false);
   const { results } = references;
   return (
@@ -490,7 +502,21 @@ function ReferencesSection({ references, output }: { references: RetrievalRefere
           A busca não encontrou nada — o agente respondeu sem trechos da base.
         </p>
       ) : (
-        <ChunkList chunks={results} label="Trechos consultados" scoreKind={references.score_kind} />
+        <ChunkList
+          chunks={results}
+          label="Trechos consultados"
+          scoreKind={references.score_kind}
+          actions={(chunk) =>
+            chunk.chunk_id ? (
+              <ChunkFeedbackButtons
+                key={feedback.marks.get(feedback.keyOf(spanId, chunk.chunk_id))?.id ?? "nova"}
+                current={feedback.marks.get(feedback.keyOf(spanId, chunk.chunk_id))}
+                onMark={(label, comment) => feedback.mark(spanId, chunk.chunk_id!, label, comment)}
+                onClear={feedback.clear}
+              />
+            ) : null
+          }
+        />
       )}
     </section>
   );

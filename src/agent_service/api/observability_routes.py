@@ -586,3 +586,132 @@ def export_cases(
         )
     return cases
 
+
+
+# -- feedback por trecho recuperado (RAG) ---------------------------------------------
+
+
+class ChunkFeedbackIn(BaseModel):
+    run_id: str = Field(..., min_length=1, max_length=200)
+    chunk_id: str = Field(..., min_length=1, max_length=200, description="`chunk_id` do trecho em `metadata.references`")
+    label: Literal["relevant", "irrelevant", "wrong"] = Field(
+        ..., description="`relevant` (era o trecho certo), `irrelevant` (não respondia) ou `wrong` (conteúdo errado/desatualizado)"
+    )
+    span_id: str | None = Field(
+        default=None, max_length=300, description="A span da busca; sem ela, vale a primeira busca do run com o trecho"
+    )
+    comment: str | None = Field(default=None, max_length=2000)
+    created_by: str | None = Field(default=None, max_length=200, description="Quem marcou (operador)")
+
+
+class ChunkFeedbackOut(BaseModel):
+    id: str
+    run_id: str
+    span_id: str
+    agent_type: str | None = None
+    query: str
+    collection: str | None = None
+    content_id: str | None = None
+    chunk_id: str
+    document: str | None = None
+    rank: int | None = None
+    label: str
+    comment: str | None = None
+    created_by: str | None = None
+    created_at: datetime
+
+
+class FlaggedDocument(BaseModel):
+    content_id: str | None = None
+    document: str | None = None
+    collection: str | None = None
+    count: int
+    last_at: datetime
+    run_ids: list[str]
+    comments: list[str]
+
+
+class RagCase(BaseModel):
+    query: str
+    collection: str | None = None
+    relevant_chunk_ids: list[str]
+    relevant_content_ids: list[str]
+    run_ids: list[str]
+
+
+@router.post("/chunk-feedback", response_model=ChunkFeedbackOut, status_code=201)
+def create_chunk_feedback(body: ChunkFeedbackIn) -> ChunkFeedbackOut:
+    """Marca um trecho consultado num run (substitui a marcação anterior do mesmo trecho
+    na mesma busca). Pergunta, collection e documento vêm da span, não do cliente.
+    Só registra: nenhum documento é escondido ou despublicado por causa disto."""
+    from agent_service.observability import chunk_feedback, run_store
+
+    try:
+        row = chunk_feedback.mark(
+            body.run_id,
+            body.chunk_id,
+            body.label,
+            span_id=body.span_id,
+            comment=body.comment,
+            created_by=body.created_by,
+        )
+    except run_store.RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Run {body.run_id!r} não encontrado.") from exc
+    except chunk_feedback.ChunkNotFoundError as exc:
+        raise HTTPException(
+            status_code=404, detail=f"O trecho {body.chunk_id!r} não aparece nas buscas do run {body.run_id!r}."
+        ) from exc
+    return ChunkFeedbackOut(**row)
+
+
+@router.get("/chunk-feedback", response_model=list[ChunkFeedbackOut])
+def list_chunk_feedback(
+    run_id: str | None = None,
+    collection: str | None = None,
+    label: Literal["relevant", "irrelevant", "wrong"] | None = None,
+    content_id: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=5000)] = 500,
+) -> list[ChunkFeedbackOut]:
+    """Marcações de trecho, mais recentes primeiro."""
+    from agent_service.observability import chunk_feedback
+
+    rows = chunk_feedback.list_feedback(
+        run_id=run_id, collection=collection, label=label, content_id=content_id, limit=limit
+    )
+    return [ChunkFeedbackOut(**r) for r in rows]
+
+
+@router.delete("/chunk-feedback/{feedback_id}", status_code=204)
+def delete_chunk_feedback(feedback_id: str) -> None:
+    from agent_service.observability import chunk_feedback
+
+    if not chunk_feedback.remove(feedback_id):
+        raise HTTPException(status_code=404, detail=f"Marcação {feedback_id!r} não encontrada.")
+
+
+@router.get("/chunk-feedback/flagged", response_model=list[FlaggedDocument])
+def flagged_documents(
+    collection: str | None = None,
+    label: Literal["relevant", "irrelevant", "wrong"] = "wrong",
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+) -> list[FlaggedDocument]:
+    """Documentos com mais marcações (padrão: `wrong`, errado/desatualizado), com os runs.
+    Só aponta: o que fazer com o documento é decisão de quem opera a base."""
+    from agent_service.observability import chunk_feedback
+
+    return [FlaggedDocument(**g) for g in chunk_feedback.flagged_documents(collection=collection, label=label, limit=limit)]
+
+
+@router.get("/chunk-feedback/export", response_model=list[RagCase])
+def export_chunk_feedback(
+    collection: str | None = None,
+    agent_type: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> list[RagCase]:
+    """Gabarito de um eval de RAG: uma linha por pergunta, com os trechos e documentos
+    marcados `relevant`. `kuro runs chunk-export` grava isto em JSONL."""
+    from agent_service.observability import chunk_feedback
+
+    rows = chunk_feedback.export_relevant(collection=collection, agent_type=agent_type, since=since, until=until)
+    return [RagCase(**r) for r in rows]

@@ -264,6 +264,113 @@ def score(
     emit(st, call(st, st.client.score, body), lambda s: console.print(f"[green]✓[/] {s['name']}={s['value']} em {s['run_id']}"))
 
 
+# -- feedback por trecho recuperado (RAG) ---------------------------------------------
+
+_CHUNK_LABELS = ("relevant", "irrelevant", "wrong")
+
+
+@app.command("chunk-feedback")
+def chunk_feedback(
+    ctx: typer.Context,
+    run_id: str,
+    chunk_id: str = typer.Argument(..., help="`chunk_id` do trecho (em `kuro runs show <run_id> --json`, metadata.references)."),
+    label: str = typer.Argument(..., help="relevant | irrelevant | wrong (conteúdo errado/desatualizado)."),
+    span_id: str | None = typer.Option(None, "--span", help="A span da busca; sem isto, a primeira busca do run com o trecho."),
+    comment: str | None = typer.Option(None, "--comment"),
+    created_by: str = typer.Option("cli", "--by", envvar="KURO_USER_ID", help="Quem marcou."),
+) -> None:
+    """Marca um trecho que a busca do run devolveu. Só registra: o Kuro não esconde
+    nem despublica documento por causa da marcação."""
+    st = state(ctx)
+    if label not in _CHUNK_LABELS:
+        fail(st, f"rótulo inválido: {label!r} (use {', '.join(_CHUNK_LABELS)})", EXIT_USAGE)
+    body = {"run_id": run_id, "chunk_id": chunk_id, "label": label, "span_id": span_id, "comment": comment, "created_by": created_by}
+    emit(
+        st,
+        call(st, st.client.chunk_feedback, body),
+        lambda r: console.print(f"[green]✓[/] {r['label']} em {r['document'] or r['chunk_id']} [dim](id {r['id']})[/]"),
+    )
+
+
+@app.command("chunk-unmark")
+def chunk_unmark(ctx: typer.Context, feedback_id: str) -> None:
+    """Apaga uma marcação de trecho (o id vem de `chunk-feedback` ou `chunk-marks`)."""
+    st = state(ctx)
+    call(st, st.client.delete_chunk_feedback, feedback_id)
+    emit(st, {"deleted": feedback_id}, lambda r: console.print(f"[green]✓[/] marcação {r['deleted']} apagada"))
+
+
+def _render_marks(rows: list[dict[str, Any]]) -> None:
+    table = Table(show_edge=False, header_style="bold")
+    for column in ("quando", "rótulo", "documento", "pergunta", "run_id", "id"):
+        table.add_column(column)
+    for r in rows:
+        table.add_row(
+            str(r["created_at"])[5:16].replace("T", " "), r["label"], r.get("document") or "—", r["query"], r["run_id"], r["id"]
+        )
+    console.print(table)
+
+
+@app.command("chunk-marks")
+def chunk_marks(
+    ctx: typer.Context,
+    run: str | None = typer.Option(None, "--run", help="Só deste run."),
+    collection: str | None = typer.Option(None, "--collection", "-c"),
+    label: str | None = typer.Option(None, "--label", help="relevant | irrelevant | wrong."),
+    limit: int = typer.Option(100, "--limit", "-n", min=1, max=5000),
+) -> None:
+    """Lista as marcações de trecho, mais recentes primeiro."""
+    st = state(ctx)
+    rows = call(st, st.client.list_chunk_feedback, run_id=run, collection=collection, label=label, limit=limit)
+    emit(st, rows, _render_marks)
+
+
+def _render_flagged(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        console.print("[dim]nenhum documento marcado[/]")
+    for r in rows:
+        console.print(f"[bold]{r['count']}×[/] {r.get('document') or r.get('content_id')} [dim]({r.get('collection') or '—'})[/]")
+        console.print(f"   [dim]runs: {', '.join(r['run_ids'][:5])}[/]", highlight=False)
+
+
+@app.command("chunk-flagged")
+def chunk_flagged(
+    ctx: typer.Context,
+    collection: str | None = typer.Option(None, "--collection", "-c"),
+    label: str = typer.Option("wrong", "--label", help="relevant | irrelevant | wrong."),
+    limit: int = typer.Option(20, "--limit", "-n", min=1, max=200),
+) -> None:
+    """Documentos com mais marcações (padrão: errado/desatualizado), com os runs."""
+    st = state(ctx)
+    emit(st, call(st, st.client.flagged_documents, collection=collection, label=label, limit=limit), _render_flagged)
+
+
+@app.command("chunk-export")
+def chunk_export(
+    ctx: typer.Context,
+    output: str | None = typer.Option(None, "--output", "-o", help="Arquivo JSONL; sem isto, stdout."),
+    collection: str | None = typer.Option(None, "--collection", "-c"),
+    agent: str | None = typer.Option(None, "--agent", "-a", help="agent_type."),
+    since: str | None = typer.Option(None, "--since", help="ISO 8601."),
+) -> None:
+    """Gabarito de RAG em JSONL: uma linha por pergunta (query, collection,
+    relevant_chunk_ids, relevant_content_ids, run_ids), das marcações `relevant`."""
+    st = state(ctx)
+    cases = call(st, st.client.export_chunk_feedback, collection=collection, agent_type=agent, since=since)
+    lines = "".join(json.dumps(case, ensure_ascii=False) + "\n" for case in cases)
+    if output:
+        try:
+            with open(output, "w", encoding="utf-8") as fh:
+                fh.write(lines)
+        except OSError as exc:
+            fail(st, f"não consegui gravar {output}: {exc}", EXIT_USAGE)
+        emit(st, {"output": output, "cases": len(cases)}, lambda r: console.print(f"[green]✓[/] {r['cases']} perguntas em {r['output']}"))
+        return
+    import sys
+
+    sys.stdout.write(lines)
+
+
 # -- shadow: referência, concordância e export -----------------------------------------
 
 
