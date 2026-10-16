@@ -204,7 +204,9 @@ Editar um agente (`agent_set`, `agent_apply`), uma tool (`tool_apply`) ou as reg
 pede confirmação, como na CLI: tem histórico e versão para voltar. Isso inclui editar direto o
 agente de produção, sem passar pelo draft. Essas tools levam `destructiveHint`, porque sobrescrevem
 o que existia. As de leitura levam `readOnlyHint`, e só `run_score` e `collection_add`, que apenas
-acrescentam, ficam sem nenhuma das duas. `collection_add_site` e `collection_sync_site` levam também
+acrescentam, ficam sem nenhuma das duas. `collection_add_site` aceita `include_files` (padrão: sim — os PDF, DOCX, PPTX e XLSX linkados no
+escopo entram, lidos sem formatador e com a página em cada trecho). `collection_add_site` e
+`collection_sync_site` levam também
 `openWorldHint` (saem para a web), e a segunda `destructiveHint` (troca e remove páginas da base). É por essas anotações que o cliente MCP decide o que
 pede permissão antes de chamar.
 

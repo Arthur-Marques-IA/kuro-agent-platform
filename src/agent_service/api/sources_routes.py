@@ -9,11 +9,11 @@ from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 from agent_service.api.collections_routes import _row_or_404
 from agent_service.documents import sources_store as store
-from agent_service.documents import web_sync
+from agent_service.documents import web, web_sync
 from agent_service.tools.egress import EgressBlockedError, EgressUnresolvedError, acheck_url
 
 router = APIRouter(prefix="/collections", tags=["collections"])
@@ -28,6 +28,11 @@ class SourceOptions(BaseModel):
     include: list[str] | None = Field(default=None, description="Globs de caminho que entram, ex. `/docs/*`.")
     exclude: list[str] | None = Field(default=None, description="Globs de caminho que ficam de fora, ex. `/blog/*`.")
     format: bool | None = Field(default=None, description="Passar cada página pelo agente formatador (padrão true).")
+    include_files: bool | None = Field(
+        default=None,
+        description="Indexar também os arquivos linkados (PDF, DOCX, PPTX, XLSX) do mesmo escopo, dentro de "
+        "max_pages e sem o formatador (padrão true nas fontes novas).",
+    )
     formatter_provider: str | None = None
     formatter_model_id: str | None = None
     formatter_credential_id: str | None = None
@@ -86,6 +91,12 @@ class SourcePageOut(BaseModel):
     chunks: int = 0
     content_id: str | None = None
     fetched_at: datetime | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def kind(self) -> Literal["page", "file"]:
+        """`file` para um arquivo linkado (PDF, DOCX...), lido sem o formatador."""
+        return "file" if web.file_extension(self.url) else "page"
 
 
 class SourceDetailOut(SourceOut):

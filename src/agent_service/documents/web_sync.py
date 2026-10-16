@@ -14,6 +14,12 @@ URL (`page_content_id`): ressincronizar **substitui** a página em vez de duplic
 e a página cujo texto não mudou nem é reprocessada (hash do texto extraído). Página
 que sumiu do site (fora da descoberta, 404 ou 410) sai da collection.
 
+Arquivos linkados nas páginas (PDF, DOCX, PPTX, XLSX — `include_files`) entram
+também, do mesmo escopo e dentro de `max_pages`, depois das páginas: o mesmo
+download seguro, com teto próprio (`WEB_SOURCE_MAX_FILE_MB`), e a leitura pelos
+leitores do Agno, **sem** o formatador — o arquivo já vem estruturado e reescrevê-lo
+só arriscaria a fidelidade. Os trechos de um PDF levam a página (`page`).
+
 Roda em background, como job `web_source.sync` da fila (`agent_service/jobs/`): uma
 sincronização de centenas de páginas, cada uma com uma chamada ao modelo, não cabe
 numa requisição HTTP. O progresso fica na própria fonte; a trava contra dois syncs
@@ -23,10 +29,13 @@ próximo job enfileirado com `run_after` no futuro.
 
 import asyncio
 import hashlib
+import io
 import logging
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
+from urllib.parse import unquote, urlsplit
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.document import Document
@@ -60,6 +69,10 @@ def default_options(**overrides: Any) -> dict[str, Any]:
         "include": [],
         "exclude": [],
         "format": True,
+        # Novas fontes indexam os arquivos linkados: não passam pelo formatador (nem
+        # gastam modelo) e contam no `max_pages`. Fonte antiga sem a chave fica como
+        # estava (`_Run`), para o próximo sync agendado não começar a baixar arquivos.
+        "include_files": True,
         "formatter_provider": None,
         "formatter_model_id": None,
         "formatter_credential_id": None,
@@ -104,24 +117,29 @@ async def ingest_page(
     title: str,
     markdown: str,
     metadata: dict[str, Any],
+    pages: list[tuple[int | None, str]] | None = None,
+    file_type: str = "text/markdown",
+    filename: str | None = None,
 ) -> tuple[str, int]:
-    """Indexa (ou substitui) o documento de uma página. Devolve (content_id, trechos)."""
+    """Indexa (ou substitui) o documento de uma página — ou de um arquivo, cujas
+    `pages` (número, texto) são cortadas uma a uma, com o número em `meta_data.page`.
+    Devolve (content_id, trechos)."""
     content_id = page_content_id(collection, url)
-    chunks = chunk_markdown(markdown)
-    documents = [
-        Document(
-            content=chunk.text,
-            name=title,
-            meta_data={"chunk": i, "chunk_size": len(chunk.text), **({"section": chunk.section} if chunk.section else {})},
-        )
-        for i, chunk in enumerate(chunks, 1)
-    ]
+    documents: list[Document] = []
+    for page, text in pages if pages is not None else [(None, markdown)]:
+        for chunk in chunk_markdown(text):
+            meta: dict[str, Any] = {"chunk": len(documents) + 1, "chunk_size": len(chunk.text)}
+            if page is not None:
+                meta["page"] = page
+            if chunk.section:
+                meta["section"] = chunk.section
+            documents.append(Document(content=chunk.text, name=title, meta_data=meta))
     await remove_page(knowledge, content_id)
     content = Content(
         id=content_id,
         name=title,
         description=url,
-        file_data=FileData(content=markdown.encode("utf-8"), type="text/markdown", filename=f"{title[:80]}.md"),
+        file_data=FileData(content=markdown.encode("utf-8"), type=file_type, filename=filename or f"{title[:80]}.md"),
         metadata=metadata,
         reader=_PreChunked(documents),
     )
@@ -135,6 +153,35 @@ async def remove_page(knowledge: Knowledge, content_id: str) -> None:
         await knowledge.aremove_content_by_id(content_id)
     except Exception:
         logger.debug("Nada a remover para %s", content_id, exc_info=True)
+
+
+def read_file(body: bytes, ext: str, filename: str) -> list[tuple[int | None, str]]:
+    """O texto de um arquivo, pelos leitores do Agno: (página, texto) — a página é a
+    física do PDF (1, 2...) ou o slide do PPTX; DOCX e XLSX não têm (`None`).
+
+    No PDF, o número vem da ordem e não do `meta_data["page"]` do Agno, que desloca
+    a contagem quando a capa não é numerada; e sem os marcadores `<start page N>`,
+    que sujariam o texto exato que o trace mostra."""
+    from agno.knowledge.reader.docx_reader import DocxReader
+    from agno.knowledge.reader.excel_reader import ExcelReader
+    from agno.knowledge.reader.pdf_reader import PDFReader
+    from agno.knowledge.reader.pptx_reader import PPTXReader
+
+    stream = io.BytesIO(body)
+    stream.name = filename
+    if ext == ".pdf":
+        reader = PDFReader(chunk=False, split_on_pages=True, page_start_numbering_format="", page_end_numbering_format="")
+        return [(n, doc.content) for n, doc in enumerate(reader.read(stream, name=filename), 1)]
+    if ext == ".pptx":
+        text = "\n\n".join(doc.content for doc in PPTXReader(chunk=False).read(stream, name=filename))
+        parts = re.split(r"(?m)^Slide (\d+):\n", text)
+        return [(int(n), part.replace("(No text content)", "")) for n, part in zip(parts[1::2], parts[2::2])]
+    reader = ExcelReader(chunk=False) if ext == ".xlsx" else DocxReader(chunk=False)
+    return [(None, doc.content) for doc in reader.read(stream, name=filename)]
+
+
+def file_name(url: str) -> str:
+    return unquote(urlsplit(url).path.rsplit("/", 1)[-1]) or url
 
 
 # -- descoberta ----------------------------------------------------------------------
@@ -185,6 +232,7 @@ class _Run:
         self.knowledge = knowledge
         self.fetcher = fetcher
         self.model = model
+        self.include_files = bool(self.options.get("include_files", False))
         self.previous = {p["url"]: p for p in store.list_pages(source["id"])}
         self.counts = {"discovered": 0, "done": 0, "indexed": 0, "unchanged": 0, "removed": 0, "failed": 0, "skipped": 0,
                        "format_input_tokens": 0, "format_output_tokens": 0, "format_fallbacks": 0,
@@ -207,16 +255,23 @@ class _Run:
             self.progress()
         return links
 
-    async def _process(self, url: str) -> list[str]:
+    async def _fetch(self, url: str, now: datetime, ext: str | None = None) -> web.Fetched | None:
+        """Baixa a página (ou o arquivo `ext`); `None` se não deu — já registrado."""
         sid = self.source["id"]
-        now = datetime.now(timezone.utc)
         if not await self.fetcher.allowed(url):
             self.counts["skipped"] += 1
             store.upsert_page(sid, url, status="skipped", error="bloqueada pelo robots.txt", fetched_at=now)
             self.kept.add(url)
-            return []
+            return None
         try:
-            fetched = await self.fetcher.get(url)
+            if ext is None:
+                return await self.fetcher.get(url)
+            fetched = await self.fetcher.get(
+                url, accept=web.FILE_TYPES[ext][0] + web.GENERIC_FILE_TYPES, what="arquivo",
+                max_bytes=get_settings().web_source_max_file_mb * 1024 * 1024,
+            )
+            web.check_file(fetched, ext)
+            return fetched
         except web.WebFetchError as exc:
             message = str(exc)
             previous = self.previous.get(url)
@@ -224,11 +279,22 @@ class _Run:
                 await remove_page(self.knowledge, previous["content_id"])
                 store.delete_page(sid, url)
                 self.counts["removed"] += 1
-                return []
+                return None
             self.counts["failed"] += 1
             # Falha passageira não apaga o que já estava indexado.
             store.upsert_page(sid, url, status="failed", error=message[:500], fetched_at=now)
             self.kept.add(url)
+            return None
+
+    async def _process(self, url: str) -> list[str]:
+        sid = self.source["id"]
+        now = datetime.now(timezone.utc)
+        ext = web.file_extension(url)
+        if ext is not None:
+            await self._process_file(url, ext, now)
+            return []
+        fetched = await self._fetch(url, now)
+        if fetched is None:
             return []
 
         self.responded += 1
@@ -288,6 +354,66 @@ class _Run:
         )
         return extracted.links
 
+    async def _process_file(self, url: str, ext: str, now: datetime) -> None:
+        """Um arquivo linkado: lido pelo leitor do Agno, sem formatador."""
+        sid = self.source["id"]
+        fetched = await self._fetch(url, now, ext)
+        if fetched is None:
+            return
+        self.responded += 1
+        self.kept.add(url)
+        title = file_name(url)
+        digest = hashlib.sha256(b"file\x00" + fetched.body).hexdigest()
+        previous = self.previous.get(url)
+        if previous and previous.get("content_hash") == digest and previous.get("status") == "indexed":
+            self.counts["unchanged"] += 1
+            store.upsert_page(sid, url, fetched_at=now)
+            return
+        try:
+            # pypdf é CPU puro: fora do event loop, para não travar o heartbeat e a API.
+            pages = await asyncio.to_thread(read_file, fetched.body, ext, title)
+        except Exception as exc:
+            self.counts["failed"] += 1
+            store.upsert_page(sid, url, status="failed", error=f"leitura: {type(exc).__name__}: {exc}"[:500],
+                              title=title, fetched_at=now)
+            return
+        pages = [(n, text.strip()) for n, text in pages if text.strip()]
+        if sum(len(text) for _, text in pages) < MIN_PAGE_CHARS:
+            # PDF escaneado (só imagem) ou protegido por senha.
+            self.counts["skipped"] += 1
+            store.upsert_page(sid, url, status="skipped", error="arquivo sem texto extraível (escaneado ou protegido?)",
+                              title=title, fetched_at=now)
+            return
+        try:
+            content_id, chunks = await ingest_page(
+                self.knowledge,
+                self.collection,
+                url=url,
+                title=title,
+                markdown="\n\n".join(text for _, text in pages),
+                pages=pages,
+                file_type=web.FILE_TYPES[ext][0][0],
+                filename=title,
+                metadata={
+                    "source_type": "web",
+                    "source_id": sid,
+                    "source_url": url,
+                    "page_title": title,
+                    "file_type": ext[1:],
+                    "crawled_at": now.isoformat(timespec="seconds"),
+                },
+            )
+        except Exception as exc:
+            logger.warning("Falha ao indexar %s", url, exc_info=True)
+            self.counts["failed"] += 1
+            store.upsert_page(sid, url, status="failed", error=f"indexação: {type(exc).__name__}: {exc}"[:500], fetched_at=now)
+            return
+        self.counts["indexed"] += 1
+        store.upsert_page(
+            sid, url, status="indexed", content_id=content_id, title=title, content_hash=digest,
+            chunks=chunks, formatted="none", error=None, fetched_at=now,
+        )
+
     async def run(self) -> None:
         mode, start = self.source["mode"], web.normalize_url(self.source["url"])
         limit = min(int(self.options.get("max_pages") or 50), get_settings().web_source_max_pages)
@@ -299,6 +425,7 @@ class _Run:
             batch = await discover_sitemap(self.fetcher, self.source["url"], scope, limit)
         else:
             batch = [start]
+        files: list[str] = []
         depth = 0
         max_depth = int(self.options.get("max_depth") or 0) if mode == "crawl" else 0
         while batch:
@@ -309,10 +436,19 @@ class _Run:
             self.counts["discovered"] = len(self.visited)
             self.progress()
             links_per_page = await asyncio.gather(*(self.process(u) for u in batch))
+            if self.include_files:
+                files += [link for links in links_per_page for link in links if scope.accepts_file(link)]
             if mode != "crawl" or depth >= max_depth:
                 break
             depth += 1
             batch = web.unique(link for links in links_per_page for link in links if scope.accepts(link))
+        # Os arquivos linkados vão depois das páginas, no que sobrar de `max_pages`.
+        files = [u for u in web.unique(files) if u not in self.visited][: max(limit - len(self.visited), 0)]
+        if files:
+            self.visited.update(files)
+            self.counts["discovered"] = len(self.visited)
+            self.progress()
+            await asyncio.gather(*(self.process(u) for u in files))
 
         # O que estava indexado e não apareceu desta vez saiu do site (ou do escopo).
         # Se nada desta rodada respondeu (site fora do ar), não dá para concluir isso:

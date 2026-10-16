@@ -130,6 +130,9 @@ class Settings(BaseSettings):
     """Páginas processadas ao mesmo tempo por fonte (download + formatação)."""
     web_source_request_delay_ms: int = 300
     """Intervalo mínimo entre duas requisições ao mesmo site — educação com quem hospeda."""
+    web_source_max_file_mb: int = 20
+    """Teto de cada arquivo linkado (PDF, DOCX...) que a coleta baixa — o mesmo
+    tamanho padrão de `max_attachment_mb`. As páginas HTML têm 5 MB."""
     web_source_user_agent: str = "KuroBot/1.0 (+https://github.com/Arthur-Marques-IA)"
     """Como o crawler se apresenta; é este nome que o `robots.txt` do site enxerga."""
     web_source_scheduler: bool = True

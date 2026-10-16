@@ -7,6 +7,7 @@ import {
   CircleCheck,
   CircleSlash,
   ExternalLink,
+  FileText,
   Globe,
   LoaderCircle,
   RefreshCw,
@@ -232,6 +233,7 @@ function SourceRow({
               {source.label ? `${source.url} · ` : ""}
               {MODE_LABEL[source.mode]} · atualização {REFRESH_LABEL[source.refresh]}
               {source.options.format === false ? " · sem formatador" : ""}
+              {source.options.include_files ? " · com arquivos" : ""}
             </span>
           </span>
         </button>
@@ -358,12 +360,17 @@ function PageRow({ page }: { page: KnowledgeSourcePage }) {
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate font-medium">{page.title || page.url}</span>
+          {page.kind === "file" && (
+            <Badge variant="outline" className="shrink-0 gap-1">
+              <FileText className="size-3" aria-hidden /> arquivo
+            </Badge>
+          )}
           <a
             href={page.url}
             target="_blank"
             rel="noreferrer noopener"
             className="shrink-0 text-muted-foreground hover:text-foreground"
-            aria-label="Abrir página"
+            aria-label={page.kind === "file" ? "Abrir arquivo" : "Abrir página"}
           >
             <ExternalLink className="size-3" />
           </a>

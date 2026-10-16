@@ -368,7 +368,7 @@ def _render_source_detail(s: dict[str, Any]) -> None:
             page["url"],
             f"[{cor}]{page['status']}[/]",
             str(page.get("chunks") or 0),
-            page.get("formatted") or "—",
+            "arquivo" if page.get("kind") == "file" else page.get("formatted") or "—",
             page.get("error") or "",
         )
     console.print(table)
@@ -409,6 +409,10 @@ def add_site(
     include: list[str] = typer.Option([], "--include", help="Glob de caminho que entra, ex. '/docs/*'. Repetível."),
     exclude: list[str] = typer.Option([], "--exclude", help="Glob de caminho que fica fora, ex. '/blog/*'. Repetível."),
     no_format: bool = typer.Option(False, "--no-format", help="Sem o agente formatador: indexa o texto extraído."),
+    files: bool | None = typer.Option(
+        None, "--files/--no-files",
+        help="Indexar também os PDF, DOCX, PPTX e XLSX linkados no escopo (padrão: sim; contam no --max-pages).",
+    ),
     formatter_provider: str | None = typer.Option(None, "--formatter-provider", help="Provedor do formatador."),
     formatter_model: str | None = typer.Option(None, "--formatter-model", help="Modelo do formatador."),
     refresh: str = typer.Option("never", "--refresh", help="Ressincronizar: never, daily, weekly ou monthly."),
@@ -436,6 +440,7 @@ def add_site(
         "include": include or None,
         "exclude": exclude or None,
         "format": False if no_format else None,
+        "include_files": files,
         "formatter_provider": formatter_provider,
         "formatter_model_id": formatter_model,
     }
@@ -481,7 +486,7 @@ def set_site(
     source_id: str,
     pairs: list[str] = typer.Argument(
         ...,
-        help="campo=valor: refresh, label, max_pages, max_depth, include, exclude, format, "
+        help="campo=valor: refresh, label, max_pages, max_depth, include, exclude, format, include_files, "
         "formatter_provider, formatter_model_id.",
     ),
 ) -> None:

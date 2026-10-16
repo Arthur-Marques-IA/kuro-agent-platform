@@ -138,7 +138,7 @@ def paginas_por_url(source_id: str) -> dict[str, dict]:
 
 def test_crawl_respeita_escopo_robots_redirect_e_egress(colecao, base):
     site = Site()
-    sid = nova_fonte(colecao, "https://site.test/docs", max_depth=2)
+    sid = nova_fonte(colecao, "https://site.test/docs", max_depth=2, include_files=False)
     fonte = sincronizar(sid, site)
     paginas = paginas_por_url(sid)
 
@@ -591,3 +591,171 @@ def test_sync_cancelado_ainda_grava_o_que_o_formatador_gastou(colecao, base, mon
         sincronizar(sid, Site(), model=object())
     (custo,) = _custos(sid)
     assert (custo["input_tokens"], custo["cost_usd"]) == (100, 0.001)
+
+
+# -- arquivos linkados (PDF, DOCX...) ------------------------------------------------------
+
+
+def pdf(*paginas: str) -> bytes:
+    """Um PDF mínimo, uma linha de texto por página, com o xref calculado."""
+    n = len(paginas)
+    objetos = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [" + " ".join(f"{3 + 2 * i} 0 R" for i in range(n)) + f"] /Count {n} >>",
+    ]
+    fonte = 3 + 2 * n
+    for i, texto in enumerate(paginas):
+        conteudo = f"BT /F1 12 Tf 72 720 Td ({texto}) Tj ET"
+        objetos.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {4 + 2 * i} 0 R "
+                       f"/Resources << /Font << /F1 {fonte} 0 R >> >> >>")
+        objetos.append(f"<< /Length {len(conteudo)} >>\nstream\n{conteudo}\nendstream")
+    objetos.append("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    saida = b"%PDF-1.4\n"
+    offsets = []
+    for i, obj in enumerate(objetos, 1):
+        offsets.append(len(saida))
+        saida += f"{i} 0 obj\n{obj}\nendobj\n".encode("latin-1")
+    xref = len(saida)
+    saida += f"xref\n0 {len(objetos) + 1}\n0000000000 65535 f \n".encode()
+    saida += "".join(f"{o:010d} 00000 n \n" for o in offsets).encode()
+    saida += f"trailer\n<< /Size {len(objetos) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return saida
+
+
+def docx(*paragrafos: str) -> bytes:
+    import io
+
+    from docx import Document as Docx
+
+    doc = Docx()
+    for texto in paragrafos:
+        doc.add_paragraph(texto)
+    saida = io.BytesIO()
+    doc.save(saida)
+    return saida.getvalue()
+
+
+MANUAL = pdf("Manual do produto: a instalacao leva 15 minutos no total.",
+             "Para a garantia, guarde a nota fiscal por 12 meses ou mais.")
+PDF_TIPO = {"content-type": "application/pdf"}
+
+
+def site_com_arquivos() -> Site:
+    site = Site()
+    site.paginas["/docs/manual.pdf"] = httpx.Response(200, content=MANUAL, headers=PDF_TIPO)
+    site.paginas["/docs/garantia"] = pagina(
+        "Garantia", "<p>A garantia dos produtos é de 12 meses a partir da compra.</p>",
+        ["/docs/termos.docx", "/blog/fora.pdf", "https://outro.test/x.pdf", "/docs/excluido/a.pdf"])
+    site.paginas["/docs/termos.docx"] = httpx.Response(
+        200, content=docx("Termos de uso da loja.", "O prazo de troca e de 7 dias corridos."),
+        headers={"content-type": "application/octet-stream"})
+    return site
+
+
+def test_pdf_do_mesmo_escopo_e_indexado_com_a_pagina(colecao, base):
+    site = site_com_arquivos()
+    sid = nova_fonte(colecao, "https://site.test/docs", max_depth=1, exclude=["/docs/excluido/*"])
+    sincronizar(sid, site)
+    paginas = paginas_por_url(sid)
+
+    manual = paginas["https://site.test/docs/manual.pdf"]
+    assert manual["status"] == "indexed" and manual["formatted"] == "none"
+    doc = base.documentos[web_sync.page_content_id(colecao, "https://site.test/docs/manual.pdf")]
+    assert doc["name"] == "manual.pdf"
+    por_pagina = {c.meta_data["page"]: c for c in doc["chunks"]}
+    assert set(por_pagina) == {1, 2}
+    assert "15 minutos" in por_pagina[1].content and "12 meses" in por_pagina[2].content
+    assert "<start page" not in por_pagina[1].content
+    assert por_pagina[2].meta_data["source_url"] == "https://site.test/docs/manual.pdf"
+    assert por_pagina[2].meta_data["file_type"] == "pdf"
+    # octet-stream com assinatura de DOCX passa; fora do caminho, de outro host ou excluído: nem pedido.
+    assert paginas["https://site.test/docs/termos.docx"]["status"] == "indexed"
+    assert not any("fora.pdf" in u or "outro.test" in u or "excluido" in u for u in site.pedidos)
+
+
+def test_kind_arquivo_na_lista_de_paginas(colecao, base):
+    sid = nova_fonte(colecao, "https://site.test/docs", max_depth=1)
+    sincronizar(sid, site_com_arquivos())
+    detalhe = sources_routes.SourceDetailOut.model_validate(
+        {**store.get_source(sid), "pages": store.list_pages(sid)}).model_dump()
+    tipos = {p["url"]: p["kind"] for p in detalhe["pages"]}
+    assert tipos["https://site.test/docs/manual.pdf"] == "file"
+    assert tipos["https://site.test/docs/garantia"] == "page"
+
+
+def test_sem_include_files_os_arquivos_ficam_de_fora(colecao, base):
+    site = site_com_arquivos()
+    sid = nova_fonte(colecao, "https://site.test/docs", max_depth=1, include_files=False)
+    sincronizar(sid, site)
+    assert not any(u.endswith((".pdf", ".docx")) for u in paginas_por_url(sid))
+    assert not any(u.endswith((".pdf", ".docx")) for u in site.pedidos)
+
+
+def test_fonte_antiga_sem_a_opcao_nao_passa_a_baixar_arquivos(colecao, base):
+    opcoes = web_sync.default_options(max_depth=1)
+    opcoes.pop("include_files")
+    sid = store.create_source(collection=colecao, url="https://site.test/docs", mode="crawl", options=opcoes,
+                              refresh="weekly")["id"]
+    sincronizar(sid, site_com_arquivos())
+    assert "https://site.test/docs/manual.pdf" not in paginas_por_url(sid)
+
+
+def test_arquivo_resync_igual_pula_e_o_que_sumiu_sai(colecao, base):
+    site = site_com_arquivos()
+    sid = nova_fonte(colecao, "https://site.test/docs", max_depth=1)
+    sincronizar(sid, site)
+    cargas = base.cargas
+    fonte = sincronizar(sid, site)
+    assert base.cargas == cargas and fonte["progress"]["unchanged"] == 5
+
+    site.paginas["/docs/manual.pdf"] = httpx.Response(
+        200, content=pdf("Manual novo: a instalacao agora leva 30 minutos."), headers=PDF_TIPO)
+    site.paginas.pop("/docs/termos.docx")  # 404
+    sincronizar(sid, site)
+    manual = base.documentos[web_sync.page_content_id(colecao, "https://site.test/docs/manual.pdf")]
+    assert "30 minutos" in manual["chunks"][0].content and len(manual["chunks"]) == 1
+    assert web_sync.page_content_id(colecao, "https://site.test/docs/termos.docx") not in base.documentos
+    assert "https://site.test/docs/termos.docx" not in paginas_por_url(sid)
+
+    # Deixou de ser linkado: sai também.
+    site.paginas["/docs"] = pagina("Documentação", "<p>Comece pelo guia de garantia da loja agora.</p>", ["/docs/garantia"])
+    site.paginas["/docs/garantia"] = pagina("Garantia", "<p>A garantia dos produtos é de 12 meses a partir da compra.</p>")
+    sincronizar(sid, site)
+    assert web_sync.page_content_id(colecao, "https://site.test/docs/manual.pdf") not in base.documentos
+
+
+def test_arquivo_grande_ou_que_nao_e_pdf_falha_com_o_motivo(colecao, base, monkeypatch):
+    site = site_com_arquivos()
+    site.paginas["/docs/manual.pdf"] = httpx.Response(200, text="<html>login</html>", headers={"content-type": "text/html"})
+    site.paginas["/docs/termos.docx"] = httpx.Response(
+        200, content=b"x" * 2_000_000, headers={"content-type": "application/octet-stream"})
+    monkeypatch.setattr(web_sync.get_settings(), "web_source_max_file_mb", 1)
+    sid = nova_fonte(colecao, "https://site.test/docs", max_depth=1)
+    sincronizar(sid, site)
+    paginas = paginas_por_url(sid)
+    assert paginas["https://site.test/docs/manual.pdf"]["status"] == "failed"
+    assert "tipo de conteúdo" in paginas["https://site.test/docs/manual.pdf"]["error"]
+    assert paginas["https://site.test/docs/termos.docx"]["error"] == "arquivo maior que 1 MB"
+
+
+def test_pdf_com_tipo_generico_mas_corpo_html_e_recusado(colecao, base):
+    site = site_com_arquivos()
+    site.paginas["/docs/manual.pdf"] = httpx.Response(
+        200, text="<html>nada</html>", headers={"content-type": "application/octet-stream"})
+    sid = nova_fonte(colecao, "https://site.test/docs", max_depth=1)
+    sincronizar(sid, site)
+    assert "não é um PDF" in paginas_por_url(sid)["https://site.test/docs/manual.pdf"]["error"]
+
+
+def test_arquivos_contam_no_max_pages_depois_das_paginas(colecao, base):
+    sid = nova_fonte(colecao, "https://site.test/docs", max_depth=1, max_pages=6)  # 5 páginas + 1 arquivo
+    sincronizar(sid, site_com_arquivos())
+    urls = set(paginas_por_url(sid))
+    assert len(urls) == 6 and "https://site.test/docs/garantia" in urls
+    assert sum(u.endswith((".pdf", ".docx")) for u in urls) == 1
+
+
+def test_modo_page_com_url_de_pdf(colecao, base):
+    sid = nova_fonte(colecao, "https://site.test/docs/manual.pdf", mode="page")
+    fonte = sincronizar(sid, site_com_arquivos())
+    assert fonte["status"] == "ready" and fonte["pages_indexed"] == 1
