@@ -23,7 +23,6 @@ from sqlalchemy import (
     delete,
     func,
     insert,
-    or_,
     select,
     update,
 )
@@ -90,14 +89,6 @@ REFRESH_INTERVALS: dict[str, timedelta | None] = {
     "weekly": timedelta(weeks=1),
     "monthly": timedelta(days=30),
 }
-
-HEARTBEAT_SECONDS = 30
-"""De quanto em quanto tempo um sync em andamento renova `updated_at`."""
-STALE_RUNNING = timedelta(minutes=2)
-"""Um sync `running` sem sinal de vida há mais que isto morreu com o processo
-(restart no meio). Pelo heartbeat, e não por "estava rodando no boot": com mais de
-uma réplica, quem sobe não pode derrubar o sync que outra está fazendo."""
-
 
 class SourceNotFoundError(LookupError):
     pass
@@ -180,56 +171,15 @@ def update_source(source_id: str, **values: Any) -> dict[str, Any]:
     return row
 
 
-def claim_source(source_id: str) -> bool:
-    """Marca a fonte como `running` se ninguém estiver sincronizando. É a trava:
-    duas chamadas ao mesmo tempo (ou o agendador e um clique) não rodam juntas."""
-    stale = _now() - STALE_RUNNING
-    with _engine().begin() as conn:
-        result = conn.execute(
-            update(knowledge_sources)
-            .where(
-                knowledge_sources.c.id == source_id,
-                or_(knowledge_sources.c.status != "running", knowledge_sources.c.updated_at < stale),
-            )
-            .values(status="running", status_message=None, progress={"discovered": 0, "done": 0}, updated_at=_now())
-        )
-    return result.rowcount == 1
-
-
-def due_sources() -> list[dict[str, Any]]:
-    """Fontes agendadas cujo próximo sync já venceu."""
-    now = _now()
-    with _engine().begin() as conn:
-        rows = conn.execute(
-            select(knowledge_sources).where(
-                knowledge_sources.c.refresh != "never",
-                knowledge_sources.c.next_sync_at.is_not(None),
-                knowledge_sources.c.next_sync_at <= now,
-                or_(knowledge_sources.c.status != "running", knowledge_sources.c.updated_at < now - STALE_RUNNING),
-            )
-        ).fetchall()
-    return [_row(r) for r in rows]
-
-
-def heartbeat(source_id: str) -> None:
+def mark_running(source_id: str) -> None:
+    """Mostra a fonte como sincronizando, com o progresso zerado. A trava contra dois
+    syncs juntos não é isto, é a `dedupe_key` do job (`web_sync.start_sync`)."""
     with _engine().begin() as conn:
         conn.execute(
             update(knowledge_sources)
-            .where(knowledge_sources.c.id == source_id, knowledge_sources.c.status == "running")
-            .values(updated_at=_now())
+            .where(knowledge_sources.c.id == source_id)
+            .values(status="running", status_message=None, progress={"discovered": 0, "done": 0}, updated_at=_now())
         )
-
-
-def fail_stale_running() -> int:
-    """Um sync `running` sem heartbeat não vai terminar sozinho: o processo que o
-    fazia caiu. Marca como falha, para a tela não mostrar "sincronizando" para sempre."""
-    with _engine().begin() as conn:
-        result = conn.execute(
-            update(knowledge_sources)
-            .where(knowledge_sources.c.status == "running", knowledge_sources.c.updated_at < _now() - STALE_RUNNING)
-            .values(status="failed", status_message="Sincronização interrompida (o serviço reiniciou).", updated_at=_now())
-        )
-    return result.rowcount
 
 
 def delete_source(source_id: str) -> None:

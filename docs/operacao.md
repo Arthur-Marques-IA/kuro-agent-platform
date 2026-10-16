@@ -177,7 +177,14 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `WEB_SOURCE_CONCURRENCY` | `3` | páginas processadas ao mesmo tempo por site (download + formatação) |
 | `WEB_SOURCE_REQUEST_DELAY_MS` | `300` | intervalo mínimo entre requisições ao mesmo site |
 | `WEB_SOURCE_USER_AGENT` | `KuroBot/1.0 (...)` | como o coletor se apresenta (é o nome que o `robots.txt` enxerga) |
-| `WEB_SOURCE_SCHEDULER` | `true` | ressincroniza os sites com `refresh` agendado |
+| `WEB_SOURCE_SCHEDULER` | `true` | ressincroniza os sites com `refresh` agendado (o próximo sync entra na fila de jobs) |
+| `JOBS_ENABLED` | `true` | roda o worker da [fila de jobs](#fila-de-jobs) nesta réplica; desligado, ela só enfileira |
+| `JOBS_CONCURRENCY` | `2` | jobs rodando ao mesmo tempo nesta réplica |
+| `JOBS_POLL_SECONDS` | `5` | de quanto em quanto tempo o worker olha a fila quando nada o acordou |
+| `JOBS_LEASE_SECONDS` | `60` | validade do lease de um job rodando (renovado a cada terço); processo morto libera o job depois disso |
+| `JOBS_MAX_ATTEMPTS` | `3` | tentativas antes de o job virar `failed` |
+| `JOBS_BACKOFF_SECONDS` | `30` | espera antes da 2ª tentativa; dobra a cada uma, até 1 hora |
+| `JOBS_LISTEN` | `true` | `LISTEN/NOTIFY` do Postgres para o worker acordar na hora (o polling continua como reserva) |
 | `MEM0_ENABLED` / `MEM0_API_KEY` | `false` / — | habilita agentes com `memory_backend: "mem0"` |
 | `LANGFUSE_ENABLED` | `false` | liga o exportador — exige o extra `observability` e o profile de mesmo nome |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` | valores de dev | conexão com o Langfuse |
@@ -185,6 +192,27 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `AGENT_SERVICE_URL` (frontend) | — | endereço interno da API, só no servidor Next.js |
 | `AGENT_SERVICE_PUBLIC_URL` (frontend) | — | endereço exibido nos exemplos de integração; vazio, vale o que o agent-service conhece (`KURO_PUBLIC_URL`, `KURO_API_DOMAIN`, profile `ip`) |
 | `KURO_API_URL` / `KURO_JSON` / `KURO_NO_INPUT` (CLI) | `http://127.0.0.1:58000` | endereço, saída JSON e modo não interativo |
+
+## Fila de jobs
+
+O trabalho em background (hoje, a sincronização de sites) passa por uma fila no próprio Postgres,
+a tabela `jobs` — sem broker. Cada réplica com `JOBS_ENABLED=true` roda `JOBS_CONCURRENCY` tarefas
+que pegam o próximo job com `FOR UPDATE SKIP LOCKED`, então várias réplicas dividem a fila sem
+rodar o mesmo job duas vezes. Quem roda um job renova um lease (`locked_until`); se o processo
+morrer, o lease vence e o job volta para a fila (com backoff) até `JOBS_MAX_ATTEMPTS`. Agendar é
+enfileirar com `run_after` no futuro: o `refresh` de um site é o próximo job, gravado na mesma
+transação que fecha o atual. Ao desligar, os jobs em andamento voltam para a fila sem gastar
+tentativa.
+
+```bash
+uv run kuro jobs list --status failed     # contagem por status e os jobs (GET /jobs)
+uv run kuro jobs show <id>                # payload, tentativas, lease e o último erro
+uv run kuro jobs retry <id>               # failed/cancelled de volta na fila, tentativas zeradas
+uv run kuro jobs cancel <id>              # para um job na fila ou rodando (em qualquer réplica)
+```
+
+O status que importa ao usuário continua no recurso: a fonte de site mostra `running`, o
+progresso e o erro como antes. `/jobs` é para o operador destravar (escopo `admin`).
 
 ## Rotacionar as chaves
 

@@ -14,9 +14,11 @@ URL (`page_content_id`): ressincronizar **substitui** a página em vez de duplic
 e a página cujo texto não mudou nem é reprocessada (hash do texto extraído). Página
 que sumiu do site (fora da descoberta, 404 ou 410) sai da collection.
 
-Roda em background (`start_sync`): uma sincronização de centenas de páginas, cada
-uma com uma chamada ao modelo, não cabe numa requisição HTTP. O progresso fica na
-própria fonte, e `status='running'` é a trava contra dois syncs ao mesmo tempo.
+Roda em background, como job `web_source.sync` da fila (`agent_service/jobs/`): uma
+sincronização de centenas de páginas, cada uma com uma chamada ao modelo, não cabe
+numa requisição HTTP. O progresso fica na própria fonte; a trava contra dois syncs
+ao mesmo tempo é a `dedupe_key` do job (`web_source:<id>`), e o `refresh` é o
+próximo job enfileirado com `run_after` no futuro.
 """
 
 import asyncio
@@ -36,15 +38,15 @@ from agent_service.config import get_settings
 from agent_service.documents import sources_store as store
 from agent_service.documents import web
 from agent_service.documents.web_formatter import chunk_markdown, format_page
+from agent_service.jobs import store as jobs
+from agent_service.jobs import worker as jobs_worker
 
 logger = logging.getLogger(__name__)
 
 MIN_PAGE_CHARS = 40
 MAX_SITEMAPS = 50
-SCHEDULER_INTERVAL_SECONDS = 300
 GONE = ("HTTP 404", "HTTP 410")
-
-_tasks: dict[str, asyncio.Task[Any]] = {}
+JOB_KIND = "web_source.sync"
 
 
 def page_content_id(collection: str, url: str) -> str:
@@ -327,7 +329,7 @@ class _Run:
 
 
 async def sync_source(source_id: str, *, fetcher: web.Fetcher | None = None, model: Any = "default") -> dict[str, Any]:
-    """Uma sincronização completa. Quem chama já fez `claim_source`."""
+    """Uma sincronização completa. Quem chama já fez `mark_running`."""
     from agent_service.documents.collections import get_collection
 
     source = store.get_source(source_id)
@@ -336,7 +338,6 @@ async def sync_source(source_id: str, *, fetcher: web.Fetcher | None = None, mod
     own_fetcher = fetcher is None
     fetcher = fetcher or web.Fetcher()
     warning = None
-    beat = asyncio.create_task(_heartbeat(source_id), name=f"web-sync-heartbeat-{source_id}")
     run: _Run | None = None
     try:
         if model == "default":
@@ -372,7 +373,11 @@ async def sync_source(source_id: str, *, fetcher: web.Fetcher | None = None, mod
             next_sync_at=store.next_sync(source["refresh"], now),
         )
     except asyncio.CancelledError:
-        store.update_source(source_id, status="failed", status_message="Sincronização cancelada.")
+        if jobs_worker.is_stopping():
+            # O job volta para a fila e recomeça quando o serviço subir.
+            store.update_source(source_id, status_message="Interrompida pelo restart; retoma sozinha.")
+        else:
+            store.update_source(source_id, status="failed", status_message="Sincronização cancelada.")
         raise
     except Exception as exc:
         logger.warning("Sincronização da fonte %s falhou", source_id, exc_info=True)
@@ -385,7 +390,6 @@ async def sync_source(source_id: str, *, fetcher: web.Fetcher | None = None, mod
             next_sync_at=store.next_sync(source["refresh"], now),
         )
     finally:
-        beat.cancel()
         if run is not None:
             # Também numa sincronização que falhou ou foi cancelada: o que o
             # formatador já gastou não volta.
@@ -411,41 +415,93 @@ def _record_cost(run: _Run) -> None:
         logger.warning("Não gravei o custo da sincronização da fonte %s", run.source["id"], exc_info=True)
 
 
-async def _heartbeat(source_id: str) -> None:
-    """Sinal de vida enquanto o sync roda (`sources_store.STALE_RUNNING`): uma página
-    lenta no formatador não pode fazer o sync parecer morto para outra réplica."""
-    while True:
-        await asyncio.sleep(store.HEARTBEAT_SECONDS)
-        try:
-            store.heartbeat(source_id)
-        except Exception:
-            logger.debug("Heartbeat da fonte %s falhou", source_id, exc_info=True)
+def _dedupe(source_id: str) -> str:
+    return f"web_source:{source_id}"
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _due(job: dict[str, Any]) -> bool:
+    """Rodando, ou na fila para já — o que conta como "já está sincronizando"."""
+    return job["status"] == "running" or _aware(job["run_after"]) <= datetime.now(timezone.utc)
 
 
 def is_running(source_id: str) -> bool:
-    task = _tasks.get(source_id)
-    return task is not None and not task.done()
+    job = jobs.active_job(_dedupe(source_id))
+    return job is not None and _due(job)
 
 
 def start_sync(source_id: str) -> bool:
-    """Dispara a sincronização em background. `False` se já há uma rodando."""
-    loop = asyncio.get_running_loop()  # antes da trava: sem loop, a fonte não pode ficar presa em `running`
-    if is_running(source_id) or not store.claim_source(source_id):
-        return False
-    task = loop.create_task(sync_source(source_id), name=f"web-sync-{source_id}")
-    _tasks[source_id] = task
-    task.add_done_callback(lambda _t: _tasks.pop(source_id, None))
+    """Põe a sincronização na fila para agora. `False` se já há uma na fila ou rodando
+    (o 409 da API); um sync só agendado para depois é puxado para agora."""
+    key = _dedupe(source_id)
+    try:
+        jobs.enqueue(JOB_KIND, {"source_id": source_id}, dedupe_key=key)
+    except jobs.JobConflictError:
+        active = jobs.active_job(key)
+        if active is None or _due(active) or not jobs.advance(key):
+            return False
+    store.mark_running(source_id)
+    jobs_worker.wake()
     return True
 
 
-async def cancel_sync(source_id: str) -> None:
-    task = _tasks.get(source_id)
-    if task is not None and not task.done():
-        task.cancel()
+def schedule(source: dict[str, Any]) -> None:
+    """Deixa a fila coerente com o `refresh` da fonte: troca o próximo sync agendado
+    pelo de `next_sync_at` (ou nenhum, com `never`). Um sync rodando agenda o seguinte
+    sozinho ao terminar, lendo o `refresh` de então."""
+    key = _dedupe(source["id"])
+    active = jobs.active_job(key)
+    if active is not None and _due(active):
+        return
+    jobs.cancel_dedupe(key, only_queued=True)
+    if source.get("next_sync_at") and get_settings().web_source_scheduler:
         try:
-            await task
-        except (asyncio.CancelledError, Exception):
+            jobs.enqueue(JOB_KIND, {"source_id": source["id"]}, dedupe_key=key, run_after=_aware(source["next_sync_at"]))
+        except jobs.JobConflictError:
             pass
+
+
+async def cancel_sync(source_id: str) -> None:
+    """Cancela o sync da fonte: na fila, sai; rodando aqui, para já; numa outra
+    réplica, para no próximo `renew` do lease dela."""
+    worker = jobs_worker.current()
+    for job_id in jobs.cancel_dedupe(_dedupe(source_id)):
+        if worker is not None:
+            await worker.cancel_local(job_id)
+
+
+def _gave_up(job: dict[str, Any]) -> None:
+    """As tentativas acabaram (o processo caiu no meio, de novo e de novo): a fonte
+    sai de `running`, e o próximo sync agendado continua valendo."""
+    source = store.get_source(job["payload"].get("source_id") or "")
+    if source is None:
+        return
+    now = datetime.now(timezone.utc)
+    source = store.update_source(
+        source["id"], status="failed",
+        status_message=f"Sincronização interrompida: {job.get('last_error') or 'falhou'}"[:500],
+        last_synced_at=now, next_sync_at=store.next_sync(source["refresh"], now),
+    )
+    schedule(source)
+
+
+@jobs_worker.register(JOB_KIND, on_give_up=_gave_up)
+async def run_sync_job(job: dict[str, Any]) -> jobs_worker.Reschedule | None:
+    """O handler do job: sincroniza e agenda o próximo pelo `refresh`. Falha do site
+    (fora do ar, nada indexável) é um job que terminou — a fonte fica `failed` e o
+    próximo sync continua agendado; retry com backoff é para o processo que caiu."""
+    source_id = job["payload"]["source_id"]
+    if store.get_source(source_id) is None:
+        return None  # a fonte foi removida enquanto o job esperava
+    store.mark_running(source_id)
+    await sync_source(source_id)
+    source = store.get_source(source_id)
+    if source is None or not source.get("next_sync_at") or not get_settings().web_source_scheduler:
+        return None
+    return jobs_worker.Reschedule(run_after=_aware(source["next_sync_at"]))
 
 
 async def remove_source_pages(source: dict[str, Any]) -> int:
@@ -460,31 +516,28 @@ async def remove_source_pages(source: dict[str, Any]) -> int:
     return len(pages)
 
 
-async def _scheduler() -> None:
-    while True:
-        await asyncio.sleep(SCHEDULER_INTERVAL_SECONDS)
-        try:
-            store.fail_stale_running()
-            for source in store.due_sources():
-                start_sync(source["id"])
-        except Exception:
-            logger.warning("Agendador de fontes falhou nesta rodada", exc_info=True)
+def reconcile() -> None:
+    """No startup: fonte presa em `running` sem job ativo (o processo caiu antes de a
+    fila existir) vira falha, e fonte agendada sem job na fila ganha o seu — é o que
+    leva para a fila as fontes cadastradas antes dela. Idempotente."""
+    for source in store.list_sources():
+        if jobs.active_job(_dedupe(source["id"])) is not None:
+            continue
+        if source["status"] == "running":
+            source = store.update_source(
+                source["id"], status="failed", status_message="Sincronização interrompida (o serviço reiniciou)."
+            )
+        if source["refresh"] != "never" and not source.get("next_sync_at"):
+            source = store.update_source(source["id"], next_sync_at=datetime.now(timezone.utc))
+        schedule(source)
 
 
 @asynccontextmanager
 async def scheduler_lifespan(_app: Any = None) -> AsyncIterator[None]:
-    """Liga o agendador de ressincronização no startup (e marca como interrompido
-    o sync sem heartbeat — o que estava rodando quando o processo anterior caiu)."""
+    """Acerta a fila com as fontes no startup (`reconcile`). Quem roda os syncs é o
+    worker de jobs (`jobs.worker.lifespan`)."""
     try:
-        if store.fail_stale_running():
-            logger.info("Fontes com sincronização interrompida pelo restart marcadas como falha.")
+        reconcile()
     except Exception:
         logger.warning("Não consegui revisar as fontes no startup", exc_info=True)
-    task = asyncio.create_task(_scheduler(), name="web-sources-scheduler") if get_settings().web_source_scheduler else None
-    try:
-        yield
-    finally:
-        if task is not None:
-            task.cancel()
-        for source_id in list(_tasks):
-            await cancel_sync(source_id)
+    yield
