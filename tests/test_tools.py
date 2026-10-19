@@ -534,7 +534,7 @@ def test_tool_python_enxerga_as_dependencies_da_requisicao():
     """A thread da tool recebe uma cópia do contexto — `ContextVar` não é herdado."""
     from agent_service.tools.context import dependencies_scope, get_dependencies
 
-    config = validate_python_config({"code": "def handler() -> int:\n    return 1\n", "entrypoint": "handler"})
+    validate_python_config({"code": "def handler() -> int:\n    return 1\n", "entrypoint": "handler"})
     visto = {}
 
     def espia() -> int:

@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from agent_service.agents.procedural import fields_before
 from agent_service.agents.store import get_definition
-from agent_service.field_schema import json_schema_for, object_schema
+from agent_service.field_schema import object_schema
 from agent_service.public_url import public_url
 from agent_service.tools.api_tool import required_dependencies
 from agent_service.tools.store import get_tool
