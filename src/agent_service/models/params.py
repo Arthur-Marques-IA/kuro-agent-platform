@@ -12,8 +12,9 @@ fica em `provider_kwargs`, para o resto do serviço não saber disso.
 (padrão do modelo) — num vocabulário só, traduzido para o que cada modelo aceita
 (verificado contra a API em 2026-09-26):
 
-- Gemini 3 em diante (e os apelidos `-latest`): `thinking_level` —
-  `off` = `minimal` (zero tokens de raciocínio), os outros com o mesmo nome;
+- Gemini 3 em diante (e os apelidos `-latest`): `thinking_level`, com o mesmo nome;
+  `off` = `minimal` (zero tokens de raciocínio) até o 3.6 e `low` do 3.7 em diante,
+  no 4 e nos `-latest`, que recusam `minimal` (ver `_gemini_off_level`);
 - Gemini 2.x: não aceita `thinking_level`, só orçamento em tokens —
   `off`=0 (128 no Pro, que não desliga), `low`=1024, `medium`=4096, `high`=16384;
 - OpenAI: `reasoning_effort` (`off` = `minimal`), só nos modelos de raciocínio
@@ -35,6 +36,7 @@ idêntico — lá não há o que ligar, e o campo é recusado em vez de ignorado
 tokens lidos do cache aparecem na span do modelo (`metadata.cache_read_tokens`).
 """
 
+import re
 from typing import Any
 
 PARAM_RANGES: dict[str, tuple[type, float, float]] = {
@@ -108,6 +110,19 @@ def _is_modern_gemini(model_id: str) -> bool:
     return model.startswith("gemini") and not model.startswith(("gemini-1", "gemini-2"))
 
 
+def _gemini_off_level(model: str) -> str:
+    """O `thinking_level` de `off` num Gemini 3+: o menor nível que o modelo aceita.
+
+    `minimal` (zero raciocínio) só existe até o 3.6; do 3.7 em diante, no 4 e nos
+    apelidos `-latest` o Google responde 400 ("Thinking level MINIMAL is not
+    supported") e o menor nível é `low` (verificado contra a API em 2026-10-19).
+    Versão que não dá para ler do nome vai de `low`, que todos aceitam."""
+    match = re.match(r"gemini-(\d+)\.?(\d*)", model)
+    if match and int(match.group(1)) == 3 and int(match.group(2) or 0) <= 6:
+        return "minimal"
+    return "low"
+
+
 def _reasoning_kwargs(provider: str, model_id: str, level: str) -> dict[str, Any]:
     model = model_id.lower()
     if provider == "google":
@@ -116,7 +131,7 @@ def _reasoning_kwargs(provider: str, model_id: str, level: str) -> dict[str, Any
             if level == "off" and "pro" in model:
                 budget = 128  # o 2.5 Pro não desliga o raciocínio; 128 é o mínimo aceito
             return {"thinking_budget": budget}
-        return {"thinking_level": "minimal" if level == "off" else level}
+        return {"thinking_level": _gemini_off_level(model) if level == "off" else level}
     if provider == "openai" and (model.startswith("o") or model.startswith("gpt-5")):
         return {"reasoning_effort": "minimal" if level == "off" else level}
     return {}

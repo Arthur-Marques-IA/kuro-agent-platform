@@ -78,7 +78,15 @@ def test_summary_runs_once_per_history_window_and_carries_the_previous_summary(m
     ("provider", "model", "level", "expected"),
     [
         ("google", "gemini-3.5-flash", "low", {"thinking_level": "low"}),
-        ("google", "gemini-flash-latest", "off", {"thinking_level": "minimal"}),
+        # `off`: minimal até o 3.6; do 3.7 em diante, no 4 e nos -latest o Google recusa minimal (400).
+        ("google", "gemini-3.5-flash", "off", {"thinking_level": "minimal"}),
+        ("google", "gemini-3.6-flash", "off", {"thinking_level": "minimal"}),
+        ("google", "gemini-3.1-flash-lite", "off", {"thinking_level": "minimal"}),
+        ("google", "gemini-3.7-flash", "off", {"thinking_level": "low"}),
+        ("google", "gemini-3.8-flash", "off", {"thinking_level": "low"}),
+        ("google", "gemini-4-argon", "off", {"thinking_level": "low"}),
+        ("google", "gemini-flash-latest", "off", {"thinking_level": "low"}),
+        ("google", "gemini-3.8-flash", "high", {"thinking_level": "high"}),
         ("google", "gemini-2.5-flash", "medium", {"thinking_budget": 4096}),
         ("google", "gemini-2.5-flash", "off", {"thinking_budget": 0}),
         ("google", "gemini-2.5-pro", "off", {"thinking_budget": 128}),

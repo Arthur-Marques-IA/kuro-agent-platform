@@ -273,6 +273,54 @@ def test_analysis_com_collection_mantem_a_busca(monkeypatch):
     assert agente.search_knowledge is True
 
 
+# -- analysis + tool/collection: o Gemini 1.x/2.x recusa function calling com saída JSON --
+
+
+def _analista(**extra):
+    return AgentDefinitionIn(
+        agent_type="rota_analise_tool", name="Análise", instructions=["Extraia."], kind="analysis",
+        response_schema=[{"name": "valor", "type": "number", "required": True}], **extra,
+    )
+
+
+def test_analysis_com_tool_no_gemini_2_e_422():
+    with pytest.raises(HTTPException) as exc:
+        create_agent(_analista(tools=["calculator"], model_id="gemini-2.5-flash"))
+    assert exc.value.status_code == 422
+    assert "Gemini 3" in exc.value.detail
+
+
+def test_analysis_com_tool_sem_model_id_usa_o_padrao_e_e_422():
+    # o padrão do serviço (DEFAULT_MODEL_ID) é gemini-2.5-flash
+    with pytest.raises(HTTPException) as exc:
+        create_agent(_analista(tools=["calculator"]))
+    assert exc.value.status_code == 422
+
+
+def test_analysis_com_tool_no_gemini_3_passa():
+    create_agent(_analista(tools=["calculator"], model_id="gemini-3.8-flash"))
+    try:
+        # e voltar para o 2.5 com a tool ainda lá é recusado
+        with pytest.raises(HTTPException) as exc:
+            update_agent("rota_analise_tool", AgentDefinitionUpdate(model_id="gemini-2.5-flash"))
+        assert exc.value.status_code == 422
+    finally:
+        delete_agent("rota_analise_tool")
+
+
+def test_adicionar_tool_a_analysis_no_gemini_2_e_422(analysis_agent):
+    with pytest.raises(HTTPException) as exc:
+        update_agent(analysis_agent, AgentDefinitionUpdate(tools=["calculator"]))
+    assert exc.value.status_code == 422
+
+
+def test_conversacional_com_tool_no_gemini_2_continua_valendo():
+    create_agent(AgentDefinitionIn(
+        agent_type="rota_conv_tool", name="Conv", instructions=["a"], tools=["calculator"], model_id="gemini-2.5-flash",
+    ))
+    delete_agent("rota_conv_tool")
+
+
 # -- o fluxo documentado: get --editable > f.json && apply -f f.json --------------
 
 SCHEMA_ANINHADO = [

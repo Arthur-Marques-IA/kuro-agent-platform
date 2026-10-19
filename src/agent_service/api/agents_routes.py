@@ -41,6 +41,7 @@ from agent_service.agents.store import (
     save_feedback_note,
     update_definition,
 )
+from agent_service.config import get_settings
 from agent_service.documents.collections import collection_exists
 from agent_service.models.params import ModelParamsError, validate_model_params
 from agent_service.tools.api_tool import required_dependencies
@@ -424,6 +425,30 @@ def _validate_inert_fields(kind: str, body: BaseModel) -> None:
         )
 
 
+def _validate_analysis_model(
+    kind: str | None, provider: str | None, model_id: str | None, tools: list[str] | None, collection: str | None
+) -> None:
+    """Agente analista com tool ou base de conhecimento num Gemini 1.x/2.x falha em toda
+    chamada: a saída estruturada vai como `response_mime_type: application/json`, e esses
+    modelos recusam isso junto com function calling (400 "Function calling with a
+    response mime type: 'application/json' is unsupported"). A busca na collection é uma
+    tool. O Gemini 3 em diante aceita os dois juntos."""
+    if (kind or "conversational") != "analysis" or not (tools or collection):
+        return
+    settings = get_settings()
+    provider = (provider or settings.default_model_provider).lower()
+    model = (model_id or settings.default_model_id).lower()
+    if provider == "google" and model.startswith(("gemini-1", "gemini-2")):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"kind='analysis' com tools ou knowledge_collection não funciona no {model}: o Gemini 1.x/2.x "
+                "recusa function calling junto com saída estruturada (JSON). Use um Gemini 3 em diante "
+                "(ex.: gemini-3.5-flash) ou tire as tools e a collection."
+            ),
+        )
+
+
 def _validate_collection(name: str | None) -> None:
     if name is not None and not collection_exists(name):
         raise HTTPException(status_code=422, detail=f"Collection desconhecida: {name!r} (veja GET /collections)")
@@ -477,6 +502,7 @@ def create_agent(body: AgentDefinitionIn, dry_run: bool = False) -> dict[str, An
     _validate_tools(body.tools, {f["name"] for f in payload["dependency_fields"]})
     _validate_collection(body.knowledge_collection)
     _validate_inert_fields(body.kind, body)
+    _validate_analysis_model(body.kind, body.model_provider, body.model_id, body.tools, body.knowledge_collection)
     payload["model_params"] = _normalize_model_params(body.model_params, body.model_provider)
     if dry_run:
         now = datetime.now(timezone.utc)
@@ -538,6 +564,14 @@ def update_agent(agent_type: str, body: AgentDefinitionUpdate, dry_run: bool = F
             {f["name"] for f in payload.get("dependency_fields", current["dependency_fields"] or [])},
         )
     _validate_inert_fields(payload.get("kind", current["kind"]), body)
+    if payload.keys() & {"kind", "tools", "knowledge_collection", "model_provider", "model_id"}:
+        _validate_analysis_model(
+            payload.get("kind", current_kind),
+            payload.get("model_provider", current.get("model_provider")),
+            payload.get("model_id", current.get("model_id")),
+            payload.get("tools", current["tools"] or []),
+            payload.get("knowledge_collection", current.get("knowledge_collection")),
+        )
     if "model_params" in payload or "model_provider" in payload:
         # Revalida contra o provedor final: thinking_budget só vale no google.
         payload["model_params"] = _normalize_model_params(

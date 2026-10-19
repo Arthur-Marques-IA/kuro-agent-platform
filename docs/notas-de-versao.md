@@ -285,6 +285,16 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
 
 ### Corrigido
 
+- **`reasoning: "off"` no Gemini 3.7 em diante derrubava toda chamada** (502, "Thinking level MINIMAL
+  is not supported for this model"). `off` virava `thinking_level: minimal`, que só existe até o
+  Gemini 3.6. Agora `off` é `minimal` até o 3.6 e `low` (o menor nível aceito) do 3.7 em diante, no
+  Gemini 4 e nos apelidos `-latest`. Nesses modelos o raciocínio não desliga de todo.
+- **Agente `analysis` com tools ou `knowledge_collection` num Gemini 1.x/2.x** é recusado com 422 no
+  cadastro (`POST`/`PUT /agents`, `kuro agents apply|set`), com a explicação. Antes ele era aceito e
+  falhava em toda chamada com 502 ("Function calling with a response mime type: 'application/json'
+  is unsupported"): esses modelos não aceitam function calling junto com a saída estruturada, e a
+  busca na collection é uma tool. Use um Gemini 3 em diante. Agentes já cadastrados assim continuam
+  falhando até trocar o modelo; o 422 aparece na próxima edição deles.
 - Com a autenticação ligada, o preflight de CORS (`OPTIONS`, que o navegador manda sem a chave)
   recebia 401, e nenhuma página em outro domínio conseguia chamar a API, nem as origens liberadas.
   O preflight passa a ser respondido pelo CORS; a chamada de verdade continua exigindo a chave.
