@@ -165,7 +165,7 @@ subiu; quem confirma que ele alcança o serviço é a tool `health`.
 | Executar | `chat`, `analyze`, `eval`, `tool_invoke` |
 | Feedback | `feedback_show`, `feedback_versions`, `feedback_send`, `feedback_remove`, `feedback_rollback`, `feedback_clear`\* |
 | Tools | `tools_list`, `tool_get`, `tool_catalog`, `tool_apply`, `tool_invoke`, `tool_delete`\* |
-| Execuções | `runs_list`, `run_show`, `runs_stats`, `runs_overview`, `runs_sessions`, `run_score` |
+| Execuções | `runs_list`, `run_show`, `run_related`, `run_feedback`, `runs_stats`, `runs_overview`, `runs_sessions`, `run_score` |
 | Modo shadow | `runs_agreement`, `runs_reference`, `runs_export` |
 | Feedback por trecho do RAG | `run_chunk_feedback`, `chunk_feedback_flagged`, `chunk_feedback_export` |
 | Conversas | `sessions_list`, `session_show`, `session_delete`\* |
@@ -188,6 +188,10 @@ No modo shadow, o dataset do passo 3 sai das próprias execuções, também sem 
 3. `runs_export(agent_type="r8")` devolve os runs com referência como casos `{id, input, dependencies,
    expected}`, prontos para `eval(cases=...)`. Nenhum caso vem cortado: o que não cabe na resposta
    fica de fora e `omitted` diz quantos (filtre com `since`/`agent_version`, ou use `kuro runs export`).
+
+Num agente `analysis` sem legado, a referência vem de um humano: `run_feedback(run_id, value=0,
+comment=..., reference={...})` grava o 👎 e a saída correta, e o run entra no `runs_export` do mesmo
+jeito. `run_related(run_id)` mostra os runs do mesmo fluxo (mesmo `ciclo_id`, por padrão) em ordem.
 
 ## Confirmação do usuário
 

@@ -912,8 +912,18 @@ export interface RunTrace {
   run: RunSummary;
   spans: TraceSpan[];
   scores: TraceScore[];
-  /** Decisão de referência (ex.: a do agente legado no modo shadow). */
+  /** Decisão de referência (ex.: a do agente legado no modo shadow, ou a correção de um 👎). */
   reference?: Record<string, unknown> | null;
+  /** Só em turno de agente procedural: o `state` como o turno terminou. */
+  procedure_state?: ProcedureState | null;
+}
+
+/** `GET /observability/runs/{id}/related` — os runs ligados por uma chave de correlação. */
+export interface RelatedRuns {
+  key: string | null;
+  value: string | null;
+  /** Do mais antigo ao mais novo, o próprio run incluído. */
+  items: RunSummary[];
 }
 
 /** `GET /observability/agreement` — concordância com a referência (modo shadow). */
@@ -940,6 +950,8 @@ export interface ObservabilityConfig {
   langfuse?: boolean;
   /** Projeto na UI do Langfuse (ex.: http://localhost:3100/project/agent-service). */
   project_url: string | null;
+  /** Chaves de metadata que ligam runs de um fluxo (`CORRELATION_METADATA_KEYS`). */
+  correlation_keys?: string[];
 }
 
 /** Item de `GET /observability/sessions` — execuções de uma sessão agregadas (tokens, custo, feedback). */
