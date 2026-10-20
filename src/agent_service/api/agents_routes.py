@@ -137,10 +137,9 @@ class AgentDefinitionIn(BaseModel):
         default=None, description="Collection de documentos que o agente pode consultar (GET /collections)"
     )
     dependency_fields: list[DependencyFieldIn] = []
-    memory_backend: Literal["none", "auto", "agentic", "common", "mem0"] = "none"
+    memory_backend: Literal["none", "auto", "agentic", "common"] = "none"
     """Memória de longo prazo: `none` (padrão), `auto` (extraída em paralelo, modelo
-    auxiliar), `agentic` (o modelo decide quando gravar; `common` é o nome antigo)
-    ou `mem0`."""
+    auxiliar) ou `agentic` (o modelo decide quando gravar; `common` é o nome antigo)."""
     session_summary: bool = False
     """Resume o que sai da janela de histórico, em vez de perdê-lo."""
     num_history_runs: int = 10
@@ -187,7 +186,7 @@ class AgentDefinitionUpdate(BaseModel):
     model_credential_id: str | None = None
     knowledge_collection: str | None = None
     dependency_fields: list[DependencyFieldIn] | None = None
-    memory_backend: Literal["none", "auto", "agentic", "common", "mem0"] | None = None
+    memory_backend: Literal["none", "auto", "agentic", "common"] | None = None
     session_summary: bool | None = None
     num_history_runs: int | None = None
     kind: AgentKind | None = None
@@ -304,7 +303,7 @@ class PromptVersionOut(BaseModel):
 # (`agents/base.py`). Aceitá-los calado deixa quem opera achando que configurou algo.
 _INERTES_EM_ANALYSIS = {
     "num_history_runs": "analysis é one-shot: não há histórico para reaproveitar",
-    "memory_backend": "analysis não usa memória de longo prazo (nem a do Agno, nem o mem0)",
+    "memory_backend": "analysis não usa memória de longo prazo",
     "session_summary": "analysis não tem sessão para resumir",
 }
 

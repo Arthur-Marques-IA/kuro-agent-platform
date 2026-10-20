@@ -127,7 +127,7 @@ def memory_kwargs(mode: str, model: Model | None) -> dict[str, Any]:
       fim do run, com o modelo auxiliar; o modelo principal não vê tool nenhuma;
     - `agentic` (e o legado `common`): o modelo principal ganha a tool
       `update_user_memory` e decide quando gravar;
-    - `mem0`: tratado à parte (`agents/base.py`)."""
+    - `mem0`: removido; um agente que ainda o tenha gravado roda como `none`."""
     if mode in ("none", "mem0"):
         return {"memory_manager": None, "enable_agentic_memory": False, "update_memory_on_run": False,
                 "add_memories_to_context": False}

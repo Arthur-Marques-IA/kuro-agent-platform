@@ -16,10 +16,10 @@ from agent_service.documents.collections import get_collection, resolve_search
 from agent_service.documents.retrieval import make_retriever
 from agent_service.models.provider import get_model
 
-MemoryBackendName = Literal["none", "auto", "agentic", "common", "mem0"]
+MemoryBackendName = Literal["none", "auto", "agentic", "common"]
 """`none` = sem memória de longo prazo; `auto` = extraída em paralelo, com o
 modelo auxiliar; `agentic` = o modelo decide quando gravar (`common` é o nome
-antigo dele); `mem0` = Mem0. Ver `memory/managers.py`."""
+antigo dele). Ver `memory/managers.py`."""
 AgentKind = Literal["conversational", "analysis", "procedural"]
 
 
@@ -43,9 +43,6 @@ def build_agent(
     # Agentes "analysis" são one-shot: sem sessão contínua, sem histórico nem
     # memória — só o documento de entrada e o `output_schema` de saída.
     is_analysis = kind == "analysis"
-    # Um backend de memória de longo prazo por vez: com "mem0", o Mem0 substitui
-    # a memória do Agno (sem memory_manager, sem a tool `update_user_memory` e sem
-    # as memórias do Agno no prompt). O histórico da sessão continua valendo.
     from agent_service.memory.managers import aux_model, memory_kwargs, summary_manager
 
     helper_model = aux_model(model_provider, model_id, model_credential_id)
@@ -65,22 +62,6 @@ def build_agent(
     # (`documents/retrieval.py`).
     knowledge = get_collection(knowledge_collection) if knowledge_collection else None
     retriever = make_retriever(knowledge_collection, knowledge, resolve_search) if knowledge is not None else None
-
-    pre_hooks = []
-    post_hooks = []
-    add_dependencies_to_context = False
-
-    if memory_backend == "mem0" and not is_analysis:
-        from agent_service.memory.mem0_hooks import mem0_post_hook, mem0_pre_hook
-
-        pre_hooks = [mem0_pre_hook]
-        post_hooks = [mem0_post_hook]
-        add_dependencies_to_context = True
-        instructions = [
-            *instructions,
-            "Se houver memórias em `dependencies.mem0_memories`, use-as para "
-            "personalizar sua resposta ao usuário.",
-        ]
 
     return Agent(
         id=agent_id,
@@ -103,9 +84,8 @@ def build_agent(
         tools=tools or [],
         add_history_to_context=not is_analysis,
         num_history_runs=num_history_runs,
-        pre_hooks=pre_hooks or None,
-        post_hooks=post_hooks or None,
-        add_dependencies_to_context=add_dependencies_to_context,
+        # As dependencies entram no contexto por run (`observability/tracing.py`), quando vierem.
+        add_dependencies_to_context=False,
         output_schema=output_schema,
         markdown=output_schema is None,
     )

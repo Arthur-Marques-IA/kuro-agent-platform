@@ -187,7 +187,6 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `JOBS_MAX_ATTEMPTS` | `3` | tentativas antes de o job virar `failed` |
 | `JOBS_BACKOFF_SECONDS` | `30` | espera antes da 2ª tentativa; dobra a cada uma, até 1 hora |
 | `JOBS_LISTEN` | `true` | `LISTEN/NOTIFY` do Postgres para o worker acordar na hora (o polling continua como reserva) |
-| `MEM0_ENABLED` / `MEM0_API_KEY` | `false` / — | habilita agentes com `memory_backend: "mem0"` |
 | `LANGFUSE_ENABLED` | `false` | liga o exportador — exige o extra `observability` e o profile de mesmo nome |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` | valores de dev | conexão com o Langfuse |
 | `LANGFUSE_TIMEOUT_SECONDS` | `20` | timeout do envio de traces |
@@ -291,6 +290,5 @@ Leia antes de expor o serviço fora de uma rede confiável:
 - **Agentes e collections criados depois do boot** funcionam no `/chat` na
   hora, mas só aparecem nas rotas nativas do AgentOS (e no playground de
   os.agno.com) depois de um restart.
-- **Mem0 hospedado** envia as mensagens dos usuários para os servidores do Mem0.
 - **Langfuse self-hosted é pesado** (~16 GB recomendados). Por isso é opcional
   e desligado por padrão — o serviço registra as execuções sem ele.

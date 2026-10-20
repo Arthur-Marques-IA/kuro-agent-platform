@@ -48,11 +48,10 @@ export const MEMORY_BACKENDS: Record<MemoryBackend, { label: string; description
       "O próprio modelo decide quando gravar, pela tool update_user_memory. Mais controle, mas cada gravação é uma chamada extra no meio da resposta.",
   },
   common: { label: "Agêntica", description: "Nome antigo da memória agêntica." },
-  mem0: { label: "Mem0", description: "Memória semântica via Mem0 (serviço externo). Requer MEM0_ENABLED no backend." },
 };
 
 /** Os modos oferecidos quando a memória de longo prazo está ligada (`common` é legado de `agentic`). */
-export const MEMORY_MODES = ["auto", "agentic", "mem0"] as const;
+export const MEMORY_MODES = ["auto", "agentic"] as const;
 
 export const REASONING_LEVELS: { value: "" | "off" | "low" | "medium" | "high"; label: string }[] = [
   { value: "", label: "Padrão do modelo" },

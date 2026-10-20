@@ -99,7 +99,7 @@ cat conversa.json | kuro --json analyze classificador        # texto/JSON por st
 # /chat e /analyze devolvem `agent_version` e `config_hash`: a configuração que decidiu.
 # /analyze aceita `session_id` (agrupa por conversa) e `metadata` (correlação; não vai ao modelo).
 # Memória de longo prazo: `memory_backend` = none (padrão) | auto (extraída em paralelo, modelo auxiliar AUX_MODEL_ID)
-#   | agentic (o modelo decide, tool update_user_memory) | mem0. `session_summary: true` resume o que sai de num_history_runs.
+#   | agentic (o modelo decide, tool update_user_memory). `session_summary: true` resume o que sai de num_history_runs.
 # Campos do agente: `model_params` {temperature, top_p, max_tokens, reasoning: off|low|medium|high,
 #   prompt_cache: off|5m|1h (só anthropic; Gemini/OpenAI cacheiam sozinhos)}, `timeout_seconds`
 # (504 ao estourar) e `enum` em qualquer campo de response_schema/dependency_fields.

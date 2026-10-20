@@ -1,7 +1,8 @@
 # Roadmap do Kuro (agent-service)
 
 > Feito a partir da leitura do código em 2026-09-18 (commit `298a869`) e revisado a cada batelada
-> (última revisão: 2026-10-03, depois do servidor MCP, do `kuro dash` e da divisão da documentação)
+> (última revisão: 2026-10-20, depois do RAG com sites e busca híbrida, da fila de jobs, do MCP pela
+> URL/SSH, da investigação de runs de analista e procedural e da remoção do Mem0)
 > — os itens entregues ficam riscados, com o que foi feito e o que sobrou, em vez de sumirem.
 > É o único lugar do roadmap: o README só aponta para cá. Diz o que fazer, em que ordem e o que cortar.
 >
@@ -124,6 +125,29 @@ build. O detalhe para quem integra está em `docs/notas-de-versao.md`.
 A base comum dos três é o `Client` da CLI. O que não é apresentação (o stream do chat, o eval) saiu
 do `typer` para os três reaproveitarem.
 
+**Depois de 2026-10-03 — feito** (detalhe em `docs/notas-de-versao.md`, seção "Não lançada"):
+- **MCP fora da máquina de quem opera:** `/mcp` (Streamable HTTP, chave admin) e `kuro connect
+  usuario@servidor` (MCP pelo SSH, sem porta aberta). Fecha o "transporte HTTP" da §5.5.
+- **Integração:** `Idempotency-Key` no `/chat` e no `/analyze`, rotação de chave (lista em
+  `ADMIN_API_KEY`/`RUNTIME_API_KEY`), OpenAPI de runtime (`/integration/openapi.json` e por agente),
+  `CORS_ORIGINS`, HTTPS pelo IP (profile `ip`).
+- **RAG:** `sources` na resposta, trechos consultados no trace, sites como fonte de qualquer
+  collection (crawl/sitemap/page, com os PDF/DOCX/PPTX/XLSX linkados), busca híbrida e configuração
+  de busca versionada por collection, e feedback do operador por trecho recuperado.
+- **Fila de jobs no Postgres** (`jobs`, `SKIP LOCKED`, lease, backoff, `LISTEN/NOTIFY`): roda os syncs
+  de site. É a fila que a §8 previa para quando houvesse execução assíncrona.
+- **Console:** Logs em Panorama/Sessões/Execuções com KPIs que levam aos casos, formulário de
+  `dependencies`, página Tools agrupada.
+- **Investigar runs que não são conversa:** a tela do run mostra a entrada e a saída em campos de um
+  `/analyze`, o estado de cada turno procedural (`procedure_state`) e a linha do tempo dos runs com
+  a mesma chave de correlação (`CORRELATION_METADATA_KEYS`, padrão `ciclo_id`). O 👎 de um analista
+  grava a **saída correta como referência** (`POST /observability/runs/{id}/feedback`), que vira caso
+  do `kuro eval` em `runs export` — fato errado se corrige na base, classificação/redação errada nas
+  instructions via draft → eval, nunca como regra global. O procedural ganhou o "ensinar" no console.
+- **Mem0 removido:** o `memory_backend="mem0"` mandava as conversas para o Mem0 hospedado (LGPD) e
+  nenhum agente o usava; a memória do Agno (`auto`/`agentic`, no Postgres do serviço) cobre o caso.
+- **Lint:** `ruff` configurado (`target-version = "py312"`) e limpo.
+
 **Adiado de propósito** (há um consumidor só): tabela `api_keys` multi-chave, multi-tenancy
 estrutural/RLS, RBAC no console, snapshot com cache e `LISTEN/NOTIFY`, dependências `tool_only`,
 migrar a ficha do R8 e o reset do R4 para o procedural (§4.2, já disponível), sandbox Python (manter
@@ -140,7 +164,8 @@ collections.
   (`model`/`dependency`/`const`), o que impede que um CPF passe pelo modelo. Isso é um diferencial real.
 - Contrato de integração derivado dos dados (`/agents/{t}/integration`): a documentação não diverge do código.
 - Dois tipos de agente: `conversational` e `analysis` (one-shot com `response_schema` validado).
-- Anexos multimodais, RAG por collection, Mem0 plugável e a "nota de feedback" (um agent.md do admin).
+- Anexos multimodais, RAG por collection (vetorial ou híbrido, com sites como fonte), memória de longo
+  prazo do Agno (`auto`/`agentic`) e a "nota de feedback" (um agent.md do admin).
 - Observabilidade no próprio Postgres (trace store local), com o Langfuse como exportador opcional.
 - Ciclo de mudança validada: draft → `kuro eval` → promote, e modo shadow com concordância.
 - CLI `kuro` pensada para outras IAs (`--json`, códigos de saída, `--no-input`, `AGENTS.md`).
@@ -193,9 +218,9 @@ que não piorou → publico* — existe desde o Sprint 2 (ver §0 e §5); o que 
    cliente — agora com Alembic, o que torna a migração de 5 tabelas um arquivo revisável.
 3. ~~**Alembic.**~~ **Feito** no Sprint 2 (`agent_service/migrations`, ver §0).
 4. ~~**CI (GitHub Actions).**~~ **Feito** (`.github/workflows/ci.yml`): pytest, `npm run lint`,
-   `npm run build` e build das duas imagens. Sem `ruff` por enquanto — não está nas dependências de
-   dev nem configurado, e adicioná-lo junto com a CI misturaria "passar a rodar os testes" com
-   "formatar o repo inteiro".
+   `npm run build` e build das duas imagens. O `ruff check` passou a ficar limpo em 2026-10-20
+   (`[tool.ruff] target-version = "py312"`). **Falta:** rodá-lo na CI e decidir sobre o `ruff format`
+   (o repositório não segue o formatador, e aplicá-lo de uma vez mexeria em quase todo arquivo).
 5. ~~**Proteção de egress nas tools de API.**~~ **Feito** (`tools/egress.py`): resolve o DNS e recusa
    loopback, privado, link-local, multicast e reservado, com `TOOL_EGRESS_ALLOWLIST` por host. A
    checagem roda com a URL já montada, porque um parâmetro `location="path"` pode compor o host. O
@@ -371,7 +396,7 @@ Regras de design:
    parâmetro que o modelo possa preencher. Os testes rodam em `dry_run` por padrão, e chave de
    modelo não passa pelo MCP.
    **Falta:**
-   - transporte HTTP, se algum agente remoto precisar (o stdio basta para a máquina de quem opera);
+   - ~~transporte HTTP~~ **feito**: `/mcp` (Streamable HTTP) e `kuro connect` (pelo SSH);
    - decidir se editar um agente de produção (`agent_set`/`agent_apply`) também pede confirmação.
      Hoje segue a CLI e não pede;
    - a *skill* do Claude Code com o ciclo draft → eval → promote.
@@ -427,8 +452,8 @@ promote e concordância do shadow estão também no console.
 
 | Onde | Problema | Sugestão |
 |---|---|---|
-| ~~`agents/base.py`~~ **feito (2026-09-26)**: `memory_backend` = `none` (padrão de agente novo) / `auto` / `agentic` / `mem0`, com limite de memórias no prompt, modelo auxiliar (`AUX_MODEL_ID`), resumo incremental da sessão e raciocínio por nível (`model_params.reasoning`) — `memory/managers.py`. Antes: todo agente `common` ligava `enable_agentic_memory` + `add_memories_to_context`, o que traz chamadas extras ao LLM. ~~Com `mem0`, as duas memórias rodam em paralelo~~ (corrigido: o `mem0` agora substitui a memória do Agno) | Memória explícita em três modos: `none` / `agno` / `mem0`. A maioria dos agentes de atendimento com `user_id` efêmero não precisa de memória longa |
-| `memory/mem0_backend.py` | `MemoryClient` é o Mem0 **hospedado**, então dados do cliente (CPF etc.) saem da sua infra. O post-hook salva só a mensagem do usuário, de forma síncrona | Mem0 OSS (`Memory`) sobre o mesmo pgvector, por questão de LGPD; salvar o par usuário/assistente; hook assíncrono em background |
+| ~~`agents/base.py`~~ **feito (2026-09-26)**: `memory_backend` = `none` (padrão de agente novo) / `auto` / `agentic`, com limite de memórias no prompt, modelo auxiliar (`AUX_MODEL_ID`), resumo incremental da sessão e raciocínio por nível (`model_params.reasoning`) — `memory/managers.py`. Antes: todo agente `common` ligava `enable_agentic_memory` + `add_memories_to_context`, o que traz chamadas extras ao LLM. | Memória explícita em três modos: `none` / `auto` / `agentic`. A maioria dos agentes de atendimento com `user_id` efêmero não precisa de memória longa |
+| ~~`memory/mem0_backend.py`~~ | **removido (2026-10-20)**: o `MemoryClient` era o Mem0 **hospedado**, então dados do cliente (CPF etc.) saíam da infra, e nenhum agente o usava | A memória do Agno (`auto`/`agentic`) no Postgres do serviço. Um agente antigo com `mem0` gravado roda sem memória; gravar `mem0` dá 422 |
 | ~~`agents/base.py` + `/analyze`~~ | **corrigido**: o agente de análise recebia `db=get_db()` e cada chamada criava uma sessão `analyze-<uuid>` no Postgres, com o documento inteiro dentro | `db=None` em `kind="analysis"`. O Agno guarda todo acesso a sessão com `if agent.db is not None`, e a busca na collection não usa `agent.db`, então o RAG continua valendo |
 | Anexos | O base64 fica no histórico da sessão e volta a cada turno (o `AGENTS.md` já avisa) | `POST /files` que devolve `file_id`, guardar em storage de objetos e no histórico manter só a referência (o MinIO do compose é do Langfuse e está no profile opcional: usar o Postgres ou um volume evita trazer ele de volta ao núcleo) |
 | ~~`documents/collections.py`~~ | **corrigido em parte**: o embedder era fixo em Gemini com a `GOOGLE_API_KEY` do ambiente | Embedder e credencial por collection (`documents/embedder.py`), escolhidos na criação e vindos do cofre. O `lru_cache` agora é chaveado pelo embedder, mas **rotação de credencial ainda exige restart** — a chave já está dentro do cliente |
@@ -440,12 +465,17 @@ promote e concordância do shadow estão também no console.
 
 ## 8. O que cortar ou não fazer
 
+- ~~**Mem0.**~~ **Removido em 2026-10-20.** Era uma segunda memória de longo prazo, hospedada fora
+  (as mensagens dos usuários iam para os servidores do Mem0), num produto que já tem a do Agno no
+  próprio Postgres. Não volte com ele; se faltar algo na memória do Agno, ajuste `memory/managers.py`.
+
 - ~~**`messaging/redis_streams.py::consume_tasks`**~~ **Saiu** no Sprint 1, junto com o Redis do
   núcleo: era código morto (ack antes de processar, sem dead-letter). Decisão de 2026-09-25: **sem
   fila no Kuro** — quem integra já tem a própria (no Regente, claim + daemon), e o Kuro responde 503
   com `Retry-After` quando está no limite. Quando houver execução assíncrona de verdade (evento de
   conclusão do procedural, `POST /chat/async`), a fila vai para o Postgres (`SELECT … FOR UPDATE
-  SKIP LOCKED`), não de volta para o Redis.
+  SKIP LOCKED`), não de volta para o Redis. **A fila existe desde 2026-10** (tabela `jobs`, hoje só
+  para os syncs de site): o webhook do procedural e um `/chat/async` podem usá-la.
 - **Tools `python` enquanto não houver isolamento real.** O próprio código admite que o namespace
   restrito não é uma sandbox. As tools de API cobrem a maior parte dos casos. Se forem mantidas,
   precisam rodar em um container efêmero, sem rede e com limite de CPU/memória, e isso é um projeto à
@@ -484,7 +514,7 @@ Os prazos são estimativas grosseiras para dar ordem de grandeza, não compromis
 | ~~**Operação**~~ feito | Servidor MCP (`kuro-mcp`), `kuro dash`, documentação dividida por assunto | Agentes de IA operam o Kuro por tools; humanos, pelo terminal |
 | ~~**Procedural**~~ feito | `kind="procedural"`: etapas, confirmação sem LLM, ação com trava, `state` no `/chat`, funil, console | Fluxos guiados conduzidos pelo servidor |
 | **Regente**, contínuo | R8 shadow → prod, R4 shadow → prod, R6 shadow → assistido → autônomo | Regente fora do `ServiceLLM::chatJson()` |
-| **Depois** | `api_keys`/tenant/RLS, webhook de conclusão do procedural, `tool_only`, cache com `LISTEN/NOTIFY`, lock de migração, sandbox Python, LLM-juiz no eval, `agente@versão`, `kuro up/down`, MCP por HTTP, GitOps de tools/collections | Plataforma completa, por necessidade |
+| **Depois** | `api_keys`/tenant/RLS, webhook de conclusão do procedural, `tool_only`, cache com `LISTEN/NOTIFY`, lock de migração, sandbox Python, LLM-juiz no eval, `agente@versão`, `kuro up/down`, GitOps de tools/collections | Plataforma completa, por necessidade |
 
 A paridade CLI × console está fechada e documentada como matriz em [docs/cli.md](docs/cli.md#paridade-entre-api-cli-e-console) (as exceções, com motivo,
 estão na §6). O console foi atualizado com o que os Sprints 2 e 3 trouxeram em 2026-09-25.

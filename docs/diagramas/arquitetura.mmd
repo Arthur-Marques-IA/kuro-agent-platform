@@ -8,7 +8,7 @@ flowchart TB
         REG --> STORE["agents/store + versions<br/>definições, prompt e<br/>versão da configuração"]
         REG --> TOOLS["tools/registry<br/>builtin · api · python"]
         REG --> MODELS["models/provider<br/>credenciais cifradas,<br/>parâmetros e preço"]
-        REG --> MEM["memory/<br/>Agno ou Mem0"]
+        REG --> MEM["memory/<br/>Agno"]
         REG --> DOCS["documents/<br/>collections pgvector"]
         ROUTES --> OBSV["observability/<br/>run_store (runs, spans,<br/>scores, referências)"]
         CLI["cli/ · kuro"] -. "HTTP" .-> ROUTES

@@ -24,6 +24,12 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Ação necessária
 
+- **`memory_backend: "mem0"` saiu.** O Mem0 hospedado (que mandava as mensagens dos usuários
+  para fora da infraestrutura) foi removido, junto com o extra `mem0`, `MEM0_ENABLED` e
+  `MEM0_API_KEY`. Criar ou editar um agente com `mem0` dá 422; um agente que ainda o tenha
+  gravado roda sem memória de longo prazo. Para memória, use `auto` ou `agentic` (a do Agno, no
+  Postgres do serviço). Nenhum agente em produção usava `mem0` quando isto saiu.
+
 Nenhuma, mas muda o comportamento no limite: acima de `MAX_CONCURRENT_RUNS`, a chamada **espera**
 na fila (até `QUEUE_MAX_WAIT_SECONDS`, 30 s) em vez de receber 503 na hora, e só então o run começa
 a contar o `timeout_seconds`. O timeout do seu cliente precisa cobrir as duas esperas

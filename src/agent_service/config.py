@@ -46,9 +46,6 @@ class Settings(BaseSettings):
     API que o admin cadastra pelo console. Sem ela, `models/store.py` recusa salvar ou
     ler chaves — nunca caem para texto plano."""
 
-    # Mem0 (camada de memória semântica opcional)
-    mem0_api_key: str | None = None
-    mem0_enabled: bool = False
 
     # Onde `/observability/*` e `kuro runs` leem as execuções: "db" (tabelas
     # `runs`/`run_spans`/`run_scores` no Postgres do serviço, sempre gravadas) ou

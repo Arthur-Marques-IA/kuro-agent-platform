@@ -368,8 +368,8 @@ export interface SessionRun {
 }
 
 /** `none` = sem memória de longo prazo; `auto` = extraída em paralelo; `agentic` = o
- * modelo decide quando gravar (`common` é o nome antigo dele); `mem0` = Mem0. */
-export type MemoryBackend = "none" | "auto" | "agentic" | "common" | "mem0";
+ * modelo decide quando gravar (`common` é o nome antigo dele). */
+export type MemoryBackend = "none" | "auto" | "agentic" | "common";
 
 export type DependencyFieldType = "string" | "integer" | "number" | "boolean";
 

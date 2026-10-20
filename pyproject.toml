@@ -53,9 +53,6 @@ observability = [
     "langfuse>=4.15.3",
     "openinference-instrumentation-agno>=1.0.10",
 ]
-mem0 = [
-    "mem0ai>=2.0.20",
-]
 tools = [
     # A tool builtin "Busca na web" (agent_service/tools/catalog.py) precisa
     # disso; as demais builtins do catálogo já funcionam sem instalar nada.

@@ -440,14 +440,12 @@ A mudança vale na próxima busca, sem reiniciar e sem mudar a versão do agente
 | `none` (padrão) | sem memória de longo prazo |
 | `auto` | extraída em paralelo à resposta, por um modelo auxiliar (`AUX_MODEL_ID`) |
 | `agentic` | o próprio modelo decide o que guardar, pela tool `update_user_memory` |
-| `mem0` | o Mem0 busca as memórias relevantes antes de responder e grava depois; **substitui** a do Agno |
 
 `common` é o nome antigo de `agentic` e continua aceito: o mesmo comportamento,
 a mesma versão da configuração. As memórias vão para o Postgres e as
-`MEMORY_CONTEXT_LIMIT` mais recentes entram no prompt. `mem0` exige
-`uv sync --extra mem0`, `MEM0_ENABLED=true` e `MEM0_API_KEY`; a imagem Docker não
-inclui o extra por padrão. Sem essa configuração o agente responde normalmente,
-mas sem memória de longo prazo, e o erro aparece só no log.
+`MEMORY_CONTEXT_LIMIT` mais recentes entram no prompt. O antigo `mem0` foi removido:
+um agente que ainda o tenha gravado roda sem memória de longo prazo, e gravar
+`mem0` dá 422.
 
 ## Modelos e credenciais
 

@@ -20,7 +20,7 @@ src/agent_service/
   agents/         store (definições + versões + nota de feedback), registry (resolução em runtime), anexos, dependências
   tools/          store, catálogo de builtins, tools de API e Python, resolução
   models/         catálogo de provedores, credenciais cifradas, criação do modelo
-  memory/         memória comum (Agno) e Mem0
+  memory/         memória de longo prazo (Agno)
   documents/      collections de documentos (pgvector)
   observability/  trace store local (Postgres), exportador Langfuse opcional e leitura de traces
   cli/            CLI kuro; client.py é o cliente HTTP que a CLI, o MCP e a TUI compartilham

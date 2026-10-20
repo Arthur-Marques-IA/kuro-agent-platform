@@ -176,12 +176,12 @@ def test_create_analysis_com_num_history_runs_e_422():
     assert "num_history_runs" in str(exc.value.detail)
 
 
-def test_create_analysis_com_mem0_e_422():
+def test_create_analysis_com_memoria_e_422():
     with pytest.raises(HTTPException) as exc:
         create_agent(
             AgentDefinitionIn(
                 agent_type="rota_inerte2", name="X", instructions=["a"], kind="analysis",
-                memory_backend="mem0",
+                memory_backend="agentic",
                 response_schema=[{"name": "v", "type": "number"}],
             )
         )

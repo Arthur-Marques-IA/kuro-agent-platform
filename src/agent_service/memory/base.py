@@ -3,8 +3,7 @@
 O agente conversacional do MVP usa a memória "comum" (Postgres, via
 agno.memory.manager.MemoryManager) para histórico/fatos de sessão. Esta
 interface existe para permitir trocar ou combinar isso com outros backends
-(ex. Mem0) sem alterar o código do agente — ver `agent_service.memory.mem0_backend`
-para o ponto de extensão já preparado.
+sem alterar o código do agente.
 """
 
 from abc import ABC, abstractmethod
