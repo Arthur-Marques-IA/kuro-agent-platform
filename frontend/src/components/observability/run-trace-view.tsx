@@ -32,6 +32,13 @@ import { AgentAvatar } from "@/components/agents/agent-avatar";
 import { ChunkList } from "@/components/knowledge/chunk-list";
 import { ChunkFeedbackButtons, useChunkFeedback } from "@/components/knowledge/chunk-feedback";
 import { FeedbackCount, RunStatusBadge } from "@/components/observability/run-status";
+import {
+  AnalysisIO,
+  ProcedureTurnState,
+  RelatedTimeline,
+  RunFeedback,
+  isAnalysisRun,
+} from "@/components/observability/run-insights";
 import { PageBody, PageHeader } from "@/components/workspace/page-header";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
 
@@ -134,6 +141,13 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
   const chunkFeedback = useChunkFeedback(run.run_id, userId);
   const agentHref = `/agents/${encodeURIComponent(run.agent_type)}`;
   const agentLabel = run.agent_name ?? run.agent_type;
+  const agent = getAgent(run.agent_type);
+  const analysis = isAnalysisRun(run);
+  const procedural = !!trace.procedure_state || agent?.kind === "procedural";
+  // Num analista a mensagem é o documento inteiro: no título, só o que identifica o run.
+  const title = analysis
+    ? [agentLabel, run.metadata?.fase].filter(Boolean).join(" · ")
+    : run.message || "Execução";
 
   return (
     <>
@@ -146,7 +160,7 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
         title={
           <span className="flex min-w-0 items-center gap-3">
             <AgentAvatar agentType={run.agent_type} name={agentLabel} size="sm" />
-            <span className="truncate">{run.message || "Execução"}</span>
+            <span className="truncate">{title}</span>
           </span>
         }
         description={
@@ -195,7 +209,7 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
                 <span className="hidden sm:inline">Ver sessão</span>
               </Link>
             )}
-            {run.session_id && run.user_id === userId && getAgent(run.agent_type)?.kind === "conversational" && (
+            {run.session_id && run.user_id === userId && agent?.kind === "conversational" && (
               <Link
                 href={`/chat/${encodeURIComponent(run.session_id)}`}
                 className={buttonVariants({ variant: "ghost", size: "icon" })}
@@ -242,6 +256,18 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
           />
         </dl>
 
+        <RelatedTimeline runId={run.run_id} />
+        {analysis && <AnalysisIO run={run} schema={agent?.response_schema} />}
+        {trace.procedure_state && <ProcedureTurnState state={trace.procedure_state} />}
+        <RunFeedback
+          key={run.run_id}
+          run={run}
+          analysis={analysis}
+          canTeach={agent?.kind === "conversational" || procedural}
+          hasReference={!!trace.reference}
+          onSaved={onReload}
+        />
+
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
           <Card className="overflow-hidden">
             <div className="flex h-10 items-center justify-between border-b border-border px-4">
@@ -269,7 +295,7 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
               </Card>
             )}
             {trace.reference && (
-              <CodeBlock title="referência (shadow) — a decisão que deveria ter saído" code={JSON.stringify(trace.reference, null, 2)} />
+              <CodeBlock title="referência — a decisão que deveria ter saído (shadow ou 👎)" code={JSON.stringify(trace.reference, null, 2)} />
             )}
           </div>
         )}

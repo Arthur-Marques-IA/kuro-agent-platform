@@ -140,6 +140,9 @@ class RunTrace(BaseModel):
     scores: list[ScoreOut]
     reference: Any = None
     """Decisão de referência gravada para o run (ex.: a do agente legado no shadow)."""
+    procedure_state: dict[str, Any] | None = None
+    """Só em turno de agente procedural: o `state` como o turno terminou (etapa,
+    collected, missing, invalid, done) — o mesmo que o `/chat` devolveu."""
 
 
 class SessionSummary(BaseModel):

@@ -33,6 +33,27 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
 
 ### Novo
 
+- **Investigar runs que não são conversa.** Três adições aditivas à observabilidade, sem migração:
+  - O trace de um turno de agente procedural (`GET /observability/runs/{id}/trace`) traz
+    `procedure_state`: o `state` como o turno terminou (etapa, `collected`, `missing`, `invalid`,
+    `done`), o mesmo que o `/chat` devolveu. Fica gravado num span `procedimento · estado` (tipo
+    `CHAIN`, que não conta como tool); runs anteriores vêm com `procedure_state: null`.
+  - `GET /observability/runs/{id}/related` (admin): os runs, de qualquer agente, que têm o mesmo
+    valor de uma chave de correlação na `metadata`, do mais antigo ao mais novo — ex.: triagem →
+    redação → consulta à base num ciclo do moderador. As chaves vêm de `CORRELATION_METADATA_KEYS`
+    (separadas por vírgula, padrão `ciclo_id`; vazio desliga) e aparecem em
+    `GET /observability/config` (`correlation_keys`).
+  - `POST /observability/runs/{id}/feedback` (admin) `{value, comment?, user_id?, reference?}`:
+    grava o score `feedback` e, com `value=0` num agente `analysis`, a saída correta como
+    referência do run (`source="feedback"`) — ela sai em `GET /observability/export` /
+    `kuro runs export` como caso do `kuro eval`. Não vira regra no prompt: `/agents/{t}/feedback`
+    continua 422 em `kind="analysis"`. `reference` com `value=1` dá 422.
+
+  MCP: `run_related` e `run_feedback`. Console: a tela do run mostra a entrada e a saída
+  estruturada de um `/analyze` (árvore dos campos), o estado do turno procedural, a linha do tempo
+  da correlação e "Avaliar esta execução" (👎 com a saída correta no analista; "ensinar" no
+  conversacional e no procedural); na sessão, os runs de analista viram cartões recolhíveis e o
+  procedural ganha o "ensinar". Ver [console](console.md#a-tela-da-execução).
 - **Fila de jobs no Postgres.** A sincronização de sites passou a rodar como job de uma fila no
   próprio banco (tabela `jobs`, sem broker novo): várias réplicas dividem o trabalho sem repetir
   um job, um processo que cai no meio devolve o job à fila quando o lease vence, a falha é

@@ -20,6 +20,7 @@ from agent_service.observability.trace_store import (
     RunSort,
     RunStats,
     RunStatus,
+    RunSummary,
     RunTrace,
     SessionPage,
     TraceStore,
@@ -38,6 +39,8 @@ class ObservabilityConfigOut(BaseModel):
     """O exportador do Langfuse está ligado."""
     project_url: str | None = None
     """Projeto na UI do Langfuse — `None` se desligado ou ainda inacessível."""
+    correlation_keys: list[str] = []
+    """Chaves de metadata que ligam runs de um mesmo fluxo (`CORRELATION_METADATA_KEYS`)."""
 
 
 class RunTraceOut(BaseModel):
@@ -393,7 +396,96 @@ def observability_config() -> ObservabilityConfigOut:
         enabled=get_trace_store() is not None,
         langfuse=langfuse,
         project_url=tracing.project_url() if langfuse else None,
+        correlation_keys=correlation_keys(),
     )
+
+
+def correlation_keys() -> list[str]:
+    from agent_service.config import get_settings
+
+    raw = get_settings().correlation_metadata_keys or ""
+    return list(dict.fromkeys(k.strip() for k in raw.split(",") if k.strip()))
+
+
+RELATED_LIMIT = 100
+
+
+class RelatedRuns(BaseModel):
+    key: str | None = None
+    """A chave de correlação que ligou os runs (a primeira configurada que o run tem)."""
+    value: str | None = None
+    items: list[RunSummary] = []
+    """Os runs com o mesmo valor, de qualquer agente, do mais antigo ao mais novo — o
+    próprio run incluído. Até 100."""
+
+
+@router.get("/runs/{run_id}/related", response_model=RelatedRuns)
+def related_runs(run_id: str) -> RelatedRuns:
+    """A linha do tempo do fluxo: os runs que compartilham com este uma chave de
+    correlação (`CORRELATION_METADATA_KEYS`, padrão `ciclo_id`) — ex.: triagem →
+    redação → consulta à base no ciclo do moderador. Sem chave, `items` vem vazio."""
+    store = _store()
+    try:
+        trace = store.get_run(run_id)
+    except TraceStoreError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if trace is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} não encontrado.")
+    meta = trace.run.metadata or {}
+    key = next((k for k in correlation_keys() if meta.get(k)), None)
+    if key is None:
+        return RelatedRuns()
+    try:
+        page = store.list_runs(RunQuery(metadata=((key, meta[key]),), limit=RELATED_LIMIT))
+    except TraceStoreError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    items = sorted(page.items, key=lambda r: (r.started_at, r.run_id))
+    return RelatedRuns(key=key, value=meta[key], items=items)
+
+
+class RunFeedbackIn(BaseModel):
+    value: Literal[0, 1] = Field(..., description="1 = positivo, 0 = negativo")
+    comment: str | None = Field(default=None, max_length=2000)
+    user_id: str | None = Field(default=None, max_length=200)
+    reference: dict[str, Any] | None = None
+    """A saída que deveria ter saído (agente `analysis`): vira a referência do run —
+    caso de eval em `GET /observability/export` — e não regra no prompt."""
+
+
+class RunFeedbackOut(BaseModel):
+    run_id: str
+    value: int
+    reference_saved: bool
+
+
+@router.post("/runs/{run_id}/feedback", response_model=RunFeedbackOut, status_code=201)
+def run_feedback(run_id: str, body: RunFeedbackIn) -> RunFeedbackOut:
+    """👍/👎 de um run, com comentário e, opcionalmente, a saída correta.
+
+    É o feedback de agente `analysis`, que não tem nota de comportamento: o voto
+    vira o score `feedback` e a saída corrigida vira a referência do run
+    (`source="feedback"`), que `kuro runs export` transforma em caso do
+    `kuro eval`. A correção chega ao prompt pelo fluxo draft → eval → promote,
+    não como regra global."""
+    from agent_service.observability import run_store
+
+    if body.reference is not None and body.value != 0:
+        raise HTTPException(status_code=422, detail="A saída correta só acompanha um feedback negativo (value=0).")
+    try:
+        trace = _store().get_run(run_id)
+    except TraceStoreError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if trace is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} não encontrado.")
+    if body.reference is not None:
+        try:
+            run_store.save_reference(run_id, body.reference, source="feedback")
+        except run_store.RunNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"Run {run_id!r} não encontrado.") from exc
+    tracing.score_run(
+        run_id=run_id, name=tracing.FEEDBACK, value=body.value, comment=body.comment, user_id=body.user_id
+    )
+    return RunFeedbackOut(run_id=run_id, value=body.value, reference_saved=body.reference is not None)
 
 
 @router.get("/runs/{run_id}", response_model=RunTraceOut)

@@ -73,6 +73,36 @@ a lista mostra também os números deles. Mudar os agentes tira o filtro de vers
 Links antigos: `/logs?user_id=…` vai para as sessões do usuário e `/logs?session_id=…` para as
 execuções da sessão.
 
+## A tela da execução
+
+`/runs/{run_id}` abre de qualquer lista (Logs, sessão, aba Execuções do agente). Além dos spans,
+ela se adapta ao tipo de run:
+
+- **Analista (`/analyze`)**: a **Entrada** é o `document`, com as quebras de linha preservadas, e a
+  **Saída** é a árvore dos campos do `result` (objetos e arrays aninhados, na ordem e com os rótulos
+  do `response_schema`; o caminho de cada campo, como `parcelas[0].valor`, aparece ao passar o mouse
+  e é o mesmo do `kuro eval`). O título é o agente e a `fase` da metadata, não o documento.
+- **Procedural**: **Procedimento neste turno** mostra a etapa em que o turno terminou, o que já foi
+  coletado, o que falta, os valores recusados e as ações — o estado daquele turno, não o atual.
+  Runs gravados antes desta versão não têm o quadro.
+- **Linha do tempo**: quando o run tem uma chave de correlação na metadata (`ciclo_id` por padrão,
+  configurável em `CORRELATION_METADATA_KEYS`), aparecem todos os runs com o mesmo valor, de
+  qualquer agente, em ordem — triagem → consulta à base → redação, por exemplo —, com o tempo
+  desde o primeiro, a fase e o status. Cada linha abre o run.
+- **Avaliar esta execução**: 👍 grava o score `feedback`. O 👎 depende do agente:
+  - no **analista**, pede o que estava errado e a **saída correta**, que começa preenchida com a
+    saída atual (edite só os campos errados). Ela vira a referência do run, que sai em
+    `kuro runs export` como caso de eval — o caminho é corrigir as instructions num draft e
+    conferir com `kuro eval`, não uma regra global. Fato errado (dado da base) se corrige na base
+    de conhecimento;
+  - no **conversacional** e no **procedural**, registra o 👎 com comentário e oferece o
+    **ensinar**, que mescla o comentário nas regras do agente lendo a conversa da sessão.
+
+Na **sessão** (`/logs/sessions/{id}`), os runs de analista (ex.: `grupo-18`, com triagem e redação)
+aparecem como cartões recolhidos com a fase, o status e o link para a execução; abertos, mostram a
+mesma entrada e saída. O procedural ganha o "feedback sobre a conversa inteira", como o
+conversacional.
+
 ## O gráfico do panorama (Logs)
 
 A série no tempo tem três medidas, nas abas acima do gráfico:

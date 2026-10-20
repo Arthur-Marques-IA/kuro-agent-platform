@@ -123,6 +123,12 @@ class Settings(BaseSettings):
     públicos, que é o padrão: sem isso uma tool alcança o Postgres, o Redis e o
     metadata da nuvem a partir de dentro do container."""
 
+    correlation_metadata_keys: str = "ciclo_id"
+    """Chaves de metadata que ligam execuções de um mesmo fluxo, separadas por vírgula
+    (`ciclo_id,conversation_id`). A tela do run mostra, em ordem, os runs que têm o
+    mesmo valor numa delas (ex.: triagem → redação → base consultada num ciclo do
+    moderador). Vazio desliga a linha do tempo."""
+
     # Sites como fonte de uma collection (ver agent_service/documents/web_sync.py)
     web_source_max_pages: int = 500
     """Teto de páginas por fonte, qualquer que seja o `max_pages` pedido."""

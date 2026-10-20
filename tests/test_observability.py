@@ -16,7 +16,6 @@ from agno.run.agent import (
     RunErrorEvent,
     RunStartedEvent,
 )
-from fastapi import HTTPException
 from langfuse import Langfuse
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter

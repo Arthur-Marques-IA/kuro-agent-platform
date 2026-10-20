@@ -43,7 +43,7 @@ from agent_service.agents.base import build_agent
 from agent_service.agents.procedure_store import ProcedureConflictError
 from agent_service.models.crypto import EncryptionNotConfiguredError
 from agent_service.models.provider import ProviderNotConfiguredError
-from agent_service.observability.run_store import SpanRecord
+from agent_service.observability.run_store import PROCEDURE_STATE_SPAN, SpanRecord
 from agent_service.observability.tracing import (
     RUN_FAILED,
     RunContext,
@@ -383,6 +383,20 @@ async def run_procedural_turn(agent: Agent, run: RunContext) -> AsyncIterator[tu
             break
 
     view = procedural.state_view(stages, state, finished=finished)
+    # O estado como o turno terminou, gravado no run: `procedure_runs` só guarda o
+    # último, e o console precisa mostrar etapa, coletado e faltando turno a turno.
+    now = datetime.now(timezone.utc)
+    spans.append(
+        SpanRecord(
+            type="CHAIN",
+            name="procedimento · estado",
+            started_at=now,
+            ended_at=now,
+            latency_ms=0.0,
+            output=view,
+            metadata={PROCEDURE_STATE_SPAN: True},
+        )
+    )
     turn = dataclasses.replace(
         run,
         extra_spans=tuple(spans),
