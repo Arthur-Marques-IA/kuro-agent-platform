@@ -406,6 +406,12 @@ class Client:
     def run_trace(self, run_id: str) -> dict[str, Any]:
         return self._request("GET", f"/observability/runs/{run_id}/trace")
 
+    def related_runs(self, run_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/observability/runs/{run_id}/related")
+
+    def run_feedback(self, run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", f"/observability/runs/{run_id}/feedback", json=body)
+
     def run_sessions(self, **params: Any) -> dict[str, Any]:
         """Execuções agrupadas por sessão (trace store) — não confundir com
         `list_sessions`, que é a conversa no Postgres."""

@@ -2,15 +2,19 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { GraduationCap, MessageSquare } from "lucide-react";
-import type { ChatMessage, RunSummary } from "@/lib/types";
+import { ChevronRight, GraduationCap, MessageSquare } from "lucide-react";
+import { formatDateTime } from "@/lib/format";
+import type { AgentKind, ChatMessage, RunSummary } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
 import { CopyButton } from "@/components/ui/copy-button";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { EmptyState, SectionHeading, Skeleton } from "@/components/ui/primitives";
+import { EmptyState, RelativeTime, SectionHeading, Skeleton } from "@/components/ui/primitives";
 import { Select } from "@/components/ui/select";
 import { TeachAgent } from "@/components/agents/teach-agent";
 import { MessageBubble } from "@/components/chat/message-bubble";
+import { AnalysisIO, isAnalysisRun } from "@/components/observability/run-insights";
+import { RunStatusBadge } from "@/components/observability/run-status";
 import { RunsTable, useRunsPager } from "@/components/observability/runs-table";
 import { StatsPanel } from "@/components/observability/stats-panel";
 import { PageBody, PageHeader } from "@/components/workspace/page-header";
@@ -91,6 +95,43 @@ export function SessionDetailView({ sessionId }: { sessionId: string }) {
   );
 }
 
+function canTeach(kind: AgentKind | undefined): boolean {
+  return kind === "conversational" || kind === "procedural";
+}
+
+/**
+ * Um run de analista na sessão (ex.: `grupo-18`: triagem, redação...): o documento
+ * de entrada costuma ser enorme, então ele fica recolhido atrás do cabeçalho com a
+ * fase, o horário e o link para a execução.
+ */
+function AnalysisRunCard({ run }: { run: RunSummary }) {
+  const { getAgent } = useWorkspace();
+  const phase = run.metadata?.fase;
+  return (
+    <details className="group rounded-xl border border-border bg-background">
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 px-4 py-2.5 text-[13px]">
+        <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden />
+        <span className="font-medium">{run.agent_name ?? getAgent(run.agent_type)?.name ?? run.agent_type}</span>
+        {phase && <Badge variant="outline">{phase}</Badge>}
+        <RunStatusBadge status={run.status} title={run.status_message} />
+        <span className="text-xs text-muted-foreground" title={formatDateTime(run.started_at)}>
+          <RelativeTime date={run.started_at} />
+        </span>
+        <Link
+          href={`/runs/${encodeURIComponent(run.run_id)}`}
+          className="ml-auto text-xs text-muted-foreground hover:text-foreground hover:underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          Ver execução
+        </Link>
+      </summary>
+      <div className="border-t border-border p-3">
+        <AnalysisIO run={run} schema={getAgent(run.agent_type)?.response_schema} />
+      </div>
+    </details>
+  );
+}
+
 /** Saída de analista é JSON: vai como bloco ```json para o markdown formatar. */
 function asMarkdown(output: string): string {
   const trimmed = output.trim();
@@ -134,9 +175,8 @@ function toMessages(run: RunSummary): ChatMessage[] {
 function Conversation({ runs, loading, sessionId }: { runs: RunSummary[]; loading: boolean; sessionId: string }) {
   const { getAgent } = useWorkspace();
   const ordered = useMemo(() => [...runs].reverse(), [runs]);
-  const conversational = [...new Set(ordered.map((r) => r.agent_type))].filter(
-    (type) => getAgent(type)?.kind === "conversational"
-  );
+  // O procedural também aprende pela nota de feedback (`agents/registry.py` a injeta na resposta).
+  const conversational = [...new Set(ordered.map((r) => r.agent_type))].filter((type) => canTeach(getAgent(type)?.kind));
   const [teachTarget, setTeachTarget] = useState<string | null>(null);
   const teachAgent = conversational.includes(teachTarget ?? "") ? teachTarget! : conversational[0];
 
@@ -153,14 +193,14 @@ function Conversation({ runs, loading, sessionId }: { runs: RunSummary[]; loadin
     <Card className="flex flex-col">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">
         {ordered.flatMap((run) =>
-          toMessages(run).map((message) => (
+          isAnalysisRun(run) ? [<AnalysisRunCard key={run.run_id} run={run} />] : toMessages(run).map((message) => (
             <MessageBubble
               key={message.id}
               message={message}
               agentType={run.agent_type}
               agentName={run.agent_name ?? getAgent(run.agent_type)?.name}
               sessionId={sessionId}
-              canTeach={getAgent(run.agent_type)?.kind === "conversational"}
+              canTeach={canTeach(getAgent(run.agent_type)?.kind)}
             />
           ))
         )}
@@ -188,7 +228,7 @@ function Conversation({ runs, loading, sessionId }: { runs: RunSummary[]; loadin
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              Para uma resposta específica, use o 👎 embaixo dela. Aqui o comentário vale para a conversa toda — a IA lê
+              Para uma resposta específica, use o 👎 embaixo dela (ou na tela da execução). Aqui o comentário vale para a conversa toda — a IA lê
               as mensagens acima e transforma em regra do agente.{" "}
               <Link href={`/agents/${encodeURIComponent(teachAgent)}?tab=feedback`} className="hover:underline">
                 Ver as regras

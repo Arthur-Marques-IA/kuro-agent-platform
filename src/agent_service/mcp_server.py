@@ -971,6 +971,29 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         return _fit(_call(client.run_trace, run_id))
 
     @server.tool(annotations=READ)
+    def run_related(run_id: RunId) -> dict[str, Any]:
+        """A linha do tempo do fluxo: os runs (de qualquer agente) que têm o mesmo valor
+        de uma chave de correlação deste (CORRELATION_METADATA_KEYS, padrão ciclo_id), do
+        mais antigo ao mais novo — ex.: triagem → redação → consulta à base num ciclo."""
+        return _fit(_call(client.related_runs, run_id))
+
+    @server.tool(annotations=OVERWRITE)
+    def run_feedback(
+        run_id: RunId,
+        value: Annotated[Literal[0, 1], Field(description="1 = correta, 0 = errada.")],
+        comment: Annotated[str | None, Field(description="O que estava errado.")] = None,
+        reference: Annotated[
+            dict[str, Any] | None,
+            Field(description="Só com value=0, em agente analysis: a saída correta, no formato do result."),
+        ] = None,
+    ) -> dict[str, Any]:
+        """👍/👎 de uma execução. Num agente analysis, a saída correta vira a referência do
+        run (caso de eval em runs_export), não regra no prompt — corrija as instructions num
+        draft e confira com eval. Em conversacional/procedural, para ensinar use feedback_send."""
+        body = {"value": value, "comment": comment, "reference": reference}
+        return _call(client.run_feedback, run_id, body)
+
+    @server.tool(annotations=READ)
     def runs_stats(agent_type: AgentFilter = None, since: Since = None) -> dict[str, Any]:
         """Total, erros, tokens, custo estimado e série diária. `since` em ISO 8601."""
         return _call(client.run_stats, agent_type=agent_type, since=since)

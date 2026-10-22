@@ -63,6 +63,8 @@ from agent_service.observability.trace_store import (
 logger = logging.getLogger(__name__)
 
 FEEDBACK = "feedback"
+PROCEDURE_STATE_SPAN = "procedure_state"
+"""Chave de metadata do span com o `state` de um turno procedural (`agents/procedure_runner.py`)."""
 DEFAULT_TENANT = "default"
 
 metadata = MetaData()
@@ -703,7 +705,14 @@ class DbTraceStore:
             )
         # Root primeiro, mesmo empatando no horário com o primeiro filho.
         spans.sort(key=lambda s: (s.parent_id is not None, s.started_at))
-        return RunTrace(run=_summary(row, [up, len(feedback) - up], run_meta, run_files), spans=spans, scores=scores, reference=reference)
+        procedure_state = next((s.output for s in spans if s.metadata.get(PROCEDURE_STATE_SPAN)), None)
+        return RunTrace(
+            run=_summary(row, [up, len(feedback) - up], run_meta, run_files),
+            spans=spans,
+            scores=scores,
+            reference=reference,
+            procedure_state=procedure_state if isinstance(procedure_state, dict) else None,
+        )
 
     def list_sessions(self, query: RunQuery) -> SessionPage:
         conditions = _filters(query, with_session=True)

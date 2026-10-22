@@ -574,3 +574,20 @@ async def test_runs_sessions_groups_by_conversation(api):
         data = _data(await mcp.call_tool("runs_sessions", {"agent_type": "r8", "limit": 999}))
     assert data["items"] == [{"session_id": "s1"}]
     assert calls[0].url.params["limit"] == "200"
+
+
+async def test_run_feedback_and_related_timeline(api):
+    """O 👎 de um analista com a saída correta e a linha do tempo por ciclo_id."""
+    server, routes, calls = api
+    routes[("POST", "/observability/runs/r1/feedback")] = httpx.Response(
+        201, json={"run_id": "r1", "value": 0, "reference_saved": True}
+    )
+    routes[("GET", "/observability/runs/r1/related")] = httpx.Response(
+        200, json={"key": "ciclo_id", "value": "c9", "items": [{"run_id": "r0"}, {"run_id": "r1"}]}
+    )
+    async with McpClient(server) as mcp:
+        saved = _data(await mcp.call_tool("run_feedback", {"run_id": "r1", "value": 0, "reference": {"nota": 5}}))
+        related = _data(await mcp.call_tool("run_related", {"run_id": "r1"}))
+    assert saved["reference_saved"] is True
+    assert json.loads(calls[0].content) == {"value": 0, "comment": None, "reference": {"nota": 5}}
+    assert related["key"] == "ciclo_id" and [r["run_id"] for r in related["items"]] == ["r0", "r1"]

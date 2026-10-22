@@ -173,6 +173,7 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `MAX_INPUT_CHARS` | `200000` | teto do texto de entrada (`message` do `/chat`, `document` do `/analyze`) |
 | `CUSTOM_PYTHON_TOOLS_ENABLED` | `false` | liga a execução de tools `python` |
 | `TOOL_EGRESS_ALLOWLIST` | — | hosts internos que as tools podem alcançar (vazio = só endereços públicos) — vale também para a coleta de sites |
+| `CORRELATION_METADATA_KEYS` | `ciclo_id` | chaves de `metadata` que ligam runs de um mesmo fluxo; a tela do run mostra os irmãos em ordem (vazio desliga) |
 | `WEB_SOURCE_MAX_PAGES` | `500` | teto de páginas por site, qualquer que seja o `max_pages` pedido |
 | `WEB_SOURCE_CONCURRENCY` | `3` | páginas processadas ao mesmo tempo por site (download + formatação) |
 | `WEB_SOURCE_REQUEST_DELAY_MS` | `300` | intervalo mínimo entre requisições ao mesmo site |
