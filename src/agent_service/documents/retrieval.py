@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 SEARCH_TOOL = "search_knowledge_base"
 
-SNIPPET_META = ("chunk", "chunk_size", "page", "section", "source_type", "source_url", "page_title", "crawled_at")
+SNIPPET_META = ("chunk", "chunk_size", "page", "section", "source_type", "source_url", "page_title", "crawled_at", "document_revision")
 """Campos do `meta_data` do trecho que vão para a referência (o resto é ruído de ingestão)."""
 
 _searches: ContextVar[list[dict[str, Any]] | None] = ContextVar("knowledge_searches", default=None)

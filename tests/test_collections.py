@@ -146,6 +146,7 @@ def test_same_text_in_two_collections_gets_distinct_content_ids(manuais):
     knowledge = MagicMock()
     knowledge._build_content_hash.return_value = "hash-igual"
     knowledge._aload_content = AsyncMock()
+    knowledge.aget_content_by_id = AsyncMock(return_value=None)
     with mock_patch("agent_service.documents.collections.get_collection", return_value=knowledge):
         id_general = asyncio.run(add_text("general", text="mesmo texto"))
         id_manuais = asyncio.run(add_text("manuais", text="mesmo texto"))

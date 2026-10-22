@@ -1,6 +1,6 @@
 /**
- * Os filtros dos Logs na URL: o Panorama (`/logs`), as Sessões (`/logs/sessions`) e as Execuções
- * (`/logs/runs`) leem e escrevem a mesma query string. Um link do Panorama para as execuções de
+ * Os filtros dos Logs na URL: o Panorama (`/logs`), as Sessões (`/logs/sessions`), as Execuções
+ * (`/logs/runs`) e a aba RAG (`/logs/rag`) leem e escrevem a mesma query string. Um link do Panorama para as execuções de
  * um agente, de uma versão ou com tool falhando é só uma URL; recarregar ou compartilhar a página
  * volta ao mesmo recorte. Sem dependência de React: testado por `logs-query.test.ts`.
  */
@@ -27,6 +27,16 @@ export const RUN_SORTS = [
 ] as const;
 export type RunSortValue = (typeof RUN_SORTS)[number]["value"];
 
+/** Recortes da aba RAG: o que buscou na base, a busca que voltou vazia e o trecho marcado errado. */
+export const RAG_FILTERS = [
+  { value: "searched", label: "Buscaram na base" },
+  { value: "empty", label: "Busca sem trecho" },
+  { value: "flagged", label: "Trecho marcado errado" },
+] as const;
+export type RagFilterValue = (typeof RAG_FILTERS)[number]["value"];
+
+export type LogsPath = "/logs" | "/logs/sessions" | "/logs/runs" | "/logs/rag";
+
 export interface LogsQuery {
   /** Atalho do período. Ignorado quando há intervalo livre (`from`/`to`). */
   period: Period;
@@ -52,6 +62,10 @@ export interface LogsQuery {
   sideEffect: boolean;
   hideShort: boolean;
   feedbackDown: boolean;
+  // A aba RAG.
+  rag: RagFilterValue;
+  /** Só runs de agentes que consultavam esta collection. Vazio = todas. */
+  collection: string;
 }
 
 export const EMPTY_LOGS_QUERY: LogsQuery = {
@@ -71,6 +85,8 @@ export const EMPTY_LOGS_QUERY: LogsQuery = {
   sideEffect: false,
   hideShort: false,
   feedbackDown: false,
+  rag: "searched",
+  collection: "",
 };
 
 export type SearchParams = Record<string, string | string[] | undefined>;
@@ -116,6 +132,7 @@ export function parseLogsQuery(params: SearchParams): LogsQuery {
   const period = first(params.period);
   const version = Number(first(params.version));
   const sort = first(params.sort);
+  const rag = first(params.rag);
   const complexity = first(params.complexity)
     .split(",")
     .map(Number)
@@ -144,6 +161,8 @@ export function parseLogsQuery(params: SearchParams): LogsQuery {
     sideEffect: flag(params.side_effect),
     hideShort: flag(params.hide_short),
     feedbackDown: first(params.feedback) === "down",
+    rag: RAG_FILTERS.some((r) => r.value === rag) ? (rag as RagFilterValue) : "searched",
+    collection: first(params.collection),
   };
 }
 
@@ -175,10 +194,12 @@ export function logsQueryString(query: Partial<LogsQuery>): string {
   if (q.sideEffect) out.set("side_effect", "1");
   if (q.hideShort) out.set("hide_short", "1");
   if (q.feedbackDown) out.set("feedback", "down");
+  if (q.rag !== "searched") out.set("rag", q.rag);
+  if (q.collection) out.set("collection", q.collection);
   return out.toString();
 }
 
-export function logsHref(path: "/logs" | "/logs/sessions" | "/logs/runs", query: Partial<LogsQuery> = {}): string {
+export function logsHref(path: LogsPath, query: Partial<LogsQuery> = {}): string {
   const qs = logsQueryString(query);
   return qs ? `${path}?${qs}` : path;
 }

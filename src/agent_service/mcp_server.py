@@ -1117,10 +1117,49 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     def chunk_feedback_flagged(
         collection: Annotated[str | None, Field(description="Só desta collection. Sem ela, todas.")] = None,
         label: Annotated[Literal["relevant", "irrelevant", "wrong"], Field(description="Qual marcação contar.")] = "wrong",
+        status: Annotated[
+            Literal["open", "resolved", "dismissed", "all"], Field(description="open (padrão): as que falta corrigir.")
+        ] = "open",
     ) -> dict[str, Any]:
-        """Documentos com mais marcações (padrão: wrong, errado/desatualizado), com os runs
-        que as geraram — para alguém revisar o documento na fonte."""
-        return {"documents": _call(client.flagged_documents, collection=collection, label=label, limit=20)}
+        """Documentos com mais marcações (padrão: wrong e abertas), com os runs que as geraram
+        e os feedback_ids — para corrigir com collection_edit_doc. `stale`: as marcações são
+        de uma revisão anterior à atual (talvez já corrigido)."""
+        rows = _call(client.flagged_documents, collection=collection, label=label, status=status, limit=20)
+        return {"documents": rows}
+
+    @server.tool(annotations=READ)
+    def chunk_feedback_list(
+        content_id: Annotated[str | None, Field(description="Só deste documento.")] = None,
+        collection: Annotated[str | None, Field(description="Só desta collection.")] = None,
+        run_id: Annotated[str | None, Field(description="Só deste run.")] = None,
+        status: Annotated[Literal["open", "resolved", "dismissed"] | None, Field(description="Só neste estado.")] = None,
+        label: Annotated[Literal["relevant", "irrelevant", "wrong"] | None, Field(description="Só este rótulo.")] = None,
+    ) -> dict[str, Any]:
+        """Marcações de trecho, mais recentes primeiro: pergunta, documento, a revisão em que o
+        trecho foi visto (document_revision), o estado e a revisão que resolveu."""
+        rows = _call(
+            client.list_chunk_feedback,
+            content_id=content_id,
+            collection=collection,
+            run_id=run_id,
+            status=status,
+            label=label,
+            limit=100,
+        )
+        return {"marks": rows, "count": len(rows)}
+
+    @server.tool(annotations=OVERWRITE)
+    def chunk_feedback_status(
+        feedback_id: Annotated[str, Field(description="O id da marcação (chunk_feedback_list).")],
+        status: Annotated[
+            Literal["dismissed", "resolved", "open"],
+            Field(description="dismissed: não procedia; resolved: corrigido fora daqui (ex.: na fonte do site); open: reabrir."),
+        ],
+        note: Annotated[str | None, Field(description="O motivo.")] = None,
+    ) -> dict[str, Any]:
+        """Muda o estado de uma marcação. Para corrigir o texto do documento use
+        collection_edit_doc, que resolve as marcações na revisão nova."""
+        return _call(client.set_chunk_feedback_status, feedback_id, {"status": status, "note": note, "by": "mcp"})
 
     @server.tool(annotations=READ)
     def chunk_feedback_export(
@@ -1315,6 +1354,57 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             content = _read_bytes(file, "text")
             return _call(client.add_collection_file, name, filename=Path(file).name, content=content, title=title)
         return _call(client.add_document, name, {"text": text, "name": title})
+
+    @server.tool(annotations=OVERWRITE)
+    def collection_edit_doc(
+        name: CollectionName,
+        content_id: Annotated[str, Field(description="O documento (content_id), como collection_docs devolve.")],
+        text: Annotated[str, Field(description="O texto corrigido, inteiro.")],
+        note: Annotated[str | None, Field(description="O que mudou nesta revisão.")] = None,
+        resolves: Annotated[
+            list[str] | None,
+            Field(description="Ids das marcações que esta revisão resolve. Sem isto, todas as abertas; [] nenhuma."),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Corrige um documento mantendo o content_id: reindexa e grava a revisão seguinte.
+        Devolve {revision, changed, resolved}. Página de site é recusada (409): corrija na
+        fonte e rode collection_sync_site. Depois, collection_retest confere a busca."""
+        body = {"text": text, "note": note, "resolves": resolves, "created_by": "mcp"}
+        return _call(client.replace_collection_document, name, content_id, body)
+
+    @server.tool(annotations=READ)
+    def collection_doc_revisions(
+        name: CollectionName,
+        content_id: Annotated[str, Field(description="O documento (content_id).")],
+        revision: Annotated[int | None, Field(description="Uma revisão, com o texto dela.")] = None,
+    ) -> dict[str, Any]:
+        """Revisões de um documento (mais recente primeiro); com `revision`, ela e o texto."""
+        if revision is not None:
+            return _call(client.document_revision, name, content_id, revision)
+        return {"revisions": _call(client.document_revisions, name, content_id)}
+
+    @server.tool(annotations=READ)
+    def collection_retest(
+        name: CollectionName,
+        content_id: Annotated[str, Field(description="O documento (content_id).")],
+        status: Annotated[
+            Literal["resolved", "open", "all"], Field(description="Quais marcações retestar (padrão: as resolvidas).")
+        ] = "resolved",
+    ) -> dict[str, Any]:
+        """Roda de novo, na busca atual, a pergunta de cada marcação do documento e diz se ele
+        voltou (found), em que posição e de qual revisão. Sem modelo e sem tokens."""
+        return {"cases": _call(client.retest_document, name, content_id, status)}
+
+    @server.tool(annotations=OVERWRITE)
+    def collection_reindex(
+        name: CollectionName,
+        content_id: Annotated[str | None, Field(description="Só este documento. Sem ele, todos.")] = None,
+    ) -> dict[str, Any]:
+        """Corta de novo os documentos pela regra de trechos atual (a dos sites: não separa
+        pergunta de resposta nem título de conteúdo), mantendo id e páginas, com uma revisão
+        nova em cada um. Gera os embeddings de novo. Páginas de site ficam de fora."""
+        rows = _call(client.reindex_collection, name, content_id)
+        return {"documents": rows, "rechunked": sum(1 for r in rows if r["status"] == "rechunked")}
 
     def _confirm_rm_doc(name: str, content_id: str, ctx: Context) -> Elicit[Confirmacao]:
         return _ask(ctx, f"kuro collections rm-doc {name} {content_id} --yes", f"Tirar o documento {content_id!r} da collection {name!r}? Não tem volta.")

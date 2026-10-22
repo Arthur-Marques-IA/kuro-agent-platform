@@ -306,6 +306,143 @@ def remove_document(
     emit(st, {"deleted": content_id}, lambda _: console.print(f"[green]✓[/] documento removido de {name}"))
 
 
+def _resolves(values: list[str] | None, none: bool) -> list[str] | None:
+    """`--resolve` repetível; sem ele, todas as abertas (None); `--no-resolve`, nenhuma."""
+    return [] if none else (values or None)
+
+
+@app.command("edit-doc")
+def edit_document(
+    ctx: typer.Context,
+    name: str,
+    content_id: str,
+    text: str | None = typer.Option(None, "--text", "-t", help="Texto corrigido; sem isto (e sem --file), lê de stdin."),
+    file: str | None = typer.Option(None, "--file", "-f", help="Arquivo corrigido (PDF, DOCX, CSV, TXT, MD...)."),
+    note: str | None = typer.Option(None, "--note", "-m", help="O que mudou nesta revisão."),
+    resolve: list[str] | None = typer.Option(
+        None, "--resolve", help="Id de marcação que esta revisão resolve (repetível). Sem isto: todas as abertas."
+    ),
+    no_resolve: bool = typer.Option(False, "--no-resolve", help="Não resolve marcação nenhuma."),
+) -> None:
+    """Corrige um documento mantendo o id: reindexa e grava a revisão seguinte.
+
+    As marcações abertas dele (`kuro runs chunk-marks --content-id ...`) ficam resolvidas
+    nesta revisão. Página de site dá 409: corrija na fonte e rode `collections sync`."""
+    st = state(ctx)
+    resolves = _resolves(resolve, no_resolve)
+    if file is not None:
+        if text is not None:
+            fail(st, "use --file ou --text, não os dois", EXIT_USAGE)
+        caminho = Path(file)
+        if not caminho.is_file():
+            fail(st, f"arquivo não encontrado: {file}", EXIT_USAGE)
+        data = {"note": note} if note else {}
+        if resolves is not None:
+            data["resolves"] = ",".join(resolves)
+        result = call(
+            st,
+            st.client.replace_collection_file,
+            name,
+            content_id,
+            filename=caminho.name,
+            content=caminho.read_bytes(),
+            data=data,
+        )
+    else:
+        if text is None:
+            text = "" if sys.stdin.isatty() else sys.stdin.read()
+            if not text.strip():
+                fail(st, "sem texto: use --text, --file ou envie o conteúdo por stdin", EXIT_USAGE)
+        body: dict[str, Any] = {"text": text, "note": note, "resolves": resolves}
+        result = call(st, st.client.replace_collection_document, name, content_id, body)
+
+    def render(r: dict[str, Any]) -> None:
+        if not r["changed"]:
+            console.print(f"[yellow]•[/] o conteúdo é o mesmo da revisão {r['revision']}: nada reindexado")
+            return
+        console.print(f"[green]✓[/] revisão {r['revision']} indexada, {r['resolved']} marcação(ões) resolvida(s)")
+
+    emit(st, result, render)
+
+
+@app.command("revisions")
+def document_revisions(
+    ctx: typer.Context,
+    name: str,
+    content_id: str,
+    revision: int | None = typer.Argument(None, help="Uma revisão, com o texto."),
+) -> None:
+    """Revisões de um documento; com o número, a revisão e o texto dela."""
+    st = state(ctx)
+    if revision is not None:
+        row = call(st, st.client.document_revision, name, content_id, revision)
+        emit(st, row, lambda r: console.print(r.get("text") or "[dim](arquivo: o texto não é guardado)[/]"))
+        return
+
+    def render(rows: list[dict[str, Any]]) -> None:
+        table = Table(show_edge=False, header_style="bold")
+        for column in ("revisão", "quando", "quem", "nota"):
+            table.add_column(column)
+        for r in rows:
+            quando = str(r.get("created_at") or "antes do histórico")[:16].replace("T", " ")
+            table.add_row(str(r["revision"]), quando, r.get("created_by") or "—", r.get("note") or "—")
+        console.print(table)
+
+    emit(st, call(st, st.client.document_revisions, name, content_id), render)
+
+
+@app.command("reindex")
+def reindex_collection(
+    ctx: typer.Context,
+    name: str,
+    content_id: str | None = typer.Option(None, "--doc", help="Só este documento (content_id)."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Não pede confirmação (obrigatório sem TTY)."),
+) -> None:
+    """Corta de novo os documentos pela regra de trechos atual (a mesma dos sites: não
+    separa pergunta de resposta nem título de conteúdo). Mantém o id e as páginas, grava
+    uma revisão em cada um e gera os embeddings de novo. Páginas de site ficam de fora."""
+    st = state(ctx)
+    if not yes:
+        if not st.interactive:
+            fail(st, "confirme com --yes para recortar sem TTY", EXIT_USAGE)
+        alvo = f"o documento {content_id!r}" if content_id else f"todos os documentos de {name!r}"
+        if not typer.confirm(f"Recortar {alvo} e gerar os embeddings de novo?"):
+            raise typer.Exit()
+
+    def render(rows: list[dict[str, Any]]) -> None:
+        for r in rows:
+            if r["status"] == "rechunked":
+                console.print(f"[green]✓[/] {r['content_id']} rev {r['revision']}: {r['chunks_before']} → {r['chunks_after']} trechos")
+            else:
+                console.print(f"[yellow]•[/] {r['content_id']} {r['status']}: {r.get('reason') or ''}")
+
+    emit(st, call(st, st.client.reindex_collection, name, content_id), render)
+
+
+@app.command("retest")
+def retest_document(
+    ctx: typer.Context,
+    name: str,
+    content_id: str,
+    status: str = typer.Option("resolved", "--status", help="Marcações a retestar: resolved | open | all."),
+) -> None:
+    """Roda de novo a pergunta de cada marcação do documento e diz se ele voltou na busca.
+    Sem modelo e sem tokens: é a mesma busca do `collections search`."""
+    st = state(ctx)
+
+    def render(rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            console.print("[dim]nenhuma marcação para retestar[/]")
+        for r in rows:
+            if r["found"]:
+                onde = ", ".join(f"#{h['rank']} (rev {h.get('document_revision') or '?'})" for h in r["hits"])
+                console.print(f"[green]✓[/] {r['query']} [dim]→ {onde}[/]")
+            else:
+                console.print(f"[red]✗[/] {r['query']} [dim]→ o documento não voltou[/]")
+
+    emit(st, call(st, st.client.retest_document, name, content_id, status), render)
+
+
 @app.command("search")
 def search_collection(
     ctx: typer.Context,

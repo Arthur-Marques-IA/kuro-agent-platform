@@ -144,11 +144,8 @@ async def add_text(
     name: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> str:
-    """Ingestão programática simples: adiciona um texto bruto à coleção.
-
-    Para upload de arquivo/URL com opções de chunking, use o endpoint
-    `POST /knowledge/content` exposto pelo AgentOS (ver README).
-    """
+    """Ingestão programática simples: adiciona um texto bruto à coleção, cortado
+    pela mesma regra das páginas de site (`_chunked`)."""
     knowledge = get_collection(collection_name)
     content = Content(
         name=name or "texto-avulso",
@@ -165,7 +162,8 @@ async def add_text(
     # `skip_if_exists` de outra coleção poderia pular a indexação.
     content.content_hash = knowledge._build_content_hash(content)
     content.id = generate_id(f"{collection_name}:{content.content_hash}")
-    await knowledge._aload_content(content, upsert=False, skip_if_exists=True)
+    _chunked(content, [(None, text)])
+    await _load_first_revision(knowledge, collection_name, content, text=text)
     return content.id
 
 
@@ -185,8 +183,10 @@ async def add_file(
     coleção é resolvida por nome como em todo o resto — então vale para uma
     criada depois do boot, e com o embedder dela (`documents/embedder.py`).
 
-    `type` recebe o MIME, como no router do AgentOS: é dele que o Agno escolhe
-    o leitor. Passar a extensão faria um PDF cair no leitor de texto."""
+    O texto sai do arquivo página por página e é cortado pela mesma regra das
+    páginas de site (`_chunked`); CSV fica com o leitor do Agno, uma linha por
+    trecho. `type` recebe o MIME, como no router do AgentOS: é dele que o Agno
+    escolhe o leitor nesse caso."""
     knowledge = get_collection(collection_name)
     content = Content(
         name=name or Path(filename).stem,
@@ -202,8 +202,60 @@ async def add_file(
     # conteúdo é uma só para todas as coleções.
     content.content_hash = knowledge._build_content_hash(content)
     content.id = generate_id(f"{collection_name}:{content.content_hash}")
-    await knowledge._aload_content(content, upsert=False, skip_if_exists=True)
+    text = await _chunk_file(content, content_bytes, filename)
+    await _load_first_revision(knowledge, collection_name, content, text=text, filename=filename)
     return content.id
+
+
+def _chunked(content: Content, pages: list[tuple[int | None, str]]) -> str:
+    """Põe no `content` os trechos já cortados por `chunk_markdown` (a regra de todo
+    documento: não separa pergunta de resposta nem título de conteúdo) e devolve o texto."""
+    from agent_service.documents.web_sync import PreChunked, prechunk
+
+    content.reader = PreChunked(prechunk(pages, name=content.name or "documento"))
+    return "\n\n".join(text for _, text in pages)
+
+
+async def _chunk_file(content: Content, body: bytes, filename: str) -> str | None:
+    """O texto extraído do arquivo (o que vai para a revisão), já cortado no `content`.
+    `None` quando fica com o leitor do Agno: CSV, ou arquivo sem texto extraível."""
+    from agent_service.documents.web_sync import extract_pages
+
+    try:
+        pages = await asyncio.to_thread(extract_pages, body, filename)
+    except Exception:
+        logger.warning("Não consegui extrair o texto de %s; fica com o leitor do Agno", filename, exc_info=True)
+        return None
+    if not pages or not any(text.strip() for _, text in pages):
+        return None
+    return _chunked(content, pages)
+
+
+async def _load_first_revision(
+    knowledge: Knowledge, collection_name: str, content: Content, *, text: str | None = None, filename: str | None = None
+) -> None:
+    """Indexa um documento novo como revisão 1 (ou a seguinte, se ele já foi
+    removido e volta agora).
+
+    A revisão entra na metadata depois do hash e do id: com ela dentro, o mesmo
+    texto mandado de novo ganharia outro id em vez de cair no `skip_if_exists`."""
+    from agent_service.documents import revisions
+
+    if await knowledge.aget_content_by_id(content.id) is not None:
+        return  # já indexado: o mesmo conteúdo de novo não vira revisão
+    last = revisions.latest(content.id)
+    number = 1 if last is None else last["revision"] + 1
+    content.metadata = {**(content.metadata or {}), revisions.FIELD: number}
+    await knowledge._aload_content(content, upsert=False, skip_if_exists=True)
+    revisions.record(
+        collection_name,
+        content.id,
+        revision=number,
+        content_hash=content.content_hash,
+        text=text,
+        filename=filename,
+        note=None if last is None else "indexado de novo depois de removido",
+    )
 
 
 async def list_documents(
@@ -240,7 +292,205 @@ async def remove_document(collection_name: str, content_id: str) -> bool:
     knowledge = get_collection(collection_name)
     if not await _belongs(knowledge, content_id):
         return False
-    return await knowledge.aremove_content_by_id(content_id)
+    removed = await knowledge.aremove_content_by_id(content_id)
+    if removed:
+        from agent_service.observability import chunk_feedback
+
+        # Não há mais o que corrigir: as marcações abertas dele fecham com o motivo.
+        chunk_feedback.close_for_document(content_id, status="resolved", note="documento removido")
+    return removed
+
+
+class DocumentNotFoundError(LookupError):
+    """O documento não é desta collection."""
+
+
+class DocumentConflictError(ValueError):
+    """A edição não pode ser feita assim (página de site, ou texto igual ao de outro documento)."""
+
+
+async def replace_document(
+    collection_name: str,
+    content_id: str,
+    *,
+    text: str | None = None,
+    content_bytes: bytes | None = None,
+    filename: str | None = None,
+    content_type: str | None = None,
+    name: str | None = None,
+    note: str | None = None,
+    created_by: str | None = None,
+    resolves: list[str] | None = None,
+) -> dict[str, Any]:
+    """Corrige um documento mantendo o `content_id`: apaga os vetores, indexa o
+    conteúdo novo e grava a revisão seguinte. As marcações em `resolves` (ids de
+    `chunk_feedback` deste documento) ficam resolvidas nesta revisão; `None`
+    resolve todas as abertas dele, e `[]` nenhuma.
+
+    Mesmo texto da revisão atual não vira revisão nova (`changed: false`). Página
+    de um site dá `DocumentConflictError`: o próximo sync sobrescreveria a edição,
+    então a correção é na fonte."""
+    from agent_service.documents import revisions, sources_store
+    from agent_service.observability import chunk_feedback
+
+    if (text is None) == (content_bytes is None):
+        raise ValueError("mande o texto ou o arquivo, um dos dois")
+    knowledge = get_collection(collection_name)
+    existing = await knowledge.aget_content_by_id(content_id)
+    if existing is None or not await _belongs(knowledge, content_id):
+        raise DocumentNotFoundError(content_id)
+    if sources_store.source_of_content(content_id) is not None:
+        raise DocumentConflictError(
+            "este documento é uma página de site: corrija na fonte e rode o sync da collection"
+        )
+
+    user_metadata = {
+        k: v for k, v in (existing.metadata or {}).items() if not k.startswith("_") and k != revisions.FIELD
+    }
+    if text is not None:
+        file_data = FileData(content=text.encode("utf-8"), type="manual")
+    else:
+        file_data = FileData(content=content_bytes, type=content_type or None, filename=filename, size=len(content_bytes))
+    content = Content(
+        id=content_id,
+        name=name or existing.name,
+        description=existing.description,
+        file_data=file_data,
+        metadata=user_metadata or None,
+    )
+    if resolves is None:
+        resolves = [f["id"] for f in chunk_feedback.list_feedback(content_id=content_id, status="open")]
+    content_hash = knowledge._build_content_hash(content)
+    current = revisions.current(collection_name, content_id)
+    last = revisions.latest(content_id) or {}
+    if last.get("content_hash") == content_hash:
+        # Nada mudou, então nada foi corrigido: as marcações continuam como estão.
+        return {"content_id": content_id, "revision": current, "changed": False, "resolved": 0}
+    twin = generate_id(f"{collection_name}:{content_hash}")
+    if twin != content_id and await knowledge.aget_content_by_id(twin) is not None:
+        raise DocumentConflictError(f"o conteúdo novo é igual ao do documento {twin!r} desta collection")
+
+    if text is not None:
+        _chunked(content, [(None, text)])
+    else:
+        text = await _chunk_file(content, content_bytes, filename or "documento")
+    number = revisions.next_number(content_id)
+    content.content_hash = content_hash
+    content.metadata = {**user_metadata, revisions.FIELD: number}
+    await knowledge.aremove_content_by_id(content_id)
+    await knowledge._aload_content(content, upsert=True, skip_if_exists=False)
+    revisions.record(
+        collection_name,
+        content_id,
+        revision=number,
+        content_hash=content_hash,
+        text=text,
+        filename=filename,
+        note=note,
+        created_by=created_by,
+    )
+    resolved = chunk_feedback.resolve(resolves or [], content_id=content_id, revision=number, by=created_by, note=note)
+    return {"content_id": content_id, "revision": number, "changed": True, "resolved": resolved}
+
+
+def _indexed_chunks(knowledge: Knowledge, content_id: str) -> list[tuple[str, dict[str, Any]]]:
+    """(texto, meta_data) de cada trecho do documento, na ordem: página, depois número."""
+    vector_db = getattr(knowledge, "vector_db", None)
+    table, session = getattr(vector_db, "table", None), getattr(vector_db, "Session", None)
+    if table is None or session is None:
+        return []
+    with session() as sess:
+        rows = sess.execute(select(table.c.content, table.c.meta_data).where(table.c.content_id == content_id)).all()
+
+    def order(row: Any) -> tuple[int, int]:
+        meta = row.meta_data or {}
+        return (int(meta.get("page") or 0), int(meta.get("chunk") or 0))
+
+    return [(row.content or "", dict(row.meta_data or {})) for row in sorted(rows, key=order)]
+
+
+async def document_pages(collection_name: str, content_id: str) -> list[tuple[int | None, str]]:
+    """O texto do documento remontado dos trechos indexados, página por página.
+
+    Os leitores não sobrepõem trechos (`overlap=0` no Agno, e `chunk_markdown` corta
+    entre blocos), então juntar os trechos na ordem devolve o texto extraído — é o que
+    se mostra para corrigir um arquivo, ou um documento de antes do histórico."""
+    knowledge = get_collection(collection_name)
+    chunks = await asyncio.to_thread(_indexed_chunks, knowledge, content_id)
+    pages: list[tuple[int | None, list[str]]] = []
+    for text, meta in chunks:
+        page = meta.get("page")
+        if not pages or pages[-1][0] != page:
+            pages.append((page, []))
+        pages[-1][1].append(text)
+    return [(page, "\n\n".join(texts)) for page, texts in pages]
+
+
+async def rechunk_document(collection_name: str, content_id: str, *, created_by: str | None = None) -> dict[str, Any]:
+    """Corta de novo um documento já indexado pela regra atual (`chunk_markdown`),
+    a partir do texto dos trechos dele: mesmo `content_id`, mesmas páginas, revisão
+    nova ("recortado"). Página de site fica de fora: o sync a recorta da fonte."""
+    from agent_service.documents import revisions, sources_store
+
+    knowledge = get_collection(collection_name)
+    existing = await knowledge.aget_content_by_id(content_id)
+    if existing is None:
+        raise DocumentNotFoundError(content_id)
+    if sources_store.source_of_content(content_id) is not None:
+        return {"content_id": content_id, "status": "skipped", "reason": "página de site: o sync recorta da fonte"}
+    pages = await document_pages(collection_name, content_id)
+    if not any(text.strip() for _, text in pages):
+        return {"content_id": content_id, "status": "skipped", "reason": "sem trechos indexados"}
+    before = sum(1 for _ in await asyncio.to_thread(_indexed_chunks, knowledge, content_id))
+    user_metadata = {
+        k: v for k, v in (existing.metadata or {}).items() if not k.startswith("_") and k != revisions.FIELD
+    }
+    revisions.current(collection_name, content_id)  # documento antigo ganha a revisão 1 antes
+    number = revisions.next_number(content_id)
+    content = Content(
+        id=content_id,
+        name=existing.name,
+        description=existing.description,
+        file_data=FileData(content="\n\n".join(t for _, t in pages).encode("utf-8"), type="manual"),
+        metadata={**user_metadata, revisions.FIELD: number},
+    )
+    text = _chunked(content, pages)
+    after = len(content.reader.documents)
+    # O hash continua o do conteúdo original: o mesmo arquivo enviado de novo ainda cai no mesmo id.
+    content.content_hash = existing.content_hash or knowledge._build_content_hash(content)
+    await knowledge.aremove_content_by_id(content_id)
+    await knowledge._aload_content(content, upsert=True, skip_if_exists=False)
+    revisions.record(
+        collection_name,
+        content_id,
+        revision=number,
+        content_hash=(revisions.latest(content_id) or {}).get("content_hash"),
+        text=text,
+        note="recortado com a regra de trechos atual",
+        created_by=created_by,
+    )
+    return {"content_id": content_id, "status": "rechunked", "revision": number, "chunks_before": before, "chunks_after": after}
+
+
+async def reindex_collection(collection_name: str, *, created_by: str | None = None) -> list[dict[str, Any]]:
+    """`rechunk_document` em todos os documentos da collection (as páginas de site ficam de fora)."""
+    knowledge = get_collection(collection_name)
+    ids: list[str] = []
+    page = 1
+    while True:
+        documentos, total = await knowledge.aget_content(limit=500, page=page)
+        ids.extend(c.id for c in documentos if c.id)
+        if not documentos or page * 500 >= total:
+            break
+        page += 1
+    report = []
+    for content_id in ids:
+        try:
+            report.append(await rechunk_document(collection_name, content_id, created_by=created_by))
+        except Exception as exc:  # um documento ruim não para os outros
+            logger.warning("Falha ao recortar %s em %s", content_id, collection_name, exc_info=True)
+            report.append({"content_id": content_id, "status": "failed", "reason": f"{type(exc).__name__}: {exc}"})
+    return report
 
 
 async def _belongs(knowledge: Knowledge, content_id: str) -> bool:

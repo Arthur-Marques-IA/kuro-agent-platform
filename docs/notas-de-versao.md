@@ -24,14 +24,52 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Ação necessária
 
-Nenhuma, mas muda o comportamento no limite: acima de `MAX_CONCURRENT_RUNS`, a chamada **espera**
-na fila (até `QUEUE_MAX_WAIT_SECONDS`, 30 s) em vez de receber 503 na hora, e só então o run começa
-a contar o `timeout_seconds`. O timeout do seu cliente precisa cobrir as duas esperas
-(`QUEUE_MAX_WAIT_SECONDS + timeout_seconds + 5`); um cliente com `timeout_seconds + 5`, como o
-[guia de integração](integracao.md#4-erros-e-fallback) recomendava, pode desistir com o run ainda na fila.
-Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
+- **Todo documento passa a ser cortado pela regra dos sites.** Texto colado, arquivo enviado (PDF,
+  DOCX, PPTX, XLSX, TXT, MD) e a correção de documento deixam o corte do Agno (até 5.000 caracteres,
+  sem olhar o conteúdo) e usam o mesmo de páginas de site: trechos de até 1.500 caracteres, cortados
+  entre parágrafos, sem separar título de conteúdo nem pergunta de resposta, e cada trecho com
+  `section`. CSV continua uma linha por trecho. Os trechos ficam menores: se um agente passar a
+  receber pouco contexto, suba o `max_results` (k) da collection. Os documentos já indexados não
+  mudam até serem recortados (`POST /collections/{nome}/reindex`, `kuro collections reindex`).
+
+- **Fila no limite de execuções.** Acima de `MAX_CONCURRENT_RUNS`, a chamada **espera**
+  na fila (até `QUEUE_MAX_WAIT_SECONDS`, 30 s) em vez de receber 503 na hora, e só então o run começa
+  a contar o `timeout_seconds`. O timeout do seu cliente precisa cobrir as duas esperas
+  (`QUEUE_MAX_WAIT_SECONDS + timeout_seconds + 5`); um cliente com `timeout_seconds + 5`, como o
+  [guia de integração](integracao.md#4-erros-e-fallback) recomendava, pode desistir com o run ainda na fila.
+  Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
 
 ### Novo
+
+- **Ciclo de correção do RAG: revisão de documento e marcação resolvida.** Corrigir um documento não
+  troca mais o `content_id`: `PUT /collections/{nome}/documents/{content_id}` (texto) ou
+  `PUT .../{content_id}/file` (arquivo) reindexa no mesmo id e grava a revisão seguinte
+  (`GET .../revisions[/{n}]`, com o texto quando é texto). Página de site dá 409 (corrija na fonte; o
+  sync grava uma revisão a cada mudança). Cada trecho leva `document_revision` na metadata, que
+  aparece em `metadata.references`, no `GET .../search` e no trace. A marcação de trecho
+  (`chunk_feedback`) ganha `document_revision`, `status` (`open`, `resolved`, `dismissed`),
+  `resolved_in_revision`, `resolved_by`, `resolved_at`, `resolution_note`, `current_revision` e
+  `stale`. A edição resolve as marcações abertas do documento (ou as de `resolves`);
+  `POST /observability/chunk-feedback/{id}/status` dispensa, resolve ou reabre uma; remover o
+  documento fecha as abertas. `POST .../{content_id}/retest` busca de novo as perguntas marcadas,
+  sem modelo. CLI: `collections edit-doc|revisions|retest`, `runs chunk-dismiss|chunk-resolve|chunk-reopen`,
+  `runs chunk-marks --status --content-id`, `runs chunk-flagged --status`; MCP: `collection_edit_doc`,
+  `collection_doc_revisions`, `collection_retest`, `chunk_feedback_list`, `chunk_feedback_status`.
+  Console: botão **Corrigir** na tela Conhecimento, com as marcações a resolver e o "Testar de novo".
+  Ver [corrigir o documento](conceitos.md#corrigir-o-documento-e-fechar-a-marcação).
+- **Recortar documentos já indexados.** `POST /collections/{nome}/reindex[?content_id=]` corta de
+  novo pela regra atual, a partir dos trechos indexados: mesmo `content_id`, mesmas páginas, uma
+  revisão nova ("recortado") em cada documento, embeddings gerados de novo; páginas de site ficam de
+  fora. Devolve, por documento, `status` e os trechos antes e depois. CLI `collections reindex`, MCP
+  `collection_reindex`.
+- **Texto do documento para corrigir.** A revisão de um arquivo passa a guardar o texto extraído; sem
+  texto guardado, `GET .../revisions/{n}` (a atual) remonta o texto dos trechos indexados
+  (`text_source: "chunks"`). O "Corrigir" do console abre preenchido e também aceita o arquivo
+  corrigido (`PUT .../{content_id}/file`).
+- **Aba RAG nos Logs.** `/logs/rag` lista as execuções que buscaram na base, com três recortes e a
+  contagem de cada um: buscaram na base, busca sem trecho nenhum (a base não cobre a pergunta) e
+  trecho marcado errado ainda aberto, filtráveis por collection. API: `rag=searched|empty|flagged`
+  em `GET /observability/runs` e `/stats` (que também aceita `knowledge_collection`).
 
 - **Investigar runs que não são conversa.** Três adições aditivas à observabilidade, sem migração:
   - O trace de um turno de agente procedural (`GET /observability/runs/{id}/trace`) traz
@@ -306,6 +344,12 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
 
 ### Corrigido
 
+- **Achar uma execução pelo id.** O `search` de `/observability/runs`, `/sessions` e `/stats` também
+  acha pelo `run_id` ou `trace_id` inteiro (um trecho do id não conta). No console, colar um dos dois
+  na busca de Logs abre a execução, mesmo que seja teste.
+- **Números da aba Execuções batendo com a lista.** `GET /observability/stats` aceita `include_dry_run`
+  (padrão `true`, como antes); no console, os números do agente passam a seguir o "Incluir testes"
+  da lista, em vez de contar testes que ela esconde.
 - Com a autenticação ligada, o preflight de CORS (`OPTIONS`, que o navegador manda sem a chave)
   recebia 401, e nenhuma página em outro domínio conseguia chamar a API, nem as origens liberadas.
   O preflight passa a ser respondido pelo CORS; a chamada de verdade continua exigindo a chave.
@@ -361,6 +405,9 @@ Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
   acrescenta `knowledge_collection`, `collection_version` e `collection_config_hash` em `runs`.
   Nenhuma collection muda de comportamento; runs anteriores ficam com esses campos nulos.
 - A migração `0013` também roda sozinha: cria `chunk_feedback` (as marcações por trecho do RAG).
+- A migração `0014` também roda sozinha: cria `document_revisions` e acrescenta o estado e a revisão
+  em `chunk_feedback`. As marcações existentes ficam `open`, com a revisão desconhecida; os documentos
+  já indexados ganham a revisão 1 na primeira vez que alguém a consulta, sem reindexar nada.
 - `AGENT_SERVICE_PUBLIC_URL` do console deixou de ter `http://localhost:58000` fixo no compose:
   vazia, a aba Integração mostra a URL que o agent-service conhece. Para forçar outra, defina-a no
   `.env`.

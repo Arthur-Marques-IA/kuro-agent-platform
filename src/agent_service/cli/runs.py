@@ -302,13 +302,55 @@ def chunk_unmark(ctx: typer.Context, feedback_id: str) -> None:
 
 def _render_marks(rows: list[dict[str, Any]]) -> None:
     table = Table(show_edge=False, header_style="bold")
-    for column in ("quando", "rótulo", "documento", "pergunta", "run_id", "id"):
+    for column in ("quando", "rótulo", "estado", "documento", "pergunta", "run_id", "id"):
         table.add_column(column)
     for r in rows:
+        estado = r.get("status") or "open"
+        if r.get("stale"):
+            estado += " (revisão antiga)"
         table.add_row(
-            str(r["created_at"])[5:16].replace("T", " "), r["label"], r.get("document") or "—", r["query"], r["run_id"], r["id"]
+            str(r["created_at"])[5:16].replace("T", " "),
+            r["label"],
+            estado,
+            r.get("document") or "—",
+            r["query"],
+            r["run_id"],
+            r["id"],
         )
     console.print(table)
+
+
+def _set_status(ctx: typer.Context, feedback_id: str, status: str, note: str | None) -> None:
+    st = state(ctx)
+    row = call(st, st.client.set_chunk_feedback_status, feedback_id, {"status": status, "note": note})
+    emit(st, row, lambda r: console.print(f"[green]✓[/] marcação {r['id']}: {r['status']}"))
+
+
+@app.command("chunk-dismiss")
+def chunk_dismiss(
+    ctx: typer.Context,
+    feedback_id: str,
+    note: str | None = typer.Option(None, "--note", "-m", help="Por que não procedia."),
+) -> None:
+    """Dispensa uma marcação que não procedia (sai da lista de marcados, fica no histórico)."""
+    _set_status(ctx, feedback_id, "dismissed", note)
+
+
+@app.command("chunk-resolve")
+def chunk_resolve(
+    ctx: typer.Context,
+    feedback_id: str,
+    note: str | None = typer.Option(None, "--note", "-m", help="Como foi corrigido."),
+) -> None:
+    """Resolve sem editar o documento por aqui (ex.: corrigido na fonte de um site).
+    Para corrigir o texto, `kuro collections edit-doc`, que resolve na revisão nova."""
+    _set_status(ctx, feedback_id, "resolved", note)
+
+
+@app.command("chunk-reopen")
+def chunk_reopen(ctx: typer.Context, feedback_id: str) -> None:
+    """Reabre uma marcação resolvida ou dispensada."""
+    _set_status(ctx, feedback_id, "open", None)
 
 
 @app.command("chunk-marks")
@@ -317,11 +359,22 @@ def chunk_marks(
     run: str | None = typer.Option(None, "--run", help="Só deste run."),
     collection: str | None = typer.Option(None, "--collection", "-c"),
     label: str | None = typer.Option(None, "--label", help="relevant | irrelevant | wrong."),
+    status: str | None = typer.Option(None, "--status", help="open | resolved | dismissed."),
+    content_id: str | None = typer.Option(None, "--content-id", help="Só deste documento."),
     limit: int = typer.Option(100, "--limit", "-n", min=1, max=5000),
 ) -> None:
     """Lista as marcações de trecho, mais recentes primeiro."""
     st = state(ctx)
-    rows = call(st, st.client.list_chunk_feedback, run_id=run, collection=collection, label=label, limit=limit)
+    rows = call(
+        st,
+        st.client.list_chunk_feedback,
+        run_id=run,
+        collection=collection,
+        label=label,
+        status=status,
+        content_id=content_id,
+        limit=limit,
+    )
     emit(st, rows, _render_marks)
 
 
@@ -338,11 +391,13 @@ def chunk_flagged(
     ctx: typer.Context,
     collection: str | None = typer.Option(None, "--collection", "-c"),
     label: str = typer.Option("wrong", "--label", help="relevant | irrelevant | wrong."),
+    status: str = typer.Option("open", "--status", help="open (padrão) | resolved | dismissed | all."),
     limit: int = typer.Option(20, "--limit", "-n", min=1, max=200),
 ) -> None:
-    """Documentos com mais marcações (padrão: errado/desatualizado), com os runs."""
+    """Documentos com mais marcações (padrão: errado/desatualizado e abertas), com os runs."""
     st = state(ctx)
-    emit(st, call(st, st.client.flagged_documents, collection=collection, label=label, limit=limit), _render_flagged)
+    rows = call(st, st.client.flagged_documents, collection=collection, label=label, status=status, limit=limit)
+    emit(st, rows, _render_flagged)
 
 
 @app.command("chunk-export")

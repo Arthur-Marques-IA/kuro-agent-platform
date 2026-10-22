@@ -13,6 +13,7 @@ import {
   Globe,
   Library,
   LoaderCircle,
+  Pencil,
   Plus,
   RotateCcw,
   Trash,
@@ -38,6 +39,7 @@ import { SearchSettings } from "@/components/knowledge/search-settings";
 import { SearchPanel } from "@/components/knowledge/search-panel";
 import { SourcesPanel } from "@/components/knowledge/sources-panel";
 import { FlaggedDocumentsPanel } from "@/components/knowledge/flagged-documents-panel";
+import { DocumentFixDialog, type DocumentTarget } from "@/components/knowledge/document-fix-dialog";
 
 const PAGE_SIZE = 20;
 const POLL_INTERVAL_MS = 3000;
@@ -86,6 +88,7 @@ export function KnowledgeView({
   const [newOpen, setNewOpen] = useState(false);
   const current = collections.find((c) => c.name === collection);
   const [addOpen, setAddOpen] = useState(openAddInitially);
+  const [fixTarget, setFixTarget] = useState<DocumentTarget | null>(null);
   const [page, setPage] = useState(1);
   const [reloadKey, setReloadKey] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -252,7 +255,7 @@ export function KnowledgeView({
 
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="flex min-w-0 flex-col gap-6">
-          <FlaggedDocumentsPanel collection={collection} reloadKey={reloadKey} />
+          <FlaggedDocumentsPanel collection={collection} reloadKey={reloadKey} onFix={setFixTarget} />
           <SourcesPanel collection={collection} reloadKey={reloadKey} onChanged={reload} />
           <section className="flex min-w-0 flex-col gap-3">
             <SectionHeading
@@ -367,6 +370,9 @@ export function KnowledgeView({
                                   </Button>
                                 )}
                               >
+                                <DropdownMenuItem icon={Pencil} onSelect={() => setFixTarget({ contentId: doc.id, name: doc.name })}>
+                                  Corrigir
+                                </DropdownMenuItem>
                                 <DropdownMenuItem icon={Trash} destructive onSelect={() => handleDelete(doc)}>
                                   Excluir
                                 </DropdownMenuItem>
@@ -433,6 +439,15 @@ export function KnowledgeView({
           setPage(1);
           router.refresh();
         }}
+      />
+
+      <DocumentFixDialog
+        collection={collection}
+        target={fixTarget}
+        onOpenChange={(open) => {
+          if (!open) setFixTarget(null);
+        }}
+        onSaved={reload}
       />
 
       <AddContentDialog

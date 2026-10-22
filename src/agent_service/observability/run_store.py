@@ -41,6 +41,8 @@ from sqlalchemy import (
     not_,
     or_,
     select,
+    table,
+    column,
 )
 
 from agent_service.db import get_db
@@ -366,6 +368,24 @@ def save_score(
 _LEVEL_BY_STATUS = {"success": "DEFAULT", "error": "ERROR", "interrupted": "WARNING"}
 
 
+# `chunk_feedback` mora em `observability/chunk_feedback.py`, que importa este
+# módulo: aqui basta o nome da tabela e as colunas que o filtro lê.
+_chunk_marks = table("chunk_feedback", column("run_id"), column("label"), column("status"))
+
+
+def _rag_condition(kind: str) -> Any:
+    """Filtro da aba RAG dos Logs (`RunQuery.rag`)."""
+    searched = and_(run_spans.c.run_id == runs.c.run_id, run_spans.c.name == "search_knowledge_base")
+    if kind == "searched":
+        return exists().where(searched)
+    if kind == "empty":
+        results = run_spans.c.metadata["references"]["results"]
+        return exists().where(searched, func.json_array_length(results) == 0)
+    return exists().where(
+        _chunk_marks.c.run_id == runs.c.run_id, _chunk_marks.c.label == "wrong", _chunk_marks.c.status == "open"
+    )
+
+
 def _filters(query: RunQuery, *, with_session: bool = False) -> list[Any]:
     conditions: list[Any] = []
     if query.tenant_id:
@@ -401,6 +421,9 @@ def _filters(query: RunQuery, *, with_session: bool = False) -> list[Any]:
         like = f"%{escaped}%"
         conditions.append(
             or_(
+                # O id de uma execução só vale inteiro: um trecho dele acharia runs ao acaso.
+                runs.c.run_id == term,
+                runs.c.trace_id == term,
                 runs.c.session_id.ilike(like, escape="\\"),
                 runs.c.user_id.ilike(like, escape="\\"),
                 exists().where(run_metadata.c.run_id == runs.c.run_id, run_metadata.c.value.ilike(like, escape="\\")),
@@ -440,6 +463,8 @@ def _review_filters(query: RunQuery) -> list[Any]:
         conditions.append(exists().where(run_scores.c.run_id == runs.c.run_id, run_scores.c.name == FEEDBACK, voted))
     elif query.feedback == "none":
         conditions.append(not_(exists().where(run_scores.c.run_id == runs.c.run_id, run_scores.c.name == FEEDBACK)))
+    if query.rag:
+        conditions.append(_rag_condition(query.rag))
     if query.exclude_dry_run:
         conditions.append(
             not_(

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 from agent_service.observability import tracing
 from agent_service.observability.overview import DEFAULT_TIMEZONE, Granularity, Overview, build_overview
 from agent_service.observability.trace_store import (
+    RagFilter,
     RunPage,
     RunQuery,
     RunSort,
@@ -178,7 +179,7 @@ def list_runs(
     cursor: str | None = None,
     agent_version: Annotated[int | None, Query(ge=1)] = None,
     meta: Annotated[list[str] | None, Query(description="Filtro por metadata, `chave=valor` (repetível).")] = None,
-    search: Annotated[str | None, Query(max_length=200, description="Trecho do session_id, user_id ou de um valor de metadata.")] = None,
+    search: Annotated[str | None, Query(max_length=200, description="Trecho do session_id, user_id ou de um valor de metadata, ou o run_id/trace_id inteiro.")] = None,
     complexity: Annotated[
         list[Annotated[int, Field(ge=1, le=3)]] | None, Query(description="Só estes níveis de complexidade (repetível).")
     ] = None,
@@ -194,6 +195,10 @@ def list_runs(
     knowledge_collection: Annotated[str | None, Query(description="Só runs de agentes que consultavam esta collection.")] = None,
     collection_version: Annotated[
         int | None, Query(ge=1, description="Só runs com esta versão da configuração de busca da collection.")
+    ] = None,
+    rag: Annotated[
+        RagFilter | None,
+        Query(description="searched: buscou na base; empty: alguma busca voltou vazia; flagged: trecho marcado errado e aberto."),
     ] = None,
 ) -> RunPage:
     """Execuções de todos os agentes (ou só dos `agent_type` pedidos), mais recentes
@@ -232,6 +237,7 @@ def list_runs(
             "sample": sample,
             "knowledge_collection": knowledge_collection,
             "collection_version": collection_version,
+            "rag": rag,
         },
         sort=sort,
     )
@@ -278,7 +284,7 @@ def list_sessions(
     since: datetime | None = None,
     until: datetime | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
-    search: Annotated[str | None, Query(max_length=200, description="Trecho do session_id, user_id ou de um valor de metadata.")] = None,
+    search: Annotated[str | None, Query(max_length=200, description="Trecho do session_id, user_id ou de um valor de metadata, ou o run_id/trace_id inteiro.")] = None,
 ) -> SessionPage:
     """Sessões recentes (execuções agrupadas por `session_id`), com tokens, custo e feedback somados.
 
@@ -349,6 +355,9 @@ def run_stats(
     since: datetime | None = None,
     until: datetime | None = None,
     search: Annotated[str | None, Query(max_length=200)] = None,
+    include_dry_run: Annotated[bool, Query(description="false tira os testes do Playground.")] = True,
+    knowledge_collection: str | None = None,
+    rag: RagFilter | None = None,
 ) -> RunStats:
     """Série diária (execuções, erros, tokens, custo) mais contagem por status — os gráficos do console.
 
@@ -364,6 +373,9 @@ def run_stats(
         since=since,
         until=until,
         search=search,
+        exclude_dry_run=not include_dry_run,
+        knowledge_collection=knowledge_collection,
+        rag=rag,
     )
     try:
         return _store().get_stats(query)
@@ -711,6 +723,22 @@ class ChunkFeedbackOut(BaseModel):
     comment: str | None = None
     created_by: str | None = None
     created_at: datetime
+    document_revision: int | None = Field(default=None, description="Revisão do documento em que o trecho foi visto")
+    status: str = Field(default="open", description="`open`, `resolved` ou `dismissed`")
+    resolved_in_revision: int | None = None
+    resolved_by: str | None = None
+    resolved_at: datetime | None = None
+    resolution_note: str | None = None
+    current_revision: int | None = Field(default=None, description="Revisão atual do documento")
+    stale: bool = Field(default=False, description="Aberta, mas vista numa revisão que já foi substituída")
+
+
+class ChunkFeedbackStatusIn(BaseModel):
+    status: Literal["open", "resolved", "dismissed"] = Field(
+        ..., description="`dismissed` (a marcação não procedia), `resolved` (corrigido sem editar aqui) ou `open` (reabrir)"
+    )
+    note: str | None = Field(default=None, max_length=2000)
+    by: str | None = Field(default=None, max_length=200)
 
 
 class FlaggedDocument(BaseModel):
@@ -721,6 +749,9 @@ class FlaggedDocument(BaseModel):
     last_at: datetime
     run_ids: list[str]
     comments: list[str]
+    feedback_ids: list[str] = []
+    current_revision: int | None = None
+    stale: bool = Field(default=False, description="Todas as marcações são de revisões anteriores à atual")
 
 
 class RagCase(BaseModel):
@@ -762,15 +793,29 @@ def list_chunk_feedback(
     collection: str | None = None,
     label: Literal["relevant", "irrelevant", "wrong"] | None = None,
     content_id: str | None = None,
+    status: Literal["open", "resolved", "dismissed"] | None = None,
     limit: Annotated[int, Query(ge=1, le=5000)] = 500,
 ) -> list[ChunkFeedbackOut]:
     """Marcações de trecho, mais recentes primeiro."""
     from agent_service.observability import chunk_feedback
 
     rows = chunk_feedback.list_feedback(
-        run_id=run_id, collection=collection, label=label, content_id=content_id, limit=limit
+        run_id=run_id, collection=collection, label=label, content_id=content_id, status=status, limit=limit
     )
     return [ChunkFeedbackOut(**r) for r in rows]
+
+
+@router.post("/chunk-feedback/{feedback_id}/status", response_model=ChunkFeedbackOut)
+def set_chunk_feedback_status(feedback_id: str, body: ChunkFeedbackStatusIn) -> ChunkFeedbackOut:
+    """Dispensa uma marcação que não procedia, resolve sem editar o documento por aqui
+    (ex.: corrigido na fonte de um site) ou reabre. Corrigir editando o documento é o
+    `PUT /collections/{nome}/documents/{content_id}`, que resolve na revisão nova."""
+    from agent_service.observability import chunk_feedback
+
+    row = chunk_feedback.set_status(feedback_id, body.status, by=body.by, note=body.note)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Marcação {feedback_id!r} não encontrada.")
+    return ChunkFeedbackOut(**row)
 
 
 @router.delete("/chunk-feedback/{feedback_id}", status_code=204)
@@ -785,13 +830,17 @@ def delete_chunk_feedback(feedback_id: str) -> None:
 def flagged_documents(
     collection: str | None = None,
     label: Literal["relevant", "irrelevant", "wrong"] = "wrong",
+    status: Literal["open", "resolved", "dismissed", "all"] = "open",
     limit: Annotated[int, Query(ge=1, le=200)] = 20,
 ) -> list[FlaggedDocument]:
-    """Documentos com mais marcações (padrão: `wrong`, errado/desatualizado), com os runs.
-    Só aponta: o que fazer com o documento é decisão de quem opera a base."""
+    """Documentos com mais marcações (padrão: `wrong`, errado/desatualizado, só as abertas),
+    com os runs. Só aponta: o que fazer com o documento é decisão de quem opera a base."""
     from agent_service.observability import chunk_feedback
 
-    return [FlaggedDocument(**g) for g in chunk_feedback.flagged_documents(collection=collection, label=label, limit=limit)]
+    groups = chunk_feedback.flagged_documents(
+        collection=collection, label=label, status=None if status == "all" else status, limit=limit
+    )
+    return [FlaggedDocument(**g) for g in groups]
 
 
 @router.get("/chunk-feedback/export", response_model=list[RagCase])

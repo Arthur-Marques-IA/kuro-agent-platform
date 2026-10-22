@@ -208,24 +208,87 @@ def _blocks(markdown: str) -> list[str]:
     return blocks
 
 
+_QUESTION_PREFIX = re.compile(r"^\s*(?:\*\*)?(?:P|Pergunta|Q|Question)\s*\d*\s*[:.)\-]", re.IGNORECASE)
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+
+def _sticky(block: str) -> bool:
+    """Bloco que não pode terminar um trecho: só um título, uma pergunta (termina em
+    `?` ou começa com `P:`/`Pergunta:`) ou uma introdução (`Passo a passo:`). Ele vai
+    junto com o bloco seguinte, que é a resposta ou o conteúdo dele."""
+    text = block.strip()
+    if re.fullmatch(r"#{1,6}\s+.+", text):
+        return True
+    return text.endswith(("?", ":")) or bool(_QUESTION_PREFIX.match(text))
+
+
+def _pieces(block: str, limit: int) -> list[str]:
+    """O bloco inteiro, ou — se passa de `limit` — cortado em fim de frase; uma frase
+    maior que o limite é cortada no último espaço antes dele."""
+    if len(block) <= limit:
+        return [block]
+    pieces: list[str] = []
+    current = ""
+    for sentence in _SENTENCE_END.split(block):
+        while len(sentence) > limit:
+            cut = sentence.rfind(" ", 0, limit)
+            cut = cut if cut > limit // 2 else limit
+            if current:
+                pieces.append(current)
+                current = ""
+            pieces.append(sentence[:cut].rstrip())
+            sentence = sentence[cut:].lstrip()
+        candidate = f"{current} {sentence}" if current else sentence
+        if len(candidate) > limit:
+            pieces.append(current)
+            current = sentence
+        else:
+            current = candidate
+    if current:
+        pieces.append(current)
+    return [p for p in pieces if p]
+
+
 def chunk_markdown(markdown: str, *, max_chars: int = CHUNK_CHARS) -> list[Chunk]:
     """Trechos de até `max_chars`, respeitando as seções do Markdown.
 
-    Uma seção (título + corpo) pequena se junta à seguinte; uma grande é cortada
-    entre parágrafos. Cada trecho guarda o caminho de títulos em que começa
-    (`Garantia > Como acionar`) — vai para `meta_data.section`, sem mexer no texto,
-    que é o que o trace mostra como trecho exato."""
+    É a regra de corte de todo documento — páginas de site, texto colado, arquivo
+    enviado e correção (`documents/collections.py`):
+
+    - o corte cai sempre entre blocos (parágrafo, lista, tabela, bloco de código);
+    - um título novo começa trecho novo se o atual já tem corpo razoável, e uma seção
+      pequena se junta à seguinte;
+    - um título, uma pergunta ou uma introdução (`_sticky`) nunca termina um trecho:
+      vai para o próximo, junto da resposta;
+    - um bloco maior que o trecho é cortado em fim de frase.
+
+    Cada trecho guarda o caminho de títulos em que começa (`Garantia > Como acionar`)
+    — vai para `meta_data.section`, sem mexer no texto, que é o que o trace mostra
+    como trecho exato."""
     chunks: list[Chunk] = []
     path: list[tuple[int, str]] = []
-    buffer: list[str] = []
-    buffer_section: str | None = None
+    buffer: list[tuple[str, str | None]] = []  # (bloco, seção em que ele está)
 
-    def flush() -> None:
-        nonlocal buffer, buffer_section
-        text = "\n\n".join(buffer).strip()
+    def size(entries: list[tuple[str, str | None]]) -> int:
+        return sum(len(text) + 2 for text, _ in entries)
+
+    def trailing_sticky() -> list[tuple[str, str | None]]:
+        tail: list[tuple[str, str | None]] = []
+        for entry in reversed(buffer):
+            if not _sticky(entry[0]):
+                break
+            tail.insert(0, entry)
+        # Um trecho feito só de títulos/perguntas fecha como está: não há o que deixar nele.
+        return tail if len(tail) < len(buffer) else []
+
+    def flush(carry: bool = False) -> None:
+        nonlocal buffer
+        kept = trailing_sticky() if carry else []
+        body = buffer[: len(buffer) - len(kept)]
+        text = "\n\n".join(t for t, _ in body).strip()
         if text:
-            chunks.append(Chunk(text=text, section=buffer_section))
-        buffer, buffer_section = [], None
+            chunks.append(Chunk(text=text, section=body[0][1]))
+        buffer = list(kept)
 
     def section_name() -> str | None:
         return " > ".join(t for _, t in path) or None
@@ -235,17 +298,15 @@ def chunk_markdown(markdown: str, *, max_chars: int = CHUNK_CHARS) -> list[Chunk
         if heading:
             level = len(heading.group(1))
             path = [(lvl, t) for lvl, t in path if lvl < level] + [(level, heading.group(2).strip())]
-            # Um título novo começa trecho novo se o atual já tem corpo razoável.
-            if sum(len(b) for b in buffer) > max_chars // 3:
-                flush()
-        pieces = [block]
-        if len(block) > max_chars:
-            pieces = [block[i : i + max_chars] for i in range(0, len(block), max_chars)]
-        for piece in pieces:
-            if buffer and sum(len(b) + 2 for b in buffer) + len(piece) > max_chars:
-                flush()
-            if not buffer:
-                buffer_section = section_name()
-            buffer.append(piece)
+            if size(buffer) > max_chars // 3:
+                flush(carry=True)
+        # O que vai ser levado para o próximo trecho ocupa espaço nele.
+        reserve = size(trailing_sticky())
+        for piece in _pieces(block, max(max_chars - reserve, max_chars // 2)):
+            if buffer and size(buffer) + len(piece) > max_chars:
+                flush(carry=True)
+                if buffer and size(buffer) + len(piece) > max_chars:
+                    flush()  # nem levando a pergunta cabe: ela fecha sozinha
+            buffer.append((piece, section_name()))
     flush()
     return chunks
