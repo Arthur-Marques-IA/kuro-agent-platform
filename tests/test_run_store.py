@@ -25,6 +25,7 @@ from agent_service.api.observability_routes import (
     create_score,
     get_run_trace,
     list_agent_runs,
+    list_runs,
     list_sessions,
     run_stats,
 )
@@ -258,6 +259,28 @@ def test_search_finds_sessions_by_a_piece_of_the_id_and_ignores_wildcards(agent_
     assert len(list_sessions(agent_type=agent_type, search="BUSCA").items) == 2  # sem diferenciar maiúsculas
     assert list_sessions(agent_type=agent_type, search="%").items == []  # % não vira curinga
     assert len(list_sessions(agent_type=agent_type, search="  ").items) == 2  # só espaços = sem filtro
+
+
+def test_search_finds_a_run_by_its_whole_run_id_or_trace_id(agent_type):
+    wanted = make_run(agent_type, session_id="busca-id-1")
+    other = make_run(agent_type, session_id="busca-id-2")
+    drain(completed(wanted.run_id), wanted)
+    drain(completed(other.run_id), other)
+    trace_id = trace_id_for_run(wanted.run_id)
+
+    assert [r.run_id for r in list_runs(agent_type=agent_type, search=wanted.run_id).items] == [wanted.run_id]
+    assert [r.run_id for r in list_runs(agent_type=agent_type, search=trace_id).items] == [wanted.run_id]
+    assert list_runs(agent_type=agent_type, search=wanted.run_id[:8]).items == []  # trecho do id não acha
+
+
+def test_stats_can_leave_the_dry_runs_out(agent_type):
+    real = make_run(agent_type)
+    test = make_run(agent_type, metadata={"dry_run": "true"})
+    drain(completed(real.run_id), real)
+    drain(completed(test.run_id), test)
+
+    assert run_stats(agent_type=agent_type).total_runs == 2
+    assert run_stats(agent_type=agent_type, include_dry_run=False).total_runs == 1
 
 
 def test_a_failing_write_never_breaks_the_run(agent_type, monkeypatch, caplog):

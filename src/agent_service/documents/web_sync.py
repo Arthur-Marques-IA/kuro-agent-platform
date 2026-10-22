@@ -44,6 +44,7 @@ from agno.knowledge.reader.base import Reader
 from agno.utils.string import generate_id
 
 from agent_service.config import get_settings
+from agent_service.documents import revisions
 from agent_service.documents import sources_store as store
 from agent_service.documents import web
 from agent_service.documents.web_formatter import chunk_markdown, format_page
@@ -94,9 +95,10 @@ def formatter_model(options: dict[str, Any]) -> Any | None:
     return get_model(provider=provider, model_id=model_id, credential_id=options.get("formatter_credential_id"))
 
 
-class _PreChunked(Reader):
+class PreChunked(Reader):
     """Entrega ao Agno trechos já cortados por seção (`chunk_markdown`), em vez de
-    deixar um leitor genérico recortar o Markdown por tamanho."""
+    deixar um leitor genérico recortar o texto por tamanho. Vale para toda ingestão,
+    não só a de sites (`documents/collections.py`)."""
 
     def __init__(self, documents: list[Document]) -> None:
         super().__init__(chunk=False)
@@ -125,26 +127,31 @@ async def ingest_page(
     `pages` (número, texto) são cortadas uma a uma, com o número em `meta_data.page`.
     Devolve (content_id, trechos)."""
     content_id = page_content_id(collection, url)
-    documents: list[Document] = []
-    for page, text in pages if pages is not None else [(None, markdown)]:
-        for chunk in chunk_markdown(text):
-            meta: dict[str, Any] = {"chunk": len(documents) + 1, "chunk_size": len(chunk.text)}
-            if page is not None:
-                meta["page"] = page
-            if chunk.section:
-                meta["section"] = chunk.section
-            documents.append(Document(content=chunk.text, name=title, meta_data=meta))
+    documents = prechunk(pages if pages is not None else [(None, markdown)], name=title)
+    # Só chega aqui o que mudou desde o último sync: cada vez é uma revisão nova.
+    revision = 1 if revisions.latest(content_id) is None else revisions.next_number(content_id)
+    for document in documents:
+        document.meta_data[revisions.FIELD] = revision
     await remove_page(knowledge, content_id)
     content = Content(
         id=content_id,
         name=title,
         description=url,
         file_data=FileData(content=markdown.encode("utf-8"), type=file_type, filename=filename or f"{title[:80]}.md"),
-        metadata=metadata,
-        reader=_PreChunked(documents),
+        metadata={**metadata, revisions.FIELD: revision},
+        reader=PreChunked(documents),
     )
     content.content_hash = knowledge._build_content_hash(content)
     await knowledge._aload_content(content, upsert=True, skip_if_exists=False)
+    revisions.record(
+        collection,
+        content_id,
+        revision=revision,
+        content_hash=content.content_hash,
+        text=markdown,
+        filename=filename,
+        note=None if revision == 1 else "a página mudou na fonte",
+    )
     return content_id, len(documents)
 
 
@@ -153,6 +160,36 @@ async def remove_page(knowledge: Knowledge, content_id: str) -> None:
         await knowledge.aremove_content_by_id(content_id)
     except Exception:
         logger.debug("Nada a remover para %s", content_id, exc_info=True)
+
+
+def prechunk(pages: list[tuple[int | None, str]], *, name: str) -> list[Document]:
+    """Os trechos de um documento, página por página, pela regra de `chunk_markdown`:
+    cada um com o número (`chunk`), o tamanho, a página quando há e a seção."""
+    documents: list[Document] = []
+    for page, text in pages:
+        for chunk in chunk_markdown(text):
+            meta: dict[str, Any] = {"chunk": len(documents) + 1, "chunk_size": len(chunk.text)}
+            if page is not None:
+                meta["page"] = page
+            if chunk.section:
+                meta["section"] = chunk.section
+            documents.append(Document(content=chunk.text, name=name, meta_data=meta))
+    return documents
+
+
+READABLE_FILES = (".pdf", ".docx", ".pptx", ".xlsx")
+"""Arquivos que `read_file` sabe extrair; o resto que não é tabela é lido como texto."""
+
+
+def extract_pages(body: bytes, filename: str) -> list[tuple[int | None, str]] | None:
+    """O texto de um arquivo enviado, por página, para `prechunk`. `None` para CSV,
+    que o leitor do Agno corta por linha — uma linha por trecho já é o certo numa tabela."""
+    ext = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ""
+    if ext == ".csv":
+        return None
+    if ext in READABLE_FILES:
+        return read_file(body, ext, filename)
+    return [(None, body.decode("utf-8", errors="replace"))]
 
 
 def read_file(body: bytes, ext: str, filename: str) -> list[tuple[int | None, str]]:

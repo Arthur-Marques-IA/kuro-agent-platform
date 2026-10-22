@@ -329,6 +329,33 @@ class Client:
     def delete_collection_document(self, name: str, content_id: str) -> None:
         self._request("DELETE", f"/collections/{name}/documents/{content_id}")
 
+    def replace_collection_document(self, name: str, content_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self._request("PUT", f"/collections/{name}/documents/{content_id}", json=body)
+
+    def replace_collection_file(
+        self, name: str, content_id: str, *, filename: str, content: bytes, data: dict[str, str]
+    ) -> dict[str, Any]:
+        mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        return self._request(
+            "PUT",
+            f"/collections/{name}/documents/{content_id}/file",
+            files={"file": (filename, content, mime)},
+            data=data or None,
+        )
+
+    def document_revisions(self, name: str, content_id: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/collections/{name}/documents/{content_id}/revisions")
+
+    def document_revision(self, name: str, content_id: str, revision: int) -> dict[str, Any]:
+        return self._request("GET", f"/collections/{name}/documents/{content_id}/revisions/{revision}")
+
+    def reindex_collection(self, name: str, content_id: str | None = None) -> list[dict[str, Any]]:
+        params = {"content_id": content_id} if content_id else None
+        return self._request("POST", f"/collections/{name}/reindex", params=params)
+
+    def retest_document(self, name: str, content_id: str, status: str = "resolved") -> list[dict[str, Any]]:
+        return self._request("POST", f"/collections/{name}/documents/{content_id}/retest", params={"status": status})
+
     def search_collection(self, name: str, query: str, limit: int | None = None) -> list[dict[str, Any]]:
         params = {"query": query, **({"limit": limit} if limit else {})}
         return self._request("GET", f"/collections/{name}/search", params=params)
@@ -400,6 +427,9 @@ class Client:
 
     def delete_chunk_feedback(self, feedback_id: str) -> None:
         self._request("DELETE", f"/observability/chunk-feedback/{feedback_id}")
+
+    def set_chunk_feedback_status(self, feedback_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", f"/observability/chunk-feedback/{feedback_id}/status", json=body)
 
     def flagged_documents(self, **params: Any) -> list[dict[str, Any]]:
         return self._request(

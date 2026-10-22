@@ -280,7 +280,28 @@ o teto de `WEB_SOURCE_MAX_PAGES`. Cada página passa por:
    `AUX_MODEL_ID` (ou o padrão do serviço), ou o da fonte (`--formatter-provider`/`--formatter-model`);
    `--no-format` pula a etapa, e o trecho fica exatamente como a extração o tirou da página.
 4. **Trechos por seção**: cada trecho guarda `source_url`, `page_title` e `section`
-   (`Instalação > Windows`), que aparecem no trace.
+   (`Instalação > Windows`), que aparecem no trace. A regra de corte é a de todo documento
+   (ver [como o documento vira trechos](#como-o-documento-vira-trechos)).
+
+### Como o documento vira trechos
+
+Todo documento é cortado pela mesma regra (`chunk_markdown`): páginas de site, texto colado, arquivo
+enviado (PDF, DOCX, PPTX, XLSX, TXT, MD, página por página) e a correção de um documento. Só o CSV
+fica com o leitor do Agno, que corta uma linha por trecho.
+
+- Trechos de até **1.500 caracteres**, cortados sempre **entre blocos** (parágrafo, lista, tabela,
+  bloco de código), nunca no meio de um parágrafo.
+- Um título novo começa trecho novo se o atual já tem corpo; uma seção pequena se junta à seguinte.
+- Um **título**, uma **pergunta** (termina em `?` ou começa com `P:`/`Pergunta:`) ou uma
+  **introdução** (termina em `:`) nunca fecha um trecho: vai para o próximo, junto da resposta.
+- Um parágrafo maior que o trecho é cortado em **fim de frase**.
+- Cada trecho guarda o número (`chunk`), a página quando há (`page`) e a seção (`section`).
+
+O texto não é reescrito: o trecho é o texto extraído, que é o que o trace mostra. Documentos
+indexados antes desta regra ficam como estavam até alguém recortá-los: `kuro collections reindex
+<coleção>` (ou `--doc <content_id>`) corta de novo a partir dos trechos que já existem, mantendo o id
+e as páginas, com uma revisão nova em cada documento e os embeddings gerados de novo. As páginas de
+site ficam de fora, porque o sync as recorta da fonte.
 
 Ressincronizar é incremental: o documento de cada página tem id fixo pela URL, então página
 alterada é **substituída** (não duplicada), a que não mudou nem é reprocessada, e a que sumiu do
@@ -337,8 +358,45 @@ e documento são copiados da span, não de quem chama. Marcar de novo o mesmo tr
 troca o rótulo.
 
 O Kuro **só registra e aponta**. Nenhuma marcação esconde, despublica ou rebaixa um documento.
-A tela Conhecimento lista os documentos mais marcados como errados, com link para os runs, e o
+A tela Conhecimento lista os documentos com marcações abertas de errado, com link para os runs, e o
 que fazer com eles é decisão de quem opera a fonte.
+
+### Corrigir o documento e fechar a marcação
+
+Cada documento tem **revisões**. O `content_id` não muda quando ele é corrigido: o texto novo é
+reindexado no mesmo id e vira a revisão seguinte (tabela `document_revisions`, com o texto quando é
+texto, quem gravou e uma nota). A revisão vai na metadata de cada trecho (`document_revision`), então
+o trace mostra qual versão o agente leu, e a marcação guarda a revisão em que o trecho foi visto.
+Documento indexado antes do histórico existir ganha a revisão 1 na primeira consulta. Para
+corrigir, o console abre o texto da revisão; quando ele não foi guardado (arquivo enviado antes desta
+versão, ou documento de antes do histórico), o texto é remontado dos trechos indexados
+(`text_source: "chunks"`). Salvar esse texto transforma o documento em texto; para manter o arquivo,
+envie o arquivo corrigido (`PUT .../{content_id}/file`, ou "Enviar arquivo corrigido" no console).
+
+Cada marcação tem um estado: `open` até alguém corrigir o documento (`resolved`, com a revisão que
+corrigiu, quem e a nota) ou dizer que ela não procedia (`dismissed`). O ciclo:
+
+1. No trace, marque o trecho como **errado** (fica `open`).
+2. Corrija o documento: na tela Conhecimento, **Corrigir** (no painel de marcados ou no menu do
+   documento), ou `kuro collections edit-doc`. As marcações abertas dele vêm todas selecionadas e
+   ficam `resolved` na revisão nova. Mesmo texto da revisão atual não reindexa nem resolve nada.
+3. **Testar de novo** roda a pergunta de cada marcação na busca atual, sem chamar o modelo, e diz se
+   o documento voltou, em que posição e de qual revisão.
+
+Uma marcação nova sobre a revisão corrigida é um problema novo e aparece aberta. Uma marcação aberta
+vista numa revisão anterior à atual vem com `stale: true` ("revisão antiga": talvez já corrigido).
+Remover o documento fecha as marcações abertas dele. Página de **site** não se edita por aqui (409):
+o próximo sync sobrescreveria a edição, então corrija na fonte; o sync grava uma revisão nova a cada
+mudança da página, e a marcação pode ser resolvida à mão (`chunk-resolve`).
+
+```bash
+uv run kuro runs chunk-marks --content-id <id> --status open      # o que falta corrigir no documento
+uv run kuro collections edit-doc manuais <id> -f manual-corrigido.md -m "prazo mudou para 30 dias"
+uv run kuro collections retest manuais <id>                       # a busca agora traz o documento?
+uv run kuro collections revisions manuais <id> [<revisão>]        # o histórico; com o número, o texto
+uv run kuro collections reindex manuais --yes                     # recorta tudo com a regra atual
+uv run kuro runs chunk-dismiss <feedback_id> -m "era teste"       # não procedia
+```
 
 As marcações `relevant` formam o gabarito de um eval de RAG (pergunta → trechos e documentos
 relevantes). O export devolve uma linha por pergunta e serve tanto para guardar um dataset quanto
@@ -352,9 +410,14 @@ uv run kuro runs chunk-export -c manuais -o gabarito.jsonl
 ```
 
 API: `POST /observability/chunk-feedback` com `{run_id, chunk_id, label, span_id?, comment?, created_by?}`
-(404 se o trecho não veio em nenhuma busca do run), `GET` com `run_id`/`collection`/`label`,
-`DELETE /observability/chunk-feedback/{id}`, `GET .../flagged` e `GET .../export`. Exige a chave
-`admin`, como o resto da observabilidade, menos scores e referências.
+(404 se o trecho não veio em nenhuma busca do run), `GET` com `run_id`/`collection`/`label`/`content_id`/`status`,
+`POST /observability/chunk-feedback/{id}/status` com `{status, note?, by?}`,
+`DELETE /observability/chunk-feedback/{id}`, `GET .../flagged` (só as abertas, ou `status=`) e
+`GET .../export`. A correção: `PUT /collections/{nome}/documents/{content_id}` com
+`{text, name?, note?, created_by?, resolves?}` (`resolves` ausente = todas as abertas, `[]` = nenhuma;
+devolve `{revision, changed, resolved}`), `PUT .../{content_id}/file` (multipart), `GET .../revisions[/{n}]`
+e `POST .../retest?status=resolved|open|all`. Exige a chave `admin`, como o resto da observabilidade,
+menos scores e referências.
 
 ### Quem gera os vetores
 

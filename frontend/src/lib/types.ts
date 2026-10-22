@@ -189,6 +189,8 @@ export interface RetrievedChunk {
   section?: string | null;
   source_url?: string | null;
   page_title?: string | null;
+  /** Revisão do documento que o trecho é. */
+  document_revision?: number | null;
 }
 
 /** Marcação do operador num trecho consultado (`/observability/chunk-feedback`). */
@@ -207,9 +209,21 @@ export interface ChunkFeedback {
   comment?: string | null;
   created_by?: string | null;
   created_at: string;
+  /** Revisão do documento em que o trecho foi visto. */
+  document_revision?: number | null;
+  status: ChunkFeedbackStatus;
+  resolved_in_revision?: number | null;
+  resolved_by?: string | null;
+  resolved_at?: string | null;
+  resolution_note?: string | null;
+  current_revision?: number | null;
+  /** Aberta, mas vista numa revisão que já foi substituída. */
+  stale: boolean;
 }
 
-/** Documento com mais marcações (padrão: errado/desatualizado). */
+export type ChunkFeedbackStatus = "open" | "resolved" | "dismissed";
+
+/** Documento com mais marcações (padrão: errado/desatualizado, abertas). */
 export interface FlaggedDocument {
   content_id?: string | null;
   document?: string | null;
@@ -218,6 +232,38 @@ export interface FlaggedDocument {
   last_at: string;
   run_ids: string[];
   comments: string[];
+  feedback_ids: string[];
+  current_revision?: number | null;
+  stale: boolean;
+}
+
+/** Uma revisão de documento (`/collections/{nome}/documents/{id}/revisions`). */
+export interface DocumentRevision {
+  content_id: string;
+  revision: number;
+  filename?: string | null;
+  note?: string | null;
+  created_by?: string | null;
+  created_at?: string | null;
+  text?: string | null;
+  /** `chunks`: o texto foi remontado dos trechos indexados (o extraído de um arquivo, não o arquivo). */
+  text_source?: "stored" | "chunks" | null;
+}
+
+export interface ReplaceDocumentResult {
+  content_id: string;
+  revision: number;
+  changed: boolean;
+  resolved: number;
+}
+
+/** Uma pergunta marcada, buscada de novo depois da correção. */
+export interface RetestCase {
+  query: string;
+  feedback_ids: string[];
+  status: ChunkFeedbackStatus;
+  found: boolean;
+  hits: { rank: number; score?: number | null; chunk_id?: string | null; document_revision?: number | null }[];
 }
 
 export interface SearchResult extends RetrievedChunk {

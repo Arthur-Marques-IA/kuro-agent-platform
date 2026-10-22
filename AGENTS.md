@@ -197,6 +197,11 @@ cat manual.txt | kuro --json collections add manuais --title "Manual v2"
 kuro --json collections add manuais -f manual.pdf             # arquivo (PDF, DOCX, CSV, TXT, MD...)
 kuro --json collections docs manuais                          # o que está indexado, com o status
 kuro --json collections rm-doc manuais <content_id> --yes     # tira um documento da base (não tem volta)
+# Trecho marcado errado no trace → corrija o documento (mesmo content_id, revisão nova; resolve as marcações abertas)
+kuro --json collections edit-doc manuais <content_id> -t "texto corrigido" -m "o que mudou"
+kuro --json collections retest manuais <content_id>          # a pergunta marcada agora traz o documento? (sem modelo)
+kuro --json collections reindex manuais --yes                # recorta tudo pela regra de trechos atual (a dos sites)
+kuro --json runs chunk-dismiss <feedback_id> -m "não procedia"
 kuro --json collections search manuais "prazo de garantia"   # o mesmo que o agente enxerga (score, documento, origem)
 # Busca: --mode vector|hybrid, --k, --vector-weight e --language (fixo) no create; o resto muda com set.
 # Cada mudança vira versão (`collections versions`); o run grava collection_version e o trace o score_kind.

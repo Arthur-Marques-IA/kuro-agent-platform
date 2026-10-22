@@ -31,6 +31,7 @@ from agent_service.observability.tracing import FEEDBACK, get_langfuse, trace_id
 
 RunStatus = Literal["success", "error", "interrupted"]
 RunSort = Literal["recent", "cost", "latency"]
+RagFilter = Literal["searched", "empty", "flagged"]
 
 _LEVEL_BY_STATUS: dict[RunStatus, str] = {"success": "DEFAULT", "error": "ERROR", "interrupted": "WARNING"}
 _STATUS_BY_LEVEL: dict[str, RunStatus] = {"ERROR": "error", "WARNING": "interrupted"}
@@ -226,6 +227,9 @@ class RunQuery:
     statuses: tuple[RunStatus, ...] = ()
     """Só estes status (qualquer um deles) — ex.: `error` + `interrupted`, o "falharam" do panorama."""
     sort: RunSort = "recent"
+    rag: RagFilter | None = None
+    """Só runs que buscaram na base (`searched`), com alguma busca sem trecho nenhum
+    (`empty`) ou com trecho marcado errado e ainda aberto (`flagged`) — só no trace store local."""
     """`cost`/`latency`: as mais caras/lentas primeiro, sem os runs sem esse valor — só no trace store local."""
 
 

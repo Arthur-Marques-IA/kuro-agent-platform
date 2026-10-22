@@ -11,7 +11,7 @@ Para upload de arquivo/URL com chunking, o AgentOS expõe `/knowledge/content`
 
 import re
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
@@ -23,12 +23,18 @@ from agent_service.db import get_db
 from agent_service.agents.store import list_definitions
 from agent_service.documents import store
 from agent_service.documents.collections import (
+    DocumentConflictError,
+    DocumentNotFoundError,
     add_file,
+    document_pages,
+    reindex_collection,
+    rechunk_document,
     add_text,
     default_collection_name,
     get_collection,
     list_documents,
     remove_document,
+    replace_document,
     search,
 )
 from agent_service.documents.retrieval import describe_hits
@@ -40,7 +46,7 @@ from agent_service.documents.search import (
     validate,
     validate_language,
 )
-from agent_service.documents import versions
+from agent_service.documents import revisions, versions
 from agent_service.documents.embedder import (
     DEFAULT_EMBEDDER_PROVIDER,
     EMBEDDERS,
@@ -152,6 +158,7 @@ class SearchResult(BaseModel):
     section: str | None = None
     source_url: str | None = None
     page_title: str | None = None
+    document_revision: int | None = None
 
 
 def _agents_using(name: str) -> list[str]:
@@ -475,3 +482,216 @@ async def search_collection(
         )
         for hit, doc in zip(hits, documents)
     ]
+
+
+# -- correção de documento: revisões e o reteste das marcações ------------------------
+
+
+class ReplaceTextRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+    name: str | None = Field(default=None, description="Novo nome (padrão: o atual)")
+    note: str | None = Field(default=None, max_length=2000, description="O que mudou nesta revisão")
+    created_by: str | None = Field(default=None, max_length=200)
+    resolves: list[str] | None = Field(
+        default=None,
+        description="Ids das marcações (`chunk_feedback`) que esta revisão resolve. "
+        "Sem o campo, todas as abertas do documento; `[]`, nenhuma.",
+    )
+
+
+class ReplaceOut(BaseModel):
+    content_id: str
+    revision: int
+    changed: bool = Field(..., description="false quando o conteúdo é o mesmo da revisão atual (nada reindexado)")
+    resolved: int = Field(..., description="Quantas marcações ficaram resolvidas nesta revisão")
+
+
+class RevisionOut(BaseModel):
+    collection: str
+    content_id: str
+    revision: int
+    content_hash: str | None = None
+    filename: str | None = None
+    note: str | None = None
+    created_by: str | None = None
+    created_at: datetime | None = None
+    text: str | None = None
+    text_source: Literal["stored", "chunks"] | None = Field(
+        default=None,
+        description="stored: o texto gravado na revisão; chunks: remontado dos trechos indexados "
+        "(arquivo, ou documento de antes do histórico) — é o texto extraído, não o arquivo",
+    )
+
+
+class ReindexItem(BaseModel):
+    content_id: str
+    status: Literal["rechunked", "skipped", "failed"]
+    revision: int | None = None
+    chunks_before: int | None = None
+    chunks_after: int | None = None
+    reason: str | None = None
+
+
+class RetestHit(BaseModel):
+    rank: int
+    score: float | None = None
+    chunk_id: str | None = None
+    document_revision: int | None = None
+
+
+class RetestCase(BaseModel):
+    query: str
+    feedback_ids: list[str]
+    status: str
+    found: bool = Field(..., description="Algum trecho do documento voltou na busca")
+    hits: list[RetestHit]
+
+
+async def _replace(collection_name: str, content_id: str, **kwargs: Any) -> ReplaceOut:
+    _row_or_404(collection_name)
+    try:
+        out = await replace_document(collection_name, content_id, **kwargs)
+    except DocumentNotFoundError as exc:
+        raise HTTPException(
+            status_code=404, detail=f"Documento {content_id!r} não encontrado em {collection_name!r}"
+        ) from exc
+    except DocumentConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ReplaceOut(**out)
+
+
+@router.put("/{collection_name}/documents/{content_id}", response_model=ReplaceOut)
+async def replace_collection_document(collection_name: str, content_id: str, body: ReplaceTextRequest) -> ReplaceOut:
+    """Corrige o texto de um documento mantendo o `content_id`: reindexa e grava a
+    revisão seguinte. As marcações em `resolves` ficam resolvidas nesta revisão.
+    409 para página de site (corrija na fonte e rode o sync) ou texto igual ao de outro documento."""
+    return await _replace(
+        collection_name,
+        content_id,
+        text=body.text,
+        name=body.name,
+        note=body.note,
+        created_by=body.created_by,
+        resolves=body.resolves,
+    )
+
+
+@router.put("/{collection_name}/documents/{content_id}/file", response_model=ReplaceOut)
+async def replace_collection_document_file(
+    collection_name: str,
+    content_id: str,
+    file: UploadFile = File(..., description="A versão corrigida do arquivo"),
+    note: str | None = Form(default=None),
+    created_by: str | None = Form(default=None),
+    resolves: str | None = Form(default=None, description="Ids separados por vírgula; vazio = nenhuma; sem o campo = todas as abertas"),
+) -> ReplaceOut:
+    """O mesmo que o `PUT` de texto, com um arquivo (PDF, DOCX, CSV, TXT...)."""
+    conteudo = await file.read()
+    if not conteudo:
+        raise HTTPException(status_code=422, detail="arquivo vazio")
+    ids = None if resolves is None else [i.strip() for i in resolves.split(",") if i.strip()]
+    return await _replace(
+        collection_name,
+        content_id,
+        content_bytes=conteudo,
+        filename=file.filename or "documento",
+        content_type=file.content_type,
+        note=note,
+        created_by=created_by,
+        resolves=ids,
+    )
+
+
+@router.get("/{collection_name}/documents/{content_id}/revisions", response_model=list[RevisionOut])
+def list_document_revisions(collection_name: str, content_id: str) -> list[RevisionOut]:
+    """Revisões do documento, mais recente primeiro (sem o texto)."""
+    _row_or_404(collection_name)
+    revisions.current(collection_name, content_id)  # documento antigo ganha a revisão 1
+    return [RevisionOut(**r) for r in revisions.list_revisions(content_id)]
+
+
+@router.get("/{collection_name}/documents/{content_id}/revisions/{revision}", response_model=RevisionOut)
+async def get_document_revision(collection_name: str, content_id: str, revision: int) -> RevisionOut:
+    """Uma revisão, com o texto. Na revisão atual sem texto gravado (arquivo de antes
+    desta versão, ou documento de antes do histórico), o texto é remontado dos trechos
+    indexados (`text_source: "chunks"`)."""
+    _row_or_404(collection_name)
+    revisions.current(collection_name, content_id)
+    row = revisions.get_revision(content_id, revision)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Revisão {revision} de {content_id!r} não encontrada")
+    if row.get("text") is not None:
+        return RevisionOut(**row, text_source="stored")
+    latest = revisions.latest(content_id) or {}
+    if latest.get("revision") == revision:
+        pages = await document_pages(collection_name, content_id)
+        if any(text.strip() for _, text in pages):
+            row["text"] = "\n\n".join(text for _, text in pages)
+            return RevisionOut(**row, text_source="chunks")
+    return RevisionOut(**row)
+
+
+@router.post("/{collection_name}/documents/{content_id}/retest", response_model=list[RetestCase])
+async def retest_document(
+    collection_name: str,
+    content_id: str,
+    status: Literal["open", "resolved", "all"] = "resolved",
+    label: Literal["relevant", "irrelevant", "wrong"] = "wrong",
+) -> list[RetestCase]:
+    """Roda de novo, na busca atual da collection, a pergunta de cada marcação do
+    documento e diz se algum trecho dele voltou, em que posição e de qual revisão.
+    Não chama o modelo: é a mesma busca do `GET .../search`."""
+    from agent_service.observability import chunk_feedback
+
+    _row_or_404(collection_name)
+    marks = chunk_feedback.list_feedback(
+        collection=collection_name, content_id=content_id, label=label, status=None if status == "all" else status
+    )
+    by_query: dict[str, list[dict[str, Any]]] = {}
+    for mark in marks:
+        by_query.setdefault(mark["query"], []).append(mark)
+    knowledge = get_collection(collection_name)
+    cases = []
+    for query, group in by_query.items():
+        documents = await search(collection_name, query=query)
+        hits = [
+            RetestHit(
+                rank=hit["rank"],
+                score=hit.get("score"),
+                chunk_id=hit.get("chunk_id"),
+                document_revision=hit.get(revisions.FIELD),
+            )
+            for hit in await describe_hits(knowledge, documents)
+            if hit.get("content_id") == content_id
+        ]
+        cases.append(
+            RetestCase(
+                query=query,
+                feedback_ids=[m["id"] for m in group],
+                status=group[0]["status"],
+                found=bool(hits),
+                hits=hits,
+            )
+        )
+    return cases
+
+
+@router.post("/{collection_name}/reindex", response_model=list[ReindexItem])
+async def reindex(
+    collection_name: str,
+    content_id: Annotated[str | None, Query(description="Só este documento. Sem ele, todos.")] = None,
+    created_by: Annotated[str | None, Query(max_length=200)] = None,
+) -> list[ReindexItem]:
+    """Corta de novo os documentos pela regra de trechos atual, a partir do texto dos
+    trechos que já estão indexados: mesmo `content_id`, mesmas páginas, uma revisão nova
+    em cada um. Páginas de site ficam de fora (o sync recorta da fonte). Gera os
+    embeddings de novo — numa collection grande, demora o tempo de indexá-la."""
+    _row_or_404(collection_name)
+    if content_id is not None:
+        try:
+            return [ReindexItem(**await rechunk_document(collection_name, content_id, created_by=created_by))]
+        except DocumentNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"Documento {content_id!r} não encontrado em {collection_name!r}"
+            ) from exc
+    return [ReindexItem(**item) for item in await reindex_collection(collection_name, created_by=created_by)]

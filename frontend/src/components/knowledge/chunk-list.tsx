@@ -40,6 +40,7 @@ export function ChunkList({
         const position = [
           chunk.chunk != null ? `trecho ${chunk.chunk}` : null,
           chunk.page != null ? `pág. ${chunk.page}` : null,
+          chunk.document_revision != null ? `rev. ${chunk.document_revision}` : null,
         ].filter(Boolean);
         return (
           <li key={chunk.chunk_id ?? index} className="rounded-lg border border-border bg-surface p-3">

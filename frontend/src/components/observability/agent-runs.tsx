@@ -115,7 +115,8 @@ export function AgentRuns({ agentType, versions }: { agentType: string; versions
         )}
       </div>
 
-      <StatsPanel params={params} />
+      {/* Os números seguem o "Incluir testes" da lista, senão contam runs que a lista esconde. */}
+      <StatsPanel params={review.includeTests ? params : { ...params, include_dry_run: "false" }} />
 
       <ReviewFilters review={review} onChange={setReview} />
 
