@@ -34,6 +34,7 @@ from uuid import uuid4
 
 from agno.agent import Agent
 from agno.run.agent import RunEvent, RunOutputEvent
+from pydantic import BaseModel
 
 from agent_service.config import get_settings
 from agent_service.documents import retrieval
@@ -55,6 +56,23 @@ RUN_INTERRUPTED = (
 
 class RunTimeoutError(RuntimeError):
     """A execução passou do tempo limite do agente — 504 para quem chama."""
+
+
+def structured_output_error(run: "RunContext", content: Any) -> str | None:
+    """No `/analyze` a resposta tem de ser o objeto do `response_schema`; outra
+    coisa (texto, vazio, nenhum `run_completed`) é falha do modelo — 502 para quem
+    chama e `error` no run. A mesma mensagem nos dois, para o log bater com a resposta."""
+    if run.endpoint != "analyze" or isinstance(content, BaseModel):
+        return None
+    # Dizer o que veio no lugar: com response_schema aninhado a saída inválida
+    # fica mais comum, e "não devolveu saída válida" sozinho não ajuda a achar
+    # se o modelo respondeu texto, devolveu vazio ou errou um campo.
+    recebido = repr(content)
+    if len(recebido) > 500:
+        recebido = recebido[:500] + "… (truncado)"
+    return f"O agente não devolveu uma saída estruturada válida (veio {type(content).__name__}): {recebido}"
+
+
 PROJECT_LOOKUP_RETRY_SECONDS = 60
 
 _client: "Langfuse | None" = None
@@ -357,6 +375,7 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
     )
     chunks: list[str] = []
     final_content: str | None = None
+    completed_content: Any = None
     events = _agent_events(agent, run)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + run.timeout_seconds if run.timeout_seconds else None
@@ -379,6 +398,7 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
             if event.event == RunEvent.run_content.value and isinstance(event.content, str):
                 chunks.append(event.content)
             elif event.event == RunEvent.run_completed.value:
+                completed_content = event.content
                 if isinstance(event.content, str):
                     final_content = event.content
                 elif hasattr(event.content, "model_dump_json"):
@@ -404,9 +424,14 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
             if record.model is None and isinstance(getattr(event, "model", None), str):
                 record.model = event.model or None
             yield event
+        if record.status == "success" and (problem := structured_output_error(run, completed_content)):
+            record.status, record.status_message = "error", problem
     except (asyncio.CancelledError, GeneratorExit):
-        record.status = "interrupted"
-        record.status_message = RUN_INTERRUPTED
+        # Depois de um `run_error` quem consome sai de propósito (a rota responde
+        # 502) e fecha o generator: é falha do modelo, não desconexão.
+        if record.status != "error":
+            record.status = "interrupted"
+            record.status_message = RUN_INTERRUPTED
         raise
     except RunTimeoutError:
         raise
@@ -539,6 +564,7 @@ async def _produce(client: "Langfuse", agent: Agent, run: RunContext, queue: asy
 
     chunks: list[str] = []
     final_content: str | None = None
+    completed_content: Any = None
     error: str | None = None
     try:
         with (
@@ -573,19 +599,26 @@ async def _produce(client: "Langfuse", agent: Agent, run: RunContext, queue: asy
                     async for event in events:
                         if event.event == RunEvent.run_content.value and isinstance(event.content, str):
                             chunks.append(event.content)
-                        elif event.event == RunEvent.run_completed.value and isinstance(event.content, str):
-                            final_content = event.content
+                        elif event.event == RunEvent.run_completed.value:
+                            completed_content = event.content
+                            if isinstance(event.content, str):
+                                final_content = event.content
                         elif event.event == RunEvent.run_error.value:
                             error = event.content or RUN_FAILED
                         await queue.put(event)
             except asyncio.CancelledError:
-                root.update(output="".join(chunks) or None, level="WARNING", status_message=RUN_INTERRUPTED)
+                # Cancelado depois de um `run_error`: a rota respondeu 502 e saiu (ver `_recorded_events`).
+                if error:
+                    root.update(output="".join(chunks) or None, level="ERROR", status_message=error)
+                else:
+                    root.update(output="".join(chunks) or None, level="WARNING", status_message=RUN_INTERRUPTED)
                 raise
             except Exception as exc:
                 root.update(level="ERROR", status_message=str(exc) or type(exc).__name__)
                 raise
 
             output = final_content if final_content is not None else "".join(chunks)
+            error = error or structured_output_error(run, completed_content)
             if error:
                 root.update(output=output or None, level="ERROR", status_message=error)
             else:
