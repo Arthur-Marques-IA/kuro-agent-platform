@@ -24,8 +24,12 @@ import socket  # noqa: E402
 
 import pytest  # noqa: E402
 
+from agent_service.cli import connection  # noqa: E402
 from agent_service.observability import run_store  # noqa: E402
 from agent_service.tools import egress  # noqa: E402
+
+ENV_FILE_KEY = connection.env_file_key
+"""Guardado antes de `sem_env_do_repositorio` trocá-lo — o teste da leitura do `.env` o devolve."""
 
 _IP_PUBLICO = "93.184.216.34"
 DNS_DO_SISTEMA = socket.getaddrinfo
@@ -55,6 +59,22 @@ def dns_deterministico(monkeypatch):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (_IP_PUBLICO, port))]
 
     monkeypatch.setattr(egress.socket, "getaddrinfo", resolve)
+
+
+@pytest.fixture(autouse=True)
+def sem_env_do_repositorio(monkeypatch, tmp_path_factory):
+    """Sem `KURO_API_KEY`, o `kuro` lê a `ADMIN_API_KEY` do `.env` da pasta atual
+    (`cli/connection.py`). A suíte roda na raiz do repositório, e o `.env` de quem
+    desenvolve não pode entrar nos testes: a pasta lida passa a ser uma vazia."""
+    vazia = tmp_path_factory.mktemp("sem-env")
+    monkeypatch.setattr(connection, "env_file_key", lambda url, directory=None: ENV_FILE_KEY(url, directory or vazia))
+
+
+@pytest.fixture
+def env_da_pasta_atual(monkeypatch):
+    """Desfaz o `sem_env_do_repositorio` para o teste da leitura do `.env` (que escolhe a pasta)."""
+    monkeypatch.setattr(connection, "env_file_key", ENV_FILE_KEY)
+    return ENV_FILE_KEY
 
 
 @pytest.fixture(autouse=True)

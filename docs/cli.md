@@ -219,6 +219,11 @@ docker compose exec agent-service kuro --json agents list
 docker compose exec -it agent-service kuro            # shell interativo
 ```
 
+No host do servidor, fora do container (o `kuro dash`, por exemplo, que a imagem não traz),
+rode na pasta do repositório: sem `KURO_API_KEY`, a CLI usa a `ADMIN_API_KEY` do `.env` dali
+(só da pasta atual, e só com o serviço em `localhost`/`127.0.0.1`; numa rotação `nova,antiga`,
+a nova). A `KURO_API_KEY` explícita sempre vence. Um 401 diz essas três saídas.
+
 Fora do servidor, aponte a CLI com as duas variáveis:
 
 ```bash

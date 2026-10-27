@@ -6,7 +6,9 @@ desligou a UI (`docker compose up -d` sem o profile `ui`) e para quem opera um s
 pelo terminal.
 
 Como a CLI, é só mais um cliente da API: valem as mesmas flags e variáveis (`--url`/`KURO_API_URL`,
-`KURO_API_KEY`, `KURO_CA_BUNDLE`), contra o serviço local ou numa VPS.
+`KURO_API_KEY`, `KURO_CA_BUNDLE`), contra o serviço local ou numa VPS. No host do servidor, rode
+na pasta do repositório: sem `KURO_API_KEY`, ele usa a `ADMIN_API_KEY` do `.env` dali. A imagem
+do container não traz o extra `tui`, então `docker compose exec agent-service kuro dash` não abre.
 
 ![A aba Ao vivo do kuro dash, com o corvo no cabeçalho](telas/tui-ao-vivo.png)
 

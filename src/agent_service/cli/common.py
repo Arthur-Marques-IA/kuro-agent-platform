@@ -19,6 +19,7 @@ import typer
 from rich.console import Console
 
 from agent_service.cli.client import ApiError, Client, PortBlocked, ServiceUnavailable, TlsError
+from agent_service.cli.connection import AUTH_HINT
 
 EXIT_FAILED = 1
 EXIT_USAGE = 2
@@ -88,6 +89,8 @@ def _api_message(exc: ApiError) -> str:
             f"{'.'.join(str(p) for p in d.get('loc', [])[1:]) or 'body'}: {d.get('msg')}" if isinstance(d, dict) else str(d)
             for d in detail
         )
+    if exc.status == 401:
+        return f"{detail} (HTTP 401) — {AUTH_HINT}"
     return f"{detail} (HTTP {exc.status})"
 
 

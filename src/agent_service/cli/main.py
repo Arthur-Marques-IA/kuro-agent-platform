@@ -34,7 +34,7 @@ from agent_service.cli.common import (
     print_json,
     state,
 )
-from agent_service.cli.connection import DEFAULT_URL
+from agent_service.cli.connection import DEFAULT_URL, resolve_api_key
 from agent_service.config import current_key
 from agent_service.public_url import LOOPBACK, ip_https, public_url
 
@@ -77,7 +77,8 @@ def root(
         None,
         "--api-key",
         envvar="KURO_API_KEY",
-        help="Chave de API do serviço (escopo admin). Normalmente vem de KURO_API_KEY.",
+        help="Chave de API do serviço (escopo admin). Normalmente vem de KURO_API_KEY; sem ela, "
+        "num serviço local, da ADMIN_API_KEY do .env da pasta atual.",
     ),
     ca_bundle: str | None = typer.Option(
         None,
@@ -98,6 +99,7 @@ def root(
             "Só para teste local; em produção use --ca-bundle.",
             highlight=False,
         )
+    api_key = resolve_api_key(api_key, url)
     ctx.obj = State(
         client=Client(url, timeout=timeout, api_key=api_key, verify=False if insecure else (ca_bundle or True)),
         json_mode=json_mode,
@@ -157,7 +159,7 @@ def mcp_config(
     apontado para a URL (o domínio ou, sem domínio, o HTTPS por IP do profile `ip`, com o
     certificado da CA para salvar). `--url` sobrepõe o endereço."""
     st = state(ctx)
-    key = current_key(ctx.find_root().params.get("api_key")) or ""
+    key = current_key(resolve_api_key(ctx.find_root().params.get("api_key"), st.client.base_url)) or ""
     url, url_source = _public_url(public_url, st.client.base_url)
     ip = _ip_https() if url_source == "ip" else None
     warnings = []
