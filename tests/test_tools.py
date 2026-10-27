@@ -454,6 +454,42 @@ def test_update_tool_masks_and_preserves_secret_when_echoed_back():
     assert raw["config"]["url"] == "https://x.com/b"  # o resto da edição foi aplicado
 
 
+def test_secret_headers_are_masked_and_preserved_when_echoed_back():
+    create_tool(
+        ToolIn(
+            tool_name="header_secret_api",
+            kind="api",
+            label="Header secret",
+            config={
+                "method": "GET",
+                "url": "https://x.com/a",
+                "headers": {"X-Regente-Token": "real-secret", "Authorization": "Bearer abc", "Accept": "application/json"},
+            },
+        )
+    )
+    headers = get_tool("header_secret_api")["config"]["headers"]
+    assert headers["X-Regente-Token"] != "real-secret"
+    assert headers["Authorization"] != "Bearer abc"
+    assert headers["Accept"] == "application/json"  # não é segredo: continua legível
+
+    # Ecoar a máscara (o `--editable` → `apply`) não troca o token pelo texto da máscara;
+    # o nome do header pode vir com outra caixa.
+    update_tool(
+        "header_secret_api",
+        ToolUpdateIn(
+            config={
+                "method": "GET",
+                "url": "https://x.com/b",
+                "headers": {"x-regente-token": headers["X-Regente-Token"], "Authorization": "Bearer novo"},
+            }
+        ),
+    )
+
+    raw = store.get_tool("header_secret_api")["config"]
+    assert raw["headers"] == {"x-regente-token": "real-secret", "Authorization": "Bearer novo"}
+    assert raw["url"] == "https://x.com/b"
+
+
 def test_delete_tool_blocked_when_seeded_or_in_use():
     with pytest.raises(HTTPException) as exc:
         delete_tool("calculator")  # semeada

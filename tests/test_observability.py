@@ -184,6 +184,46 @@ def test_client_disconnecting_closes_the_trace_as_interrupted(langfuse):
     assert span.attributes[STATUS_MESSAGE] == tracing.RUN_INTERRUPTED
 
 
+def test_model_error_answered_with_502_closes_the_trace_as_error(langfuse):
+    # A rota sai ao ver o run_error, o que cancela a task do run: o trace continua
+    # sendo de erro do modelo, não de desconexão.
+    client, exporter = langfuse
+    run = make_run()
+
+    class ErrorThenHang(FakeAgent):
+        def arun(self, message, **kwargs):
+            async def stream():
+                yield RunStartedEvent(run_id=kwargs.get("run_id"))
+                yield RunErrorEvent(content="MALFORMED_FUNCTION_CALL")
+                await asyncio.Event().wait()
+
+            return stream()
+
+    async def leave_on_error():
+        async with aclosing(tracing.traced_run_events(ErrorThenHang(), run)) as events:
+            async for event in events:
+                if isinstance(event, RunErrorEvent):
+                    break
+        await asyncio.sleep(0.05)  # deixa a task do run tratar o cancelamento
+
+    asyncio.run(leave_on_error())
+
+    span = root_span(client, exporter)
+    assert span.attributes[LEVEL] == "ERROR"
+    assert span.attributes[STATUS_MESSAGE] == "MALFORMED_FUNCTION_CALL"
+
+
+def test_analyze_without_structured_output_closes_the_trace_as_error(langfuse):
+    client, exporter = langfuse
+    run = make_run(endpoint="analyze")
+
+    drain(FakeAgent(RunStartedEvent(run_id=run.run_id), RunCompletedEvent(content=None)), run)
+
+    span = root_span(client, exporter, name="analyze")
+    assert span.attributes[LEVEL] == "ERROR"
+    assert span.attributes[STATUS_MESSAGE] == tracing.structured_output_error(run, None)
+
+
 def test_feedback_score_lands_on_the_trace_of_the_run(monkeypatch):
     scores: list[dict] = []
     monkeypatch.setattr(

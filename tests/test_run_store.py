@@ -194,6 +194,57 @@ def test_client_disconnecting_records_the_run_as_interrupted(agent_type):
     assert trace.run.output == "metade "
 
 
+class ModelError(Exception):
+    """O que a rota faz ao ver um `run_error`: responde 502 e sai do loop."""
+
+
+def test_model_error_answered_with_502_stays_error_not_interrupted(agent_type):
+    # A rota sai no meio do stream (fecha o generator) ao ver o run_error; isso
+    # não pode virar "quem chamou desconectou".
+    run = make_run(agent_type)
+    agent = FakeAgent(
+        RunStartedEvent(run_id=run.run_id),
+        RunErrorEvent(content="MALFORMED_FUNCTION_CALL"),
+        RunContentEvent(content="nunca chega"),
+    )
+
+    async def consume_like_the_route():
+        async with aclosing(tracing.traced_run_events(agent, run)) as events:
+            async for event in events:
+                if isinstance(event, RunErrorEvent):
+                    raise ModelError(event.content)
+
+    with pytest.raises(ModelError):
+        asyncio.run(consume_like_the_route())
+
+    trace = get_run_trace(run.run_id)
+    assert trace.run.status == "error"
+    assert trace.run.status_message == "MALFORMED_FUNCTION_CALL"
+
+
+def test_analyze_without_structured_output_is_recorded_as_error(agent_type):
+    # Resposta vazia do modelo: a rota responde 502, então o run não pode ficar como sucesso.
+    run = make_run(agent_type, endpoint="analyze")
+    drain(FakeAgent(RunStartedEvent(run_id=run.run_id), RunCompletedEvent(content=None)), run)
+
+    trace = get_run_trace(run.run_id)
+    assert trace.run.status == "error"
+    assert trace.run.status_message == tracing.structured_output_error(run, None)
+    assert "veio NoneType" in trace.run.status_message
+
+
+def test_analyze_with_structured_output_is_success(agent_type):
+    from pydantic import BaseModel
+
+    class Decisao(BaseModel):
+        acao: str
+
+    run = make_run(agent_type, endpoint="analyze")
+    drain(FakeAgent(RunStartedEvent(run_id=run.run_id), RunCompletedEvent(content=Decisao(acao="aprovar"))), run)
+
+    assert get_run_trace(run.run_id).run.status == "success"
+
+
 def test_exception_in_the_run_is_recorded_as_error(agent_type):
     class BrokenAgent:
         def arun(self, message, **kwargs):

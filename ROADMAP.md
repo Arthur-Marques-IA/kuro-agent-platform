@@ -1,7 +1,7 @@
 # Roadmap do Kuro (agent-service)
 
 > Feito a partir da leitura do código em 2026-09-18 (commit `298a869`) e revisado a cada batelada
-> (última revisão: 2026-10-03, depois do servidor MCP, do `kuro dash` e da divisão da documentação)
+> (última revisão: 2026-10-27, depois da batelada de RAG, da fila de jobs e das correções vindas do R8)
 > — os itens entregues ficam riscados, com o que foi feito e o que sobrou, em vez de sumirem.
 > É o único lugar do roadmap: o README só aponta para cá. Diz o que fazer, em que ordem e o que cortar.
 >
@@ -123,6 +123,46 @@ build. O detalhe para quem integra está em `docs/notas-de-versao.md`.
 
 A base comum dos três é o `Client` da CLI. O que não é apresentação (o stream do chat, o eval) saiu
 do `typer` para os três reaproveitarem.
+
+**Acesso remoto, fila de jobs e RAG (2026-10-03 a 2026-10-27) — feito:**
+1. ~~MCP por HTTP~~ **Feito**: o serviço atende o MCP em `/mcp` (com domínio ou pelo profile `ip`),
+   e `kuro connect usuario@servidor` liga o MCP pelo SSH, sem porta aberta. `kuro mcp-config` monta a
+   configuração pronta para colar. Pelo SSH e pela URL as tools que leem arquivo por caminho são recusadas.
+2. ~~Fila durável~~ **Feito** (`jobs/`, migração 0011): fila de jobs no Postgres com
+   `FOR UPDATE SKIP LOCKED`, lease, retentativa e `LISTEN/NOTIFY` para acordar o worker; `kuro jobs
+   list/show/retry/cancel`. O sync de sites já roda nela. É a base que o webhook `on_complete` do
+   procedural esperava (§4.2).
+3. ~~RAG de produção~~ **Feito**: busca híbrida e configuração de busca versionada por collection (o
+   run grava `collection_version`); sites como fonte (crawl/sitemap/page, robots.txt, egress travado,
+   ressincronização incremental, PDF/DOCX/PPTX/XLSX linkados); `sources` na resposta do `/chat`,
+   `/analyze` e stream; os trechos lidos no trace (`metadata.references`); feedback do operador por
+   trecho; ciclo de correção (revisão no mesmo `content_id`, marcação resolvida, `retest` sem modelo,
+   `reindex`) e um corte único de trechos para todo documento.
+4. **Extra:** Gemini 3+ sem `temperature`/`top_p`/`thinking_budget`, HTTPS pelo IP sem domínio
+   (profile `ip`, sslip.io), console com os Logs divididos em Panorama, Execuções e Sessões.
+
+**Correções da integração do R8 (2026-10-27) — feito:** vindas de uma sessão de operação do Regente.
+1. ~~Falha do modelo gravada como "interrompido"~~ **Corrigido**: depois de um `run_error` a rota
+   responde 502 e fecha o stream, e isso sobrescrevia o `error` por `interrupted` ("quem chamou
+   desconectou"), no trace store e no Langfuse. Um `MALFORMED_FUNCTION_CALL` do Gemini fez investigar a
+   conexão do Regente em vez do modelo.
+2. ~~502 do `/analyze` contado como sucesso~~ **Corrigido**: sem saída estruturada (vazio, texto,
+   nenhum `run_completed`) o run ficava `success`, e o painel mostrava 0 falhas com o chamador no
+   fallback. Agora é `error` com a mesma mensagem do 502.
+3. ~~Segredo em `headers` de tool em texto puro~~ **Corrigido**: `tool_get` mascarava só `auth`; um
+   header com nome de segredo (`X-...-Token`, `Authorization`) passa a sair mascarado.
+   **Falta, do lado da operação:** mover os tokens das tools do R8 para `auth.value` e rotacioná-los.
+
+**Pendente dessa mesma sessão:**
+- Confirmação recusada no MCP: quando o cliente *recusa* a elicitation (e não só
+  quando não a suporta), a tool devolve a mensagem genérica do SDK. Devolver o comando da CLI também
+  nesse caso evita contornar a confirmação com script.
+- Tools são compartilhadas entre draft e produção: alterar pelo draft uma tool que um agente de
+  produção usa vale na hora. Avisar no `tool_apply`/`tool_set` (e no console) quais agentes de
+  produção a usam, ou pedir confirmação nesse caso.
+- Conferir o modelo gravado nos runs: houve runs depois de uma troca de modelo mostrando o modelo
+  anterior. O cache de agentes revalida pelo `updated_at`, então a hipótese é a troca ter sido no
+  draft; falta confirmar com `run_show` (`agent_version` dos runs) antes de tratar como bug.
 
 **Adiado de propósito** (há um consumidor só): tabela `api_keys` multi-chave, multi-tenancy
 estrutural/RLS, RBAC no console, snapshot com cache e `LISTEN/NOTIFY`, dependências `tool_only`,
@@ -271,8 +311,8 @@ Para ficar redondo:
 
 **Ficou de fora, de propósito:**
 - o webhook `on_complete`, porque precisa de uma fila de entrega durável (Postgres `SKIP LOCKED`, com
-  retentativa), que é um subsistema à parte. Por enquanto quem integra lê `state.done` e
-  `state.result` na resposta;
+  retentativa). Essa fila já existe (`jobs/`, 2026-10, §0): falta o job de entrega, a assinatura do
+  payload e o contrato. Por enquanto quem integra lê `state.done` e `state.result` na resposta;
 - a migração da ficha do R8 e do reset do R4 para procedural;
 - o funil no `kuro dash`.
 
@@ -371,7 +411,9 @@ Regras de design:
    parâmetro que o modelo possa preencher. Os testes rodam em `dry_run` por padrão, e chave de
    modelo não passa pelo MCP.
    **Falta:**
-   - transporte HTTP, se algum agente remoto precisar (o stdio basta para a máquina de quem opera);
+   - ~~transporte HTTP~~ **feito** (2026-10): `/mcp` no serviço e `kuro connect` pelo SSH;
+   - devolver o comando da CLI quando a pessoa (ou o cliente) recusa a confirmação, não só quando o
+     cliente não suporta elicitation;
    - decidir se editar um agente de produção (`agent_set`/`agent_apply`) também pede confirmação.
      Hoje segue a CLI e não pede;
    - a *skill* do Claude Code com o ciclo draft → eval → promote.
@@ -484,7 +526,9 @@ Os prazos são estimativas grosseiras para dar ordem de grandeza, não compromis
 | ~~**Operação**~~ feito | Servidor MCP (`kuro-mcp`), `kuro dash`, documentação dividida por assunto | Agentes de IA operam o Kuro por tools; humanos, pelo terminal |
 | ~~**Procedural**~~ feito | `kind="procedural"`: etapas, confirmação sem LLM, ação com trava, `state` no `/chat`, funil, console | Fluxos guiados conduzidos pelo servidor |
 | **Regente**, contínuo | R8 shadow → prod, R4 shadow → prod, R6 shadow → assistido → autônomo | Regente fora do `ServiceLLM::chatJson()` |
-| **Depois** | `api_keys`/tenant/RLS, webhook de conclusão do procedural, `tool_only`, cache com `LISTEN/NOTIFY`, lock de migração, sandbox Python, LLM-juiz no eval, `agente@versão`, `kuro up/down`, MCP por HTTP, GitOps de tools/collections | Plataforma completa, por necessidade |
+| ~~**Remoto, jobs e RAG**~~ feito | MCP por `/mcp` e SSH, fila de jobs no Postgres, RAG híbrido com sites, fontes na resposta e ciclo de correção | Operação remota e base de conhecimento de produção |
+| **Próximo** | Confirmação recusada no MCP com o comando da CLI, aviso de tool compartilhada entre draft e prod, `fallback_models`, `max_tool_calls`, `usage`/custo no `ChatResponse`, modelo padrão fora do Gemini 2.5 | Menos armadilha para quem opera e integra |
+| **Depois** | `api_keys`/tenant/RLS, webhook de conclusão do procedural (a fila já existe), `tool_only`, cache com `LISTEN/NOTIFY`, lock de migração, sandbox Python, LLM-juiz no eval, `agente@versão`, `kuro up/down`, GitOps de tools/collections, orçamento por agente | Plataforma completa, por necessidade |
 
 A paridade CLI × console está fechada e documentada como matriz em [docs/cli.md](docs/cli.md#paridade-entre-api-cli-e-console) (as exceções, com motivo,
 estão na §6). O console foi atualizado com o que os Sprints 2 e 3 trouxeram em 2026-09-25.

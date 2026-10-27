@@ -38,6 +38,9 @@ router = APIRouter(prefix="/tools", tags=["tools"])
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _SECRET_MASK = "••••••••"
+# O lugar do segredo é `auth` (`api_key` aceita header próprio), mas há tools com o
+# token direto em `headers`: o valor desses sai mascarado como o de `auth`.
+_SECRET_HEADER_RE = re.compile(r"auth|token|key|secret|passw|cookie|session|signature|credential", re.IGNORECASE)
 ToolKind = Literal["builtin", "api", "python"]
 
 
@@ -64,6 +67,10 @@ def _mask_config(kind: str, config: dict[str, Any]) -> dict[str, Any]:
         for field_name in ("token", "value", "password"):
             if auth.get(field_name):
                 auth[field_name] = _SECRET_MASK
+        headers = masked.get("headers") or {}
+        for name, value in headers.items():
+            if value and _SECRET_HEADER_RE.search(name):
+                headers[name] = _SECRET_MASK
     elif kind == "builtin":
         from agent_service.tools.catalog import get_builtin_spec
 
@@ -86,6 +93,11 @@ def _unmask_config(kind: str, incoming: dict[str, Any], existing: dict[str, Any]
         for field_name in ("token", "value", "password"):
             if auth.get(field_name) == _SECRET_MASK:
                 auth[field_name] = existing_auth.get(field_name)
+        headers = merged.get("headers") or {}
+        existing_headers = {k.lower(): v for k, v in (existing.get("headers") or {}).items()}
+        for name, value in headers.items():
+            if value == _SECRET_MASK and name.lower() in existing_headers:
+                headers[name] = existing_headers[name.lower()]
     elif kind == "builtin":
         from agent_service.tools.catalog import get_builtin_spec
 

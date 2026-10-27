@@ -38,7 +38,13 @@ from agent_service.agents.registry import UnknownAgentTypeError, get_agent_with_
 from agent_service.config import get_settings
 from agent_service.documents.collections import EmbedderError
 from agent_service.documents.retrieval import sources_from
-from agent_service.observability.tracing import RUN_FAILED, RunContext, RunTimeoutError, traced_run_events
+from agent_service.observability.tracing import (
+    RUN_FAILED,
+    RunContext,
+    RunTimeoutError,
+    structured_output_error,
+    traced_run_events,
+)
 from agent_service.tools.context import set_idempotency_key
 from agent_service.tools.registry import ToolBuildError, UnknownToolError
 
@@ -527,18 +533,9 @@ async def _analyze(request: AnalyzeRequest, idempotency_key: str | None) -> Anal
         except RunTimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
 
-    if not isinstance(final_content, BaseModel):
-        # Dizer o que veio no lugar: com response_schema aninhado a saída inválida
-        # fica mais comum, e "não devolveu saída válida" sozinho não ajuda a achar
-        # se o modelo respondeu texto, devolveu vazio ou errou um campo.
-        recebido = repr(final_content)
-        if len(recebido) > 500:
-            recebido = recebido[:500] + "… (truncado)"
-        raise HTTPException(
-            status_code=502,
-            detail=f"O agente não devolveu uma saída estruturada válida "
-            f"(veio {type(final_content).__name__}): {recebido}",
-        )
+    # O run já foi gravado como erro com esta mesma mensagem (`_recorded_events`).
+    if (problem := structured_output_error(run, final_content)) is not None:
+        raise HTTPException(status_code=502, detail=problem)
 
     return AnalyzeResponse(
         agent_type=request.agent_type,

@@ -344,6 +344,23 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Corrigido
 
+- **Falha do modelo gravada como "interrompido".** Quando o modelo devolvia erro (ex.: o Gemini com
+  `MALFORMED_FUNCTION_CALL`), o `/chat`, o `/chat/stream` e o `/analyze` respondiam 502, mas o run
+  ficava `interrupted`, com "quem chamou desconectou ou cancelou" — apontando para o lado errado.
+  Agora fica `error`, com a mensagem do provedor, no trace store local e no Langfuse.
+  `interrupted` volta a significar só cliente que saiu ou cancelamento.
+- **502 do `/analyze` sem saída estruturada contava como sucesso.** Resposta vazia, texto no lugar
+  do objeto ou nenhum `run_completed` davam 502 para quem chama, mas o run ficava `success` e o
+  painel mostrava 0 falhas. O run passa a ser `error` com a mesma mensagem do 502
+  ("O agente não devolveu uma saída estruturada válida (veio ...)"); filtros por `status=error`,
+  `/observability/stats` e o panorama passam a contar essas falhas.
+- **Segredo em `headers` de tool `api` saía em texto puro.** `GET /tools`, `GET /tools/{nome}` (e o
+  `kuro tools get`, o `tool_get` do MCP) mascaravam só `auth.token`, `auth.value` e `auth.password`.
+  O valor de headers cujo nome sugere segredo (`auth`, `token`, `key`, `secret`, `passw`, `cookie`,
+  `session`, `signature`, `credential`, ex.: `X-Regente-Token`, `Authorization`, `X-Api-Key`) agora
+  sai como `••••••••`; ecoar a máscara num update (`--editable` → `apply`) mantém o valor guardado.
+  O lugar certo do segredo continua sendo `auth` (`{"type": "api_key", "header": "...", "value": "..."}`):
+  um token que já passou por um `tool_get` deve ser tratado como exposto e rotacionado.
 - **Achar uma execução pelo id.** O `search` de `/observability/runs`, `/sessions` e `/stats` também
   acha pelo `run_id` ou `trace_id` inteiro (um trecho do id não conta). No console, colar um dos dois
   na busca de Logs abre a execução, mesmo que seja teste.
