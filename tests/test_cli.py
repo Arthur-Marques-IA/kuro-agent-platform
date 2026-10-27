@@ -521,21 +521,49 @@ def test_env_file_key_reads_admin_key_from_the_local_env(env_da_pasta_atual, tmp
     from agent_service.cli import connection
 
     env_file_key = env_da_pasta_atual
-    assert env_file_key("http://127.0.0.1:58000", tmp_path) is None  # sem .env
+    assert env_file_key("http://127.0.0.1:58000", [tmp_path]) is None  # sem .env
     (tmp_path / ".env").write_text(
         '# comentário\nRUNTIME_API_KEY=rt\nADMIN_API_KEY="nova-123,antiga-456"\n', encoding="utf-8"
     )
     # Rotação `nova,antiga`: vai a nova, sem as aspas.
-    assert env_file_key("http://127.0.0.1:58000", tmp_path) == "nova-123"
-    assert env_file_key("http://localhost:8000", tmp_path) == "nova-123"
+    assert env_file_key("http://127.0.0.1:58000", [tmp_path]) == "nova-123"
+    assert env_file_key("http://localhost:8000", [tmp_path]) == "nova-123"
     # O .env é do serviço desta máquina: a chave dele não vai para outro endereço.
-    assert env_file_key("https://kuro.empresa.com", tmp_path) is None
+    assert env_file_key("https://kuro.empresa.com", [tmp_path]) is None
     assert connection.resolve_api_key("explicita", "http://127.0.0.1:58000") == "explicita"
 
 
+def test_global_kuro_finds_the_key_in_the_checkout_it_was_installed_from(env_da_pasta_atual, monkeypatch, tmp_path):
+    # `uv tool install -e <repo>`: o `kuro` roda de qualquer pasta e acha o .env do repositório.
+    from agent_service.cli import connection
+
+    repo, outra = tmp_path / "repo", tmp_path / "home"
+    repo.mkdir()
+    outra.mkdir()
+    (repo / ".env").write_text("ADMIN_API_KEY=do-checkout\n")
+    monkeypatch.setattr(connection, "_checkout_root", lambda: repo)
+    monkeypatch.chdir(outra)
+
+    assert env_da_pasta_atual("http://127.0.0.1:58000") == "do-checkout"
+    # O .env da pasta atual vem antes do checkout.
+    (outra / ".env").write_text("ADMIN_API_KEY=da-pasta\n")
+    assert env_da_pasta_atual("http://127.0.0.1:58000") == "da-pasta"
+
+
+def test_checkout_root_is_this_repository():
+    from pathlib import Path
+
+    from agent_service.cli import connection
+
+    assert connection._checkout_root() == Path(__file__).resolve().parents[1]
+
+
 def test_cli_without_kuro_api_key_uses_admin_key_from_env_file(api, env_da_pasta_atual, monkeypatch, tmp_path):
+    from agent_service.cli import connection
+
     routes, calls = api
     routes[("GET", "/agents")] = httpx.Response(200, json=[AGENT])
+    monkeypatch.setattr(connection, "_checkout_root", lambda: None)  # só a pasta atual
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("ADMIN_API_KEY=chave-do-env\n")
     monkeypatch.delenv("KURO_API_KEY", raising=False)

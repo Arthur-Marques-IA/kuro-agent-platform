@@ -63,11 +63,13 @@ def dns_deterministico(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def sem_env_do_repositorio(monkeypatch, tmp_path_factory):
-    """Sem `KURO_API_KEY`, o `kuro` lê a `ADMIN_API_KEY` do `.env` da pasta atual
-    (`cli/connection.py`). A suíte roda na raiz do repositório, e o `.env` de quem
+    """Sem `KURO_API_KEY`, o `kuro` lê a `ADMIN_API_KEY` do `.env` da pasta atual e do
+    checkout (`cli/connection.py`). A suíte roda no repositório, e o `.env` de quem
     desenvolve não pode entrar nos testes: a pasta lida passa a ser uma vazia."""
     vazia = tmp_path_factory.mktemp("sem-env")
-    monkeypatch.setattr(connection, "env_file_key", lambda url, directory=None: ENV_FILE_KEY(url, directory or vazia))
+    monkeypatch.setattr(
+        connection, "env_file_key", lambda url, directories=None: ENV_FILE_KEY(url, directories or [vazia])
+    )
 
 
 @pytest.fixture

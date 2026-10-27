@@ -5,8 +5,9 @@ variáveis); o servidor MCP e a TUI não têm essas flags e chamam `client_from_
 Os nomes são os mesmos nos três, então quem já configurou a CLI não configura de novo.
 
 Sem `KURO_API_KEY`, no host do servidor, a chave sai do `.env` do serviço: quem roda
-`kuro` na pasta do repositório (fora do container, como o `kuro dash`, que a imagem não
-traz) não precisa exportar a `ADMIN_API_KEY` à mão (ver `env_file_key`).
+`kuro` fora do container (como o `kuro dash`, que a imagem não traz), na pasta do
+repositório ou pelo `kuro` global instalado dele, não precisa exportar a `ADMIN_API_KEY`
+à mão (ver `env_file_key`).
 """
 
 import os
@@ -31,8 +32,26 @@ AUTH_HINT = (
 _TRUE = ("1", "true", "yes", "sim")
 
 
-def env_file_key(url: str, directory: Path | None = None) -> str | None:
-    """A `ADMIN_API_KEY` do `.env` da pasta atual (só dela, sem subir pastas), ou `None`.
+def _checkout_root() -> Path | None:
+    """A raiz do repositório de onde o `kuro` roda, se ele roda de um checkout (`uv run`,
+    ou `uv tool install -e` — o `kuro` global no servidor); `None` numa instalação comum."""
+    root = Path(__file__).resolve().parents[3]
+    return root if (root / "pyproject.toml").is_file() and (root / "src" / "agent_service").is_dir() else None
+
+
+def _env_dirs() -> list[Path]:
+    """Onde procurar o `.env`: a pasta atual (sem subir pastas) e o checkout do `kuro`."""
+    dirs = [Path.cwd()]
+    root = _checkout_root()
+    if root is not None and root not in dirs:
+        dirs.append(root)
+    return dirs
+
+
+def env_file_key(url: str, directories: list[Path] | None = None) -> str | None:
+    """A `ADMIN_API_KEY` do primeiro `.env` que a tiver, ou `None`: o da pasta atual e,
+    depois, o do checkout de onde o `kuro` roda — o `kuro` instalado globalmente com
+    `uv tool install -e <repo>` acha a chave do serviço de qualquer pasta.
 
     Só para um serviço em loopback: esse `.env` é o do serviço desta máquina, e mandar
     a chave dele para outro endereço (um `KURO_API_URL` de produção, rodando no clone
@@ -40,14 +59,17 @@ def env_file_key(url: str, directory: Path | None = None) -> str | None:
     vai a nova."""
     if not is_loopback(url):
         return None
-    path = (directory or Path.cwd()) / ".env"
-    try:
-        if not path.is_file():
-            return None
-        values = dotenv_values(path)
-    except (OSError, UnicodeDecodeError):
-        return None
-    return current_key(values.get("ADMIN_API_KEY"))
+    for directory in directories if directories is not None else _env_dirs():
+        path = directory / ".env"
+        try:
+            if not path.is_file():
+                continue
+            key = current_key(dotenv_values(path).get("ADMIN_API_KEY"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        if key:
+            return key
+    return None
 
 
 def resolve_api_key(explicit: str | None, url: str) -> str | None:
