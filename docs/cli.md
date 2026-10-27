@@ -219,6 +219,19 @@ docker compose exec agent-service kuro --json agents list
 docker compose exec -it agent-service kuro            # shell interativo
 ```
 
+No host do servidor, fora do container (o `kuro dash`, por exemplo, que a imagem não traz),
+instale o `kuro` global a partir do clone do serviço:
+
+```bash
+uv tool install -e "$HOME/microservice_agents[tui,mcp]"
+kuro dash          # de qualquer pasta
+```
+
+Sem `KURO_API_KEY`, a CLI usa a `ADMIN_API_KEY` do `.env` da pasta atual e, depois, a do
+checkout de onde o `kuro` foi instalado (por isso o `-e`). Só com o serviço em
+`localhost`/`127.0.0.1`; numa rotação `nova,antiga`, vai a nova. A `KURO_API_KEY` explícita
+sempre vence. Um 401 diz as saídas.
+
 Fora do servidor, aponte a CLI com as duas variáveis:
 
 ```bash

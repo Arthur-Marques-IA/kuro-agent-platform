@@ -41,6 +41,14 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Novo
 
+- **`kuro` no host do servidor sem exportar a chave.** Sem `KURO_API_KEY`, a CLI, o `kuro dash` e o
+  `kuro-mcp` usam a `ADMIN_API_KEY` do `.env` da pasta atual (sem subir pastas) e, depois, a do
+  checkout de onde o `kuro` roda — o `kuro` global instalado com `uv tool install -e <repo>[tui,mcp]`
+  acha a chave de qualquer pasta. Só com o serviço em loopback (`localhost`/`127.0.0.1`): esse `.env` é o do serviço da máquina, e a chave dele
+  não vai para outro endereço. Numa rotação (`nova,antiga`) vai a nova. A `KURO_API_KEY` explícita
+  sempre vence. Antes, `uv run --extra tui kuro dash` no host dava 401, porque só dentro do container
+  a chave vem configurada (e a imagem não traz o extra `tui`). Um 401 na CLI e no painel agora diz as
+  três saídas: `KURO_API_KEY`, rodar na pasta do repositório ou `docker compose exec agent-service kuro`.
 - **Ciclo de correção do RAG: revisão de documento e marcação resolvida.** Corrigir um documento não
   troca mais o `content_id`: `PUT /collections/{nome}/documents/{content_id}` (texto) ou
   `PUT .../{content_id}/file` (arquivo) reindexa no mesmo id e grava a revisão seguinte

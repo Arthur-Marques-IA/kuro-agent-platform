@@ -47,6 +47,7 @@ from textual.widgets import (
 )
 
 from agent_service.cli.client import ApiError, Client, ServiceUnavailable
+from agent_service.cli.connection import AUTH_HINT
 from agent_service.tui.crow import Crow
 
 PREVIEW = 600  # caracteres da entrada/saída de um span mostrados no trace
@@ -102,8 +103,10 @@ def prefer_truecolor(environ: MutableMapping[str, str] = os.environ) -> bool:
 
 def describe_error(exc: Exception) -> str:
     if isinstance(exc, ApiError):
-        if exc.status in (401, 403):
-            return f"sem permissão (HTTP {exc.status}): use uma chave de escopo admin em KURO_API_KEY"
+        if exc.status == 401:
+            return f"sem chave aceita (HTTP 401): {AUTH_HINT}"
+        if exc.status == 403:
+            return "sem permissão (HTTP 403): a chave não é de escopo admin — use a ADMIN_API_KEY em KURO_API_KEY"
         if exc.status == 501:
             return "o panorama só existe no trace store local (TRACE_STORE_BACKEND=langfuse responde 501)"
         detail = exc.detail if isinstance(exc.detail, str) else json.dumps(exc.detail, ensure_ascii=False)

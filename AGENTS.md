@@ -11,7 +11,9 @@ uv run kuro <comando> --help       # ajuda de qualquer comando
 
 Se o serviço exigir autenticação, exporte `KURO_API_KEY` (a chave de escopo admin) —
 sem ela os comandos saem com 1 e `{"status": 401}`. Dentro do container ela já está
-configurada: `docker compose exec agent-service kuro health --json`.
+configurada: `docker compose exec agent-service kuro health --json`. No host do servidor, na
+pasta do repositório ou pelo `kuro` global (`uv tool install -e <repo>[tui,mcp]`), a CLI usa
+sozinha a `ADMIN_API_KEY` do `.env` do repositório (só com o serviço em loopback).
 
 Com o serviço atrás de HTTPS, `KURO_API_URL=https://...`. Se o certificado vem de uma CA
 própria, aponte-a com `KURO_CA_BUNDLE=/caminho/ca.pem`; num teste local com certificado
