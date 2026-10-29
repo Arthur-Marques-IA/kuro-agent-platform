@@ -24,3 +24,7 @@ def upgrade() -> None:
         "agent_definitions",
         sa.Column("plain_text", sa.Boolean, nullable=False, server_default=sa.false()),
     )
+
+
+def downgrade() -> None:
+    op.drop_column("agent_definitions", "plain_text")
