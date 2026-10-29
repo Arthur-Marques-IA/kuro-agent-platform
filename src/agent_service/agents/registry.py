@@ -66,6 +66,7 @@ def _build_from_definition(definition: dict[str, Any]) -> tuple[Agent, tuple[dat
         num_history_runs=definition["num_history_runs"],
         memory_backend=definition["memory_backend"],
         session_summary=bool(definition.get("session_summary")),
+        plain_text=bool(definition.get("plain_text")),
         kind=kind,
         output_schema=output_schema,
     ), tools_stamp

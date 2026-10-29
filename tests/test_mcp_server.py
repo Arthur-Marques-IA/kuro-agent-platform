@@ -557,10 +557,14 @@ async def test_sessions_list_shows_every_user_and_paginates(api):
     page = {"data": [{"session_id": "s1", "session_name": "oi"}], "meta": {"page": 2, "total_pages": 3}}
     routes[("GET", "/sessions")] = httpx.Response(200, json=page)
     routes[("GET", "/sessions/s1/runs")] = httpx.Response(200, json=[])
+    routes[("GET", "/observability/sessions/s1/transcript")] = httpx.Response(200, json={"items": []})
     async with McpClient(server) as mcp:
         data = _data(await mcp.call_tool("sessions_list", {"agent_type": "suporte", "page": 2}))
         await mcp.call_tool("session_show", {"session_id": "s1"})
-    listed, shown = calls
+        await mcp.call_tool("session_show", {"session_id": "s1", "raw": True})
+    listed, shown, raw = calls
+    assert shown.url.path == "/observability/sessions/s1/transcript"
+    assert raw.url.path == "/sessions/s1/runs"
     assert "user_id" not in listed.url.params and listed.url.params["page"] == "2"
     assert listed.url.params["component_id"] == "suporte"
     assert data["meta"]["total_pages"] == 3

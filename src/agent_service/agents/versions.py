@@ -77,6 +77,8 @@ def effective_config(definition: dict[str, Any]) -> dict[str, Any]:
         config["timeout_seconds"] = definition["timeout_seconds"]
     if definition.get("session_summary"):
         config["session_summary"] = True
+    if definition.get("plain_text"):
+        config["plain_text"] = True
     if config["kind"] == "procedural":
         # Só aqui: com `stages` em todo agente, os que já existiam ganhariam versão nova.
         config["stages"] = definition.get("stages") or []

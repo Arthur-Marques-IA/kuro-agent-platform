@@ -118,3 +118,8 @@ def test_memory_tool_success_is_not_shown_as_an_error():
     other = SimpleNamespace(tool_name="consulta", result="No response from model")
     assert _tool_output(ok) == managers.MEMORY_TOOL_OUTPUT
     assert _tool_output(other) == "No response from model"
+
+
+def test_plain_text_turns_off_agno_markdown_instruction():
+    assert _agent("none").markdown
+    assert not _agent("none", plain_text=True).markdown

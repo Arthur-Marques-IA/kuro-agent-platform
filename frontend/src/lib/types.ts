@@ -554,6 +554,8 @@ export interface AgentDefinition {
   timeout_seconds?: number | null;
   /** Resume o que sai da janela de histórico, em vez de perdê-lo. */
   session_summary?: boolean;
+  /** Resposta sem markdown (WhatsApp). */
+  plain_text?: boolean;
   is_seed: boolean;
   prompt_version: number;
   created_at: string;
@@ -580,6 +582,7 @@ export interface AgentDefinitionInput {
   model_params?: ModelParams | null;
   timeout_seconds?: number | null;
   session_summary?: boolean;
+  plain_text?: boolean;
 }
 
 export interface PromptVersion {

@@ -143,6 +143,8 @@ class AgentDefinitionIn(BaseModel):
     ou `mem0`."""
     session_summary: bool = False
     """Resume o que sai da janela de histórico, em vez de perdê-lo."""
+    plain_text: bool = False
+    """Responde em texto puro (sem markdown) — canais como WhatsApp."""
     num_history_runs: int = 10
     kind: AgentKind = "conversational"
     response_schema: list[ResponseFieldIn] = Field(
@@ -189,6 +191,7 @@ class AgentDefinitionUpdate(BaseModel):
     dependency_fields: list[DependencyFieldIn] | None = None
     memory_backend: Literal["none", "auto", "agentic", "common", "mem0"] | None = None
     session_summary: bool | None = None
+    plain_text: bool | None = None
     num_history_runs: int | None = None
     kind: AgentKind | None = None
     response_schema: list[ResponseFieldIn] | None = None
@@ -218,6 +221,7 @@ class AgentDefinitionOut(BaseModel):
     dependency_fields: list[DependencyFieldOut]
     memory_backend: str
     session_summary: bool = False
+    plain_text: bool = False
     num_history_runs: int
     kind: AgentKind
     response_schema: list[ResponseFieldOut]
@@ -603,6 +607,7 @@ _PROMOTED_FIELDS = (
     "dependency_fields",
     "memory_backend",
     "session_summary",
+    "plain_text",
     "num_history_runs",
     "kind",
     "response_schema",
