@@ -52,3 +52,24 @@ def test_compact_session_shows_context_once_and_tools_in_one_line():
     assert out["resumo_da_sessao"]["texto"] == "aluna quer parcelar"
     assert out["memorias_do_contato"][0]["texto"] == "recebe dia 10"
     assert "messages" not in first and "run_input" not in first
+
+
+def test_full_history_and_temporal_line_do_not_break_context_equality():
+    """O r6 reenvia o histórico inteiro e a hora a cada turno: sem limpar, nunca seria igual."""
+
+    def msg(h, hist, fala):
+        return (
+            f"[SISTEMA]\nFila: CS\n[/SISTEMA]\n\nCONTEXTO TEMPORAL: há {h}h.\n\nDADOS:\nNome: Maria\n\n"
+            f"HISTÓRICO DA CONVERSA (antigo -> recente):\n{hist}\n\nÚLTIMA MENSAGEM DO ALUNO: {fala}"
+        )
+
+    session = {
+        "runs": [
+            _run("r1", 1, msg("0.0", "[ALUNO] oi", "oi")),
+            _run("r2", 2, msg("0.2", "[ALUNO] oi\n[ATENDENTE] ok", "3x")),
+        ]
+    }
+    first, second = compact_session(session)["items"]
+    assert "HISTÓRICO" not in first["contexto"] and "CONTEXTO TEMPORAL" not in first["contexto"]
+    assert first["temporal"] == "há 0.0h." and second["temporal"] == "há 0.2h."
+    assert second.get("contexto_igual_ao_anterior")

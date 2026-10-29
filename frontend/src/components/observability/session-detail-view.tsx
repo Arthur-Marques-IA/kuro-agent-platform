@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Brain, ChevronRight, GraduationCap, MessageSquare } from "lucide-react";
 import { formatDateTime } from "@/lib/format";
+import { apiUrl } from "@/lib/http";
 import { splitInput, type SessionMemory } from "@/lib/transcript";
 import type { AgentKind, ChatMessage, RunSummary } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
@@ -183,7 +184,7 @@ function AgentMemory({ sessionId }: { sessionId: string }) {
   const [data, setData] = useState<SessionMemory | null>(null);
   useEffect(() => {
     let alive = true;
-    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/transcript`)
+    fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/transcript`))
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => alive && setData(j))
       .catch(() => alive && setData(null));

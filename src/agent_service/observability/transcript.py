@@ -29,6 +29,14 @@ FALA_MARKERS = ("[FALA DO CONTATO]", "ÚLTIMA MENSAGEM DO ALUNO:", "ÚLTIMA MENS
 """Onde termina o contexto e começa a fala, nas mensagens que trazem os dois juntos.
 Sem nenhum desses marcadores, a mensagem inteira é a fala."""
 
+HISTORY_MARKER = "HISTÓRICO DA CONVERSA"
+"""Integração que reenvia a conversa inteira a cada turno (o `r6`): o trecho a partir
+daqui só repete os turnos anteriores — fica fora do contexto mostrado e comparado."""
+
+TEMPORAL_PREFIX = "CONTEXTO TEMPORAL:"
+"""Linha que muda a cada turno ("última mensagem há 0.3h"): vai em campo próprio, senão
+o contexto nunca seria "igual ao anterior"."""
+
 TOOL_ARG_MAX = 160
 TOOL_RESULT_MAX = 240
 
@@ -57,6 +65,21 @@ def split_input(text: str) -> tuple[str, str]:
     if best < 0:
         return "", text.strip()
     return text[:best].strip(), text[best + len(marker) :].strip()
+
+
+def clean_context(contexto: str) -> tuple[str, str | None]:
+    """(contexto sem o histórico repetido e sem a linha temporal, a linha temporal)."""
+    pos = contexto.find(HISTORY_MARKER)
+    if pos >= 0:
+        contexto = contexto[:pos]
+    temporal = None
+    kept = []
+    for line in contexto.splitlines():
+        if temporal is None and line.startswith(TEMPORAL_PREFIX):
+            temporal = line[len(TEMPORAL_PREFIX) :].strip()
+        else:
+            kept.append(line)
+    return "\n".join(kept).strip(), temporal
 
 
 def _input_text(run: dict[str, Any]) -> str:
@@ -92,6 +115,7 @@ def compact_run(run: dict[str, Any], tz: ZoneInfo, previous_context: str | None)
     metrics = run.get("metrics") or {}
     model = next(iter(((metrics.get("details") or {}).get("model") or [])), {})
     contexto, fala = split_input(_input_text(run))
+    contexto, temporal = clean_context(contexto)
     item: dict[str, Any] = {
         "run_id": run.get("run_id"),
         "at": _at(run.get("created_at"), tz),
@@ -102,6 +126,8 @@ def compact_run(run: dict[str, Any], tz: ZoneInfo, previous_context: str | None)
         "duracao_s": round(metrics["duration"], 1) if isinstance(metrics.get("duration"), (int, float)) else None,
         "fala": fala,
     }
+    if temporal:
+        item["temporal"] = temporal
     if contexto and contexto == previous_context:
         item["contexto_igual_ao_anterior"] = True
     elif contexto:
@@ -128,7 +154,7 @@ def compact_session(
     prompts: list[str] = []
     for run in runs:
         item = compact_run(run, tz, previous_context)
-        previous_context = split_input(_input_text(run))[0] or previous_context
+        previous_context = clean_context(split_input(_input_text(run))[0])[0] or previous_context
         h = _system_hash(run)
         if h and (not prompts or prompts[-1] != h):
             prompts.append(h)
