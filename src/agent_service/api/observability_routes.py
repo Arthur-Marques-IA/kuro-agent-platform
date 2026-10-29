@@ -307,6 +307,34 @@ def list_sessions(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.get("/sessions/{session_id}/transcript")
+def session_transcript(
+    session_id: str,
+    user_id: str | None = None,
+    timezone: str = DEFAULT_TIMEZONE,
+    memories: bool = True,
+) -> dict[str, Any]:
+    """A conversa compacta (`observability/transcript.py`): por turno a fala, o contexto
+    só quando mudou, as tools numa linha e a resposta; e o que o agente lembra — o
+    resumo da sessão e as memórias do contato. O `RunOutput` cru continua em
+    `/sessions/{id}/runs`."""
+    from agno.db.base import SessionType
+
+    from agent_service.db import get_db
+    from agent_service.observability.transcript import compact_session
+
+    db = get_db()
+    session = db.get_session(session_id, SessionType.AGENT, user_id=user_id, deserialize=False)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Sessão {session_id!r} não encontrada")
+    mems: list[dict[str, Any]] = []
+    owner = session.get("user_id")
+    if memories and owner:
+        rows = db.get_user_memories(user_id=owner, sort_by="updated_at", sort_order="desc", limit=50, deserialize=False)
+        mems = list(rows[0] if isinstance(rows, tuple) else rows)
+    return compact_session(session, mems, timezone)
+
+
 @router.get("/overview", response_model=Overview)
 def overview(
     since: datetime | None = None,

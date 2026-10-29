@@ -37,6 +37,7 @@ def build_agent(
     num_history_runs: int = 10,
     memory_backend: MemoryBackendName = "none",
     session_summary: bool = False,
+    plain_text: bool = False,
     kind: AgentKind = "conversational",
     output_schema: type[BaseModel] | None = None,
 ) -> Agent:
@@ -107,5 +108,7 @@ def build_agent(
         post_hooks=post_hooks or None,
         add_dependencies_to_context=add_dependencies_to_context,
         output_schema=output_schema,
-        markdown=output_schema is None,
+        # Sem isto o Agno acrescenta "Use markdown to format your answers." ao prompt —
+        # num canal de texto puro (WhatsApp) o `**negrito**` chega cru ao contato.
+        markdown=output_schema is None and not plain_text,
     )

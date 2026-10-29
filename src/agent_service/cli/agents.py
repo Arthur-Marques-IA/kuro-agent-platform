@@ -42,6 +42,7 @@ EDITABLE_FIELDS = (
     "dependency_fields",
     "memory_backend",
     "session_summary",
+    "plain_text",
     "num_history_runs",
     "kind",
     "response_schema",

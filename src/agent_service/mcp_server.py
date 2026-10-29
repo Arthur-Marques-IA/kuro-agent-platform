@@ -1204,9 +1204,19 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         return _fit(_clip(result, 300), paginated=True)
 
     @server.tool(annotations=READ)
-    def session_show(session_id: SessionId, user_id: UserId = None) -> dict[str, Any]:
-        """Transcrição de uma conversa: cada mensagem, a resposta e os tokens."""
-        return _fit({"items": _call(client.session_runs, session_id, user_id)})
+    def session_show(
+        session_id: SessionId,
+        user_id: UserId = None,
+        raw: Annotated[
+            bool, Field(description="O RunOutput cru do Agno (prompt, mensagens, tools e métricas de cada run).")
+        ] = False,
+    ) -> dict[str, Any]:
+        """Transcrição de uma conversa, compacta: por turno a fala do contato, o contexto
+        só quando mudou, cada tool numa linha e a resposta; mais o resumo da sessão e as
+        memórias do contato. `raw=true` devolve os runs crus do Agno."""
+        if raw:
+            return _fit({"items": _call(client.session_runs, session_id, user_id)})
+        return _fit(_call(client.session_transcript, session_id, user_id), paginated=True)
 
     def _confirm_delete_session(session_id: str, ctx: Context) -> Elicit[Confirmacao]:
         return _ask(ctx, f"kuro sessions delete {session_id} --yes", f"Apagar a conversa {session_id!r}? Não tem volta (o registro em runs continua).")

@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, GraduationCap, MessageSquare } from "lucide-react";
+import { Brain, ChevronRight, GraduationCap, MessageSquare } from "lucide-react";
 import { formatDateTime } from "@/lib/format";
+import { apiUrl } from "@/lib/http";
+import { splitInput, type SessionMemory } from "@/lib/transcript";
 import type { AgentKind, ChatMessage, RunSummary } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -78,6 +80,7 @@ export function SessionDetailView({ sessionId }: { sessionId: string }) {
           />
           <Conversation runs={runs} loading={runsPager.state === "loading"} sessionId={sessionId} />
         </div>
+        <AgentMemory sessionId={sessionId} />
         {observability.enabled && <StatsPanel params={params} showTrend={false} />}
         <RunsTable
           items={runs}
@@ -145,10 +148,101 @@ function asMarkdown(output: string): string {
   return output;
 }
 
+/**
+ * O contexto que o sistema chamador manda em cada mensagem (dados do aluno, dívida,
+ * histórico...) sai da bolha: ela mostra só a fala do contato, e o contexto fica
+ * recolhido acima dela — marcado quando mudou desde o turno anterior.
+ */
+function withContext(runs: RunSummary[]): { run: RunSummary; contexto: string; mudou: boolean }[] {
+  let previous = "";
+  return runs.map((run) => {
+    const { contexto } = splitInput(run.message ?? "");
+    const mudou = contexto !== "" && contexto !== previous;
+    if (contexto) previous = contexto;
+    return { run, contexto, mudou };
+  });
+}
+
+function ContextBlock({ contexto, mudou }: { contexto: string; mudou: boolean }) {
+  return (
+    <details className="group rounded-lg border border-dashed border-border text-xs">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-muted-foreground">
+        <ChevronRight className="size-3.5 shrink-0 transition-transform group-open:rotate-90" aria-hidden />
+        Contexto do sistema
+        <Badge variant={mudou ? "default" : "outline"}>{mudou ? "mudou" : "igual ao anterior"}</Badge>
+        <span className="ml-auto">{contexto.length.toLocaleString("pt-BR")} caracteres</span>
+      </summary>
+      <pre className="max-h-96 overflow-auto whitespace-pre-wrap border-t border-border p-3 font-mono text-[11px] leading-relaxed">
+        {contexto}
+      </pre>
+    </details>
+  );
+}
+
+/** O que o agente lembra desta conversa: o resumo da sessão e as memórias do contato. */
+function AgentMemory({ sessionId }: { sessionId: string }) {
+  const [data, setData] = useState<SessionMemory | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/transcript`))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => alive && setData(j))
+      .catch(() => alive && setData(null));
+    return () => {
+      alive = false;
+    };
+  }, [sessionId]);
+  if (!data) return null;
+  const memorias = data.memorias_do_contato ?? [];
+  return (
+    <div className="flex flex-col gap-3">
+      <SectionHeading
+        title="O que o agente lembra"
+        description="O resumo da sessão (o que saiu da janela de histórico) e as memórias de longo prazo do contato."
+      />
+      <Card className="flex flex-col gap-4 p-4 text-sm">
+        <div>
+          <p className="mb-1 flex items-center gap-2 font-medium">
+            <Brain className="size-4" /> Resumo da sessão
+          </p>
+          {data.resumo_da_sessao?.texto ? (
+            <p className="whitespace-pre-wrap text-muted-foreground">{data.resumo_da_sessao.texto}</p>
+          ) : (
+            <p className="text-muted-foreground">
+              Sem resumo — o agente não resume ou a conversa ainda cabe na janela de histórico.
+            </p>
+          )}
+        </div>
+        <div>
+          <p className="mb-1 font-medium">Memórias do contato ({memorias.length})</p>
+          {memorias.length === 0 ? (
+            <p className="text-muted-foreground">Nenhuma memória de longo prazo para este contato.</p>
+          ) : (
+            <ul className="flex flex-col gap-1.5">
+              {memorias.map((m, i) => (
+                <li key={i} className="flex flex-wrap items-baseline gap-2">
+                  <span>{m.texto}</span>
+                  {m.topicos.map((t) => (
+                    <Badge key={t} variant="outline">
+                      {t}
+                    </Badge>
+                  ))}
+                  {m.atualizado_em && <span className="text-xs text-muted-foreground">{m.atualizado_em}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 function toMessages(run: RunSummary): ChatMessage[] {
   const messages: ChatMessage[] = [];
   if (run.message || run.attachments?.length) {
-    messages.push({ id: `${run.run_id}:u`, role: "user", content: run.message ?? "", attachments: run.attachments });
+    const { fala } = splitInput(run.message ?? "");
+    messages.push({ id: `${run.run_id}:u`, role: "user", content: fala, attachments: run.attachments });
   }
   messages.push({
     id: `${run.run_id}:a`,
@@ -192,17 +286,22 @@ function Conversation({ runs, loading, sessionId }: { runs: RunSummary[]; loadin
   return (
     <Card className="flex flex-col">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">
-        {ordered.flatMap((run) =>
-          isAnalysisRun(run) ? [<AnalysisRunCard key={run.run_id} run={run} />] : toMessages(run).map((message) => (
-            <MessageBubble
-              key={message.id}
-              message={message}
-              agentType={run.agent_type}
-              agentName={run.agent_name ?? getAgent(run.agent_type)?.name}
-              sessionId={sessionId}
-              canTeach={canTeach(getAgent(run.agent_type)?.kind)}
-            />
-          ))
+        {withContext(ordered).flatMap(({ run, contexto, mudou }) =>
+          isAnalysisRun(run)
+            ? [<AnalysisRunCard key={run.run_id} run={run} />]
+            : [
+                ...(contexto ? [<ContextBlock key={`${run.run_id}:ctx`} contexto={contexto} mudou={mudou} />] : []),
+                ...toMessages(run).map((message) => (
+                  <MessageBubble
+                    key={message.id}
+                    message={message}
+                    agentType={run.agent_type}
+                    agentName={run.agent_name ?? getAgent(run.agent_type)?.name}
+                    sessionId={sessionId}
+                    canTeach={canTeach(getAgent(run.agent_type)?.kind)}
+                  />
+                )),
+              ]
         )}
       </div>
       {teachAgent && (

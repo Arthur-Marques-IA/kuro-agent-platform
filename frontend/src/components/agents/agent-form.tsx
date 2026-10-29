@@ -91,6 +91,7 @@ interface FormValues {
   /** Cache do prefixo (instructions + tools) no Claude; "" = desligado. */
   promptCache: "" | "5m" | "1h";
   sessionSummary: boolean;
+  plainText: boolean;
   /** "" = RUN_TIMEOUT_SECONDS do serviço. */
   timeoutSeconds: string;
 }
@@ -157,6 +158,7 @@ function valuesFrom(agent?: AgentDefinition, instructions?: string[]): FormValue
     reasoning: agent?.model_params?.reasoning ?? "",
     promptCache: agent?.model_params?.prompt_cache ?? "",
     sessionSummary: agent?.session_summary ?? false,
+    plainText: agent?.plain_text ?? false,
     numHistoryRuns: agent?.num_history_runs ?? 10,
     temperature: asText(agent?.model_params?.temperature),
     topP: asText(agent?.model_params?.top_p),
@@ -233,6 +235,7 @@ function buildUpdate(values: FormValues, agent: AgentDefinition, models: ModelOp
     if (values.memoryBackend !== agent.memory_backend) payload.memory_backend = values.memoryBackend;
     if (values.numHistoryRuns !== agent.num_history_runs) payload.num_history_runs = values.numHistoryRuns;
     if (values.sessionSummary !== (agent.session_summary ?? false)) payload.session_summary = values.sessionSummary;
+    if (values.plainText !== (agent.plain_text ?? false)) payload.plain_text = values.plainText;
   }
   return payload;
 }
@@ -398,6 +401,7 @@ export function AgentForm({
                 memory_backend: values.memoryBackend,
                 num_history_runs: values.numHistoryRuns,
                 session_summary: values.sessionSummary,
+                plain_text: values.plainText,
               }),
         });
       }
@@ -687,6 +691,18 @@ export function AgentForm({
                     <span className="font-medium text-foreground">Resumir o que sai do histórico</span> — a conversa
                     longa mantém o contexto sem reenviar todas as trocas. O resumo é atualizado uma vez a cada janela,
                     com o modelo auxiliar.
+                  </span>
+                </label>
+                <label className="mt-2 flex items-start gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={values.plainText}
+                    onChange={(e) => update("plainText", e.target.checked)}
+                    className="mt-0.5 accent-primary"
+                  />
+                  <span>
+                    <span className="font-medium text-foreground">Responder em texto puro</span> — sem markdown
+                    (negrito, listas com *). Para canais como WhatsApp, onde a formatação chega crua.
                   </span>
                 </label>
               </Field>
