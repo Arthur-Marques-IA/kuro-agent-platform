@@ -21,7 +21,7 @@ isolado, fora do escopo deste serviço). Por isso:
   uma tool Python seria o desvio óbvio daquela trava.
 
 Limites que a barreira **não** cobre, e por que ficam documentados em vez de
-remendados (isolamento de verdade é um projeto à parte — ver ROADMAP §8):
+remendados (isolamento de verdade é um projeto à parte — ver "Fora de propósito" no ROADMAP):
 
 - **O timeout não cancela nada.** Python não interrompe uma thread de fora.
   Passado o limite, quem chamou recebe `TimeoutError`, mas um `while True:`
