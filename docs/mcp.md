@@ -20,7 +20,7 @@ Três jeitos, do mais simples ao que exige mais do servidor:
 Na sua máquina, um comando (troque `root@meu-servidor` pelo seu acesso SSH):
 
 ```bash
-uvx --from "agent-service[mcp] @ git+https://github.com/Arthur-Marques-IA/microservice_agents" kuro connect root@meu-servidor
+uvx --from "agent-service[mcp] @ git+https://github.com/Arthur-Marques-IA/kuro-agent-platform" kuro connect root@meu-servidor
 ```
 
 O MCP passa a rodar **dentro do container** do serviço, chamado pelo SSH, e fala com o serviço por

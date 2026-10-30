@@ -420,9 +420,9 @@ async def test_repo_link_in_header_and_g_opens_it(monkeypatch):
     app = KuroDash(FakeClient(), interval=60)
     monkeypatch.setattr(app, "open_url", lambda url, **_: opened.append(url))
     async with app.run_test(size=(140, 40)) as pilot:
-        assert "Arthur-Marques-IA/microservice_agents" in _text(app.query_one(".repo", Static))
+        assert "Arthur-Marques-IA/kuro-agent-platform" in _text(app.query_one(".repo", Static))
         await pilot.press("g")
-        assert opened == ["https://github.com/Arthur-Marques-IA/microservice_agents"]
+        assert opened == ["https://github.com/Arthur-Marques-IA/kuro-agent-platform"]
 
 
 async def test_j_k_move_and_trace_keys_hidden():

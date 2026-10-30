@@ -27,8 +27,8 @@ enxergar o `uv`.
 ## 2. Subir o serviço
 
 ```bash
-git clone https://github.com/Arthur-Marques-IA/microservice_agents.git
-cd microservice_agents
+git clone https://github.com/Arthur-Marques-IA/kuro-agent-platform.git
+cd kuro-agent-platform
 cp .env.example .env
 ```
 
@@ -143,7 +143,7 @@ depura agentes do Kuro sem montar comandos de shell.
 Se você entra no servidor por SSH, é um comando, na sua máquina:
 
 ```bash
-uvx --from "agent-service[mcp] @ git+https://github.com/Arthur-Marques-IA/microservice_agents" kuro connect root@meu-servidor
+uvx --from "agent-service[mcp] @ git+https://github.com/Arthur-Marques-IA/kuro-agent-platform" kuro connect root@meu-servidor
 ```
 
 Ele entra pelo SSH, acha o container do serviço, testa o MCP de verdade (chama a tool `health`) e
@@ -172,7 +172,7 @@ arquivo pode ir para o git):
   "mcpServers": {
     "kuro": {
       "command": "uv",
-      "args": ["--directory", "/caminho/para/microservice_agents", "run", "kuro-mcp"],
+      "args": ["--directory", "/caminho/para/kuro-agent-platform", "run", "kuro-mcp"],
       "env": {
         "KURO_API_URL": "http://127.0.0.1:58000",
         "KURO_API_KEY": "${KURO_API_KEY}"

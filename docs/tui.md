@@ -7,7 +7,7 @@ pelo terminal.
 
 Como a CLI, é só mais um cliente da API: valem as mesmas flags e variáveis (`--url`/`KURO_API_URL`,
 `KURO_API_KEY`, `KURO_CA_BUNDLE`), contra o serviço local ou numa VPS. No host do servidor, instale
-o `kuro` global do clone (`uv tool install -e "$HOME/microservice_agents[tui,mcp]"`): sem
+o `kuro` global do clone (`uv tool install -e "$HOME/kuro-agent-platform[tui,mcp]"`): sem
 `KURO_API_KEY`, ele usa a `ADMIN_API_KEY` do `.env` desse clone, de qualquer pasta. A imagem do
 container não traz o extra `tui`, então `docker compose exec agent-service kuro dash` não abre.
 
@@ -40,7 +40,7 @@ desligue com `KURO_TRUECOLOR=0`.
 
 No topo fica o corvo do Kuro, o endereço do serviço, a versão, o estado da conexão
 (● conectado, pausado, erro na API ou offline) e o repositório no GitHub
-([Arthur-Marques-IA/microservice_agents](https://github.com/Arthur-Marques-IA/microservice_agents)):
+([Arthur-Marques-IA/kuro-agent-platform](https://github.com/Arthur-Marques-IA/kuro-agent-platform)):
 `g` abre no navegador, e nos terminais que aceitam links o texto também é clicável. O humor do corvo é o estado do painel, para
 dar para saber de relance o que está acontecendo:
 
