@@ -406,6 +406,11 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Como atualizar
 
+- **O repositório agora se chama `kuro-agent-platform`**
+  (`https://github.com/Arthur-Marques-IA/kuro-agent-platform`). O `kuro connect` e o `uvx --from`
+  da documentação já apontam para o nome novo. O GitHub redireciona o endereço antigo, mas atualize
+  o remote dos clones existentes:
+  `git remote set-url origin https://github.com/Arthur-Marques-IA/kuro-agent-platform.git`.
 - Rode o `up` com `--build` e com todos os profiles que você já usa: o `kuro mcp-config` novo, o
   `kuro-mcp` que o `kuro connect` chama e o `/mcp` moram na imagem (o pacote `mcp` passou a ser
   dependência do serviço; o extra `[mcp]` continua aceito). Para ligar o HTTPS pelo IP, acrescente `--profile ip`, por exemplo

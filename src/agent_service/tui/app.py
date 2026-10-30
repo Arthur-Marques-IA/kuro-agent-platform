@@ -76,7 +76,7 @@ OK, WARN, BAD, MUTED, BRAND = "#22c55e", "#f59e0b", "#ef4444", "#64748b", "#22d3
 
 SPARK = "▁▂▃▄▅▆▇█"
 
-REPO_URL = "https://github.com/Arthur-Marques-IA/microservice_agents"
+REPO_URL = "https://github.com/Arthur-Marques-IA/kuro-agent-platform"
 
 _OFF = ("0", "false", "no", "nao", "não", "off")
 

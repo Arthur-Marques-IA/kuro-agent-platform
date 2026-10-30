@@ -223,7 +223,7 @@ No host do servidor, fora do container (o `kuro dash`, por exemplo, que a imagem
 instale o `kuro` global a partir do clone do serviço:
 
 ```bash
-uv tool install -e "$HOME/microservice_agents[tui,mcp]"
+uv tool install -e "$HOME/kuro-agent-platform[tui,mcp]"
 kuro dash          # de qualquer pasta
 ```
 

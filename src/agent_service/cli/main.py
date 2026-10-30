@@ -115,7 +115,7 @@ def root(
 # -- health ----------------------------------------------------------------------
 
 
-MCP_SOURCE = "git+https://github.com/Arthur-Marques-IA/microservice_agents"
+MCP_SOURCE = "git+https://github.com/Arthur-Marques-IA/kuro-agent-platform"
 """De onde o `uvx` instala o `kuro-mcp` na máquina de quem opera — sem clone.
 Troque com `--source` ou `KURO_MCP_SOURCE` (um fork, uma tag: `...@v0.3.0`)."""
 

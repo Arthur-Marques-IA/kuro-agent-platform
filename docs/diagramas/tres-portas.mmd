@@ -1,19 +1,32 @@
 flowchart LR
-    subgraph Quem usa
-        M["Outros módulos<br/>da plataforma"]
-        A["Agentes de IA<br/>(Claude Code...)<br/>e operadores"]
+    subgraph Quem opera
+        M["Outros sistemas<br/>(seu backend, ERP...)"]
+        A["Agentes de IA<br/>(Claude, Codex...)"]
         H["Pessoas<br/>(admin, suporte)"]
     end
 
-    M -- "HTTP · /chat · /analyze" --> API
-    A -- "CLI kuro" --> API
-    H -- "navegador" --> UI["Console web<br/>Next.js (BFF)"]
-    UI -- "proxy server-side" --> API
-
-    subgraph Kuro
-        API["agent-service<br/>FastAPI + Agno"]
+    subgraph Como
+        API["API HTTP<br/>/chat · /analyze"]
+        MCP["MCP<br/>kuro-mcp"]
+        CLI["CLI kuro<br/>e kuro dash"]
+        UI["Console web"]
     end
 
-    API --> LLM["Gemini · OpenAI<br/>Anthropic · Ollama"]
-    API --> PG[("Postgres + pgvector<br/>agentes · sessões · RAG")]
-    API -. "traces" .-> LF["Langfuse<br/>(opcional)"]
+    M --> API
+    A --> MCP
+    A --> CLI
+    H --> CLI
+    H --> UI
+
+    MCP --> K
+    CLI --> K
+    UI --> K
+    API --> K
+
+    subgraph Kuro["O que é operado"]
+        K["agent-service<br/>agentes · versões · evals<br/>execuções · bases de conhecimento"]
+    end
+
+    K --> LLM["Gemini · OpenAI<br/>Anthropic · Ollama"]
+    K --> PG[("Postgres + pgvector")]
+    K -. "traces" .-> LF["Langfuse<br/>(opcional)"]
