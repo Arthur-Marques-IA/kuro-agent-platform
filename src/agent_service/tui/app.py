@@ -343,8 +343,9 @@ class RunScreen(Screen):
         if run.get("status_message"):
             head.append(f"\n{run['status_message']}", style=BAD)
         self.query_one("#run-head", Static).update(head)
-        self.query_one("#run-msg", Static).update(run.get("message") or Text("—", style=MUTED))
-        self.query_one("#run-out", Static).update(run.get("output") or Text("—", style=MUTED))
+        # Text, não str: o Static leria `[SISTEMA]` da mensagem como markup e quebraria.
+        self.query_one("#run-msg", Static).update(Text(run.get("message") or "—", style="" if run.get("message") else MUTED))
+        self.query_one("#run-out", Static).update(Text(run.get("output") or "—", style="" if run.get("output") else MUTED))
 
         tree = self.query_one(Tree)
         tree.clear()
@@ -383,7 +384,7 @@ class RunScreen(Screen):
         scores = trace.get("scores") or []
         box = self.query_one("#scores", Static)
         box.display = bool(scores)
-        box.update("\n".join(f"{s['name']} = {s['value']}  {s.get('comment') or ''}" for s in scores))
+        box.update(Text("\n".join(f"{s['name']} = {s['value']}  {s.get('comment') or ''}" for s in scores)))
 
 
 # -- abas --------------------------------------------------------------------------
