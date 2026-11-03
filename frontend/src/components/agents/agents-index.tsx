@@ -14,16 +14,27 @@ import { EmptyState, RelativeTime } from "@/components/ui/primitives";
 import { AgentAvatar } from "@/components/agents/agent-avatar";
 import { PageBody, PageHeader } from "@/components/workspace/page-header";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
+import { useOverview } from "@/components/observability/overview-panel";
+
+const OVERVIEW_PARAMS = { include_dry_run: "true" };
 
 export function AgentsIndex() {
   const { agents, sessions, backendReachable } = useWorkspace();
   const [query, setQuery] = useState("");
 
+  // `sessions` são só as conversas deste navegador; o tráfego da API, da CLI e do MCP
+  // (ex. /analyze com session_id) só aparece no trace store. Sem `since`, o panorama
+  // cobre desde o primeiro run. Enquanto carrega, vale a contagem local.
+  const overview = useOverview(OVERVIEW_PARAMS);
   const conversationCounts = useMemo(() => {
     const counts = new Map<string, number>();
+    if (overview.data) {
+      for (const a of overview.data.agents) counts.set(a.agent_type, a.totals.sessions);
+      return counts;
+    }
     for (const s of sessions) if (s.agent_id) counts.set(s.agent_id, (counts.get(s.agent_id) ?? 0) + 1);
     return counts;
-  }, [sessions]);
+  }, [overview.data, sessions]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

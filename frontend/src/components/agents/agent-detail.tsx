@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowUpRight, Copy, Ellipsis, FileSearch, MessageSquare, MessagesSquare, Trash } from "lucide-react";
 import { errorMessage, requestJson } from "@/lib/http";
-import { formatNumber } from "@/lib/format";
+import { formatNumber, pluralize } from "@/lib/format";
+import { logsHref } from "@/lib/logs-query";
 import { MEMORY_BACKENDS, modelLabel } from "@/lib/agent-meta";
 import { sessionTitle } from "@/lib/sessions";
 import type { AgentDefinition, PromptVersion } from "@/lib/types";
@@ -27,6 +28,7 @@ import { AgreementPanel } from "@/components/observability/agreement-panel";
 import { FeedbackPanel } from "@/components/agents/feedback-panel";
 import { IntegrationPanel } from "@/components/integration/integration-panel";
 import { AgentRuns } from "@/components/observability/agent-runs";
+import { useOverview } from "@/components/observability/overview-panel";
 import { PageBody, PageHeader } from "@/components/workspace/page-header";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
 
@@ -55,6 +57,10 @@ export function AgentDetail({
   const [draft, setDraft] = useState<{ key: number; instructions?: string[] }>({ key: 0 });
   const [promoteOpen, setPromoteOpen] = useState(false);
   const agentSessions = sessions.filter((s) => s.agent_id === agent.agent_type);
+  // Todas as conversas do agente (API, CLI, MCP, Playground) vêm do trace store; `sessions`
+  // são só as deste navegador. Sem `since`, o panorama cobre desde o primeiro run.
+  const overview = useOverview({ agent_type: agent.agent_type, include_dry_run: "true" });
+  const totalConversations = overview.data?.totals.sessions ?? null;
   const slug = encodeURIComponent(agent.agent_type);
 
   function changeTab(value: string) {
@@ -198,7 +204,7 @@ export function AgentDetail({
             {agent.kind !== "analysis" && <TabsTrigger value="feedback">Aprendizado</TabsTrigger>}
             <TabsTrigger value="runs">Execuções</TabsTrigger>
             {agent.kind !== "analysis" && (
-              <TabsTrigger value="conversations" count={agentSessions.length}>
+              <TabsTrigger value="conversations" count={totalConversations ?? agentSessions.length}>
                 Conversas
               </TabsTrigger>
             )}
@@ -253,7 +259,7 @@ export function AgentDetail({
         </TabsContent>
 
         <TabsContent value="conversations">
-          <AgentConversations agent={agent} />
+          <AgentConversations agent={agent} total={totalConversations} />
         </TabsContent>
 
         <TabsContent value="integration" className="flex flex-col gap-4">
@@ -269,10 +275,24 @@ export function AgentDetail({
   );
 }
 
-function AgentConversations({ agent }: { agent: AgentDefinition }) {
+function AgentConversations({ agent, total }: { agent: AgentDefinition; total: number | null }) {
   const { sessions, sessionsLoading } = useWorkspace();
   const items = sessions.filter((s) => s.agent_id === agent.agent_type);
   const newChatHref = `/chat?agent=${encodeURIComponent(agent.agent_type)}`;
+  const logsLink = logsHref("/logs/sessions", { agents: [agent.agent_type], period: "all", tests: true });
+
+  const allConversations = total !== null && total > 0 && (
+    <Card className="flex flex-wrap items-center gap-3 p-4">
+      <MessagesSquare className="size-4 shrink-0 text-muted-foreground" />
+      <p className="min-w-0 flex-1 text-sm">
+        <span className="font-medium">{pluralize(total, "conversa", "conversas")} no total</span>
+        <span className="text-muted-foreground"> — de todas as origens (API, CLI, MCP e Playground), testes incluídos.</span>
+      </p>
+      <Link href={logsLink} className={buttonVariants({ variant: "outline", size: "sm" })}>
+        Ver nos Logs <ArrowUpRight />
+      </Link>
+    </Card>
+  );
 
   if (sessionsLoading) {
     return (
@@ -286,25 +306,29 @@ function AgentConversations({ agent }: { agent: AgentDefinition }) {
 
   if (items.length === 0) {
     return (
-      <Card>
-        <EmptyState
-          icon={MessagesSquare}
-          title="Nenhuma conversa com este agente"
-          description="As conversas que você iniciar no playground com ele aparecem aqui."
-          action={
-            <Link href={newChatHref} className={buttonVariants({ variant: "outline", size: "sm" })}>
-              <MessageSquare /> Iniciar conversa
-            </Link>
-          }
-        />
-      </Card>
+      <div className="flex flex-col gap-3">
+        {allConversations}
+        <Card>
+          <EmptyState
+            icon={MessagesSquare}
+            title="Nenhuma conversa sua com este agente"
+            description="As conversas que você iniciar no playground com ele aparecem aqui."
+            action={
+              <Link href={newChatHref} className={buttonVariants({ variant: "outline", size: "sm" })}>
+                <MessageSquare /> Iniciar conversa
+              </Link>
+            }
+          />
+        </Card>
+      </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-3">
+      {allConversations}
       <SectionHeading
-        title={`${items.length} ${items.length === 1 ? "conversa" : "conversas"}`}
+        title={`Suas conversas (${items.length})`}
         description="Conversas deste navegador (seu user_id) com o agente."
         action={
           <Link href={newChatHref} className={buttonVariants({ variant: "outline", size: "sm" })}>

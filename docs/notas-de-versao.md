@@ -352,6 +352,10 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Corrigido
 
+- **Contagem de conversas do console só via o seu navegador.** O card de cada agente e a aba
+  Conversas contavam só as sessões do seu `user_id` no Playground — um agente chamado pela API
+  (ex.: `/analyze` com `session_id`) ficava em "0 conversas". Agora os dois mostram o total do trace
+  store, de todas as origens e com os testes, e a aba Conversas tem um link para essas sessões nos Logs.
 - **Falha do modelo gravada como "interrompido".** Quando o modelo devolvia erro (ex.: o Gemini com
   `MALFORMED_FUNCTION_CALL`), o `/chat`, o `/chat/stream` e o `/analyze` respondiam 502, mas o run
   ficava `interrupted`, com "quem chamou desconectou ou cancelou" — apontando para o lado errado.
