@@ -17,24 +17,31 @@ Três jeitos, do mais simples ao que exige mais do servidor:
 
 ### Pelo SSH: `kuro connect`
 
-Na sua máquina, um comando (troque `root@meu-servidor` pelo seu acesso SSH):
+Na sua máquina, um comando (troque `root@meu-servidor` pelo seu acesso SSH). Funciona igual no
+bash, no zsh e no PowerShell:
 
 ```bash
-uvx --from "agent-service[mcp] @ git+https://github.com/Arthur-Marques-IA/kuro-agent-platform" kuro connect root@meu-servidor
+uv run https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py root@meu-servidor
 ```
+
+Não instala o Kuro: o `kuro_connect.py` é um arquivo só, que usa apenas a biblioteca padrão do
+Python, e o uv o roda direto da URL (com o cache vazio, leva cerca de 1,5 s para começar). Sem o uv,
+baixe o arquivo e rode com `python3 kuro_connect.py root@meu-servidor` (Python 3.10 ou mais novo).
+Com o Kuro já instalado, o mesmo código é o `kuro connect root@meu-servidor`. O
+`kuro mcp-config`, rodado no servidor, imprime esse comando com o endereço dele já preenchido.
 
 O MCP passa a rodar **dentro do container** do serviço, chamado pelo SSH, e fala com o serviço por
 dentro:
 
 ```text
-Claude Code  ──ssh──▶  docker exec -i <container> kuro-mcp  ──▶  agent-service (mesmo servidor)
+cliente MCP  ──ssh──▶  ~/.kuro/bin/kuro-mcp  ──docker exec──▶  kuro-mcp no container  ──▶  agent-service
 ```
 
 Por isso não precisa de porta aberta, de certificado nem da chave de API na sua máquina: o
 container já tem a chave admin, e o firewall do provedor deixa o SSH passar. O comando confere cada
 passo antes do próximo:
 
-1. entra pelo SSH sem senha, porque o Claude Code não tem como digitar nada. Se não entrar, diz
+1. entra pelo SSH sem senha, porque o cliente MCP não tem como digitar nada. Se não entrar, diz
    qual dos três casos é:
    - **o servidor pede senha:** oferece criar uma chave SSH e instalá-la (pede a senha uma última
      vez). Com `--passphrase`, a chave nova nasce com senha de proteção e vai para o ssh-agent;
@@ -45,25 +52,52 @@ passo antes do próximo:
 2. acha o container do `agent-service` (`docker ps` pelo rótulo do compose). Com mais de um Kuro na
    máquina, escolha com `--container`;
 3. confere se a imagem já tem o MCP. Imagem de antes desta versão: `docker compose up -d --build`;
-4. sobe o MCP com o mesmo comando que o Claude Code vai usar e chama a tool `health`;
-5. só então registra no Claude Code (`claude mcp add`, escopo `user`). Se já existir um servidor
-   `kuro`, pergunta antes de trocar (ou `--yes`).
+4. grava no servidor o `~/.kuro/bin/kuro-mcp`, um script de poucas linhas que roda o `kuro-mcp` no
+   container. O cliente o chama com o container de agora: com dois Kuros na máquina, cada registro
+   fica no seu; se esse container sumir (a pasta do projeto mudou de nome, o projeto foi clonado de
+   novo), o script acha o novo pelo rótulo do compose. Se não der para gravar o script, o registro
+   usa o `docker exec` direto, com o nome do container;
+5. sobe o MCP com o mesmo comando que o cliente vai usar e chama a tool `health`;
+6. só então registra em cada cliente que achar nesta máquina, e diz como ativá-lo:
+
+| Cliente | Como registra | Para ativar |
+|---|---|---|
+| Claude Code | `claude mcp add` (escopo `user`) | sessão nova; numa aberta, `/mcp` |
+| Claude Desktop | `mcpServers` do `claude_desktop_config.json`¹ | fechar por completo e abrir de novo |
+| Cursor | `mcpServers` do `~/.cursor/mcp.json` | reiniciar o Cursor |
+| VS Code | `code --add-mcp` | `MCP: List Servers` → kuro → Start |
+
+¹ No macOS, em `~/Library/Application Support/Claude`; no Linux, em `~/.config/Claude`; no Windows, em
+`%APPDATA%\Claude` ou, na instalação nova (Microsoft Store), em `%LOCALAPPDATA%\Claude-Data\<id>`, que
+é para onde o `%APPDATA%\Claude` aponta.
+
+No terminal, pergunta uma vez onde registrar, e avisa se vai trocar um `kuro` que já existe; sem
+terminal, registra em todos os que achar e só troca um registro existente com `--yes`. Os arquivos
+JSON ganham só a entrada do `kuro`: o resto fica como estava, e o original vai para `<arquivo>.bak`.
+Um arquivo com comentários não é reescrito (perderia os comentários): o comando diz o que colar.
+Para qualquer outro cliente, a saída traz o `.mcp.json` e o comando do Codex (`codex mcp add`).
 
 | Opção | Para quê |
 |---|---|
 | `-p 2222`, `-i ~/.ssh/chave`, `-o Opção=valor` | Porta, chave e opções do ssh. Um alias do `~/.ssh/config` também serve como destino |
 | `--container nome` | O container, quando há mais de um Kuro rodando |
-| `--name`, `--scope` | Nome e escopo do registro no Claude Code (padrão `kuro`, `user`) |
-| `--print` | Testa, mas não registra: mostra o comando e o `.mcp.json` para outro cliente (Claude Desktop, Cursor) |
+| `--client nome` | Registra só nesse cliente: `claude-code`, `claude-desktop`, `cursor` ou `vscode` (repetível) |
+| `--name`, `--scope` | Nome do servidor nos clientes e escopo no Claude Code (padrão `kuro`, `user`) |
+| `--print` | Testa, mas não registra: mostra o comando, o `.mcp.json` e o do Codex |
+| `--yes` | Troca um registro com o mesmo nome sem perguntar |
 | `--passphrase` | Se precisar criar a chave SSH, cria com senha de proteção e a carrega no ssh-agent |
+| `--json`, `--no-input` | Saída em JSON; nunca perguntar nada |
 
 O usuário do SSH precisa poder usar o Docker: `root`, ou alguém no grupo `docker`.
 
 O comando registrado leva keepalive (`ServerAliveInterval=15`, `ServerAliveCountMax=3`,
 `ConnectTimeout=15`). Com a rede caída (troca de Wi-Fi, notebook que dormiu), o ssh desiste em
 cerca de 45 s em vez de deixar a tool pendurada até o timeout do cliente. O Claude Code não religa
-sozinho um servidor que caiu: rode `/mcp` e reconecte o `kuro`. Quem registrou antes desta versão
-ganha o keepalive rodando o `kuro connect` de novo.
+sozinho um servidor que caiu: rode `/mcp` e reconecte o `kuro`.
+
+O comando antigo, `uvx --from "agent-service[mcp] @ git+..." kuro connect`, continua funcionando,
+mas instala o projeto inteiro (cerca de 90 pacotes) e, no Windows, o clone falha no limite de tamanho
+de caminho se o git não tiver `core.longpaths` ligado.
 
 ### Pela URL: `/mcp`
 
@@ -255,11 +289,13 @@ pede permissão antes de chamar.
 ## Desenvolvimento
 
 O servidor fica em `src/agent_service/mcp_server.py` e usa o mesmo cliente HTTP da CLI
-(`agent_service/cli/client.py`). O `/mcp` o monta em `src/agent_service/api/mcp_routes.py`, e o
-`kuro connect` fica em `src/agent_service/cli/connect.py`. Os testes ligam um cliente MCP a uma API
-falsa (`httpx.MockTransport`), sem serviço no ar: em memória (`tests/test_mcp_server.py`), por HTTP
-num uvicorn de verdade (`tests/test_mcp_http.py`), e o `kuro connect` com `ssh` e `claude` falsos
-(`tests/test_connect.py`):
+(`agent_service/cli/client.py`). O `/mcp` o monta em `src/agent_service/api/mcp_routes.py`. O
+`kuro connect` mora em `src/agent_service/kuro_connect.py`, que só pode importar a biblioteca padrão
+(é o que o `uv run <url>` baixa sozinho; um teste confere), e `src/agent_service/cli/connect.py` é a
+casca da CLI. Os testes ligam um cliente MCP a uma API falsa (`httpx.MockTransport`), sem serviço no
+ar: em memória (`tests/test_mcp_server.py`), por HTTP num uvicorn de verdade
+(`tests/test_mcp_http.py`), e o `kuro connect` com `ssh`, `claude` e `code` falsos e o teste do MCP
+contra um servidor stdio de verdade (`tests/test_connect.py`):
 
 ```bash
 uv run pytest tests/test_mcp_server.py tests/test_mcp_http.py tests/test_connect.py
