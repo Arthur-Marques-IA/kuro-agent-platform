@@ -41,6 +41,19 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Novo
 
+- **Conectar o MCP sem instalar o Kuro, em qualquer cliente.** Na sua máquina, só com o uv:
+  `uv run https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py root@servidor`.
+  O `kuro connect` virou um arquivo só, que usa apenas a biblioteca padrão do Python: começa em
+  cerca de 1,5 s em vez de instalar o projeto inteiro (cerca de 90 pacotes). Testa o MCP pelo SSH
+  como antes e registra em todo cliente que achar: Claude Code, Claude Desktop, Cursor e VS Code
+  (`--client` escolhe). No terminal, pergunta uma vez onde registrar; no fim, diz como ativar em
+  cada um, e traz o `.mcp.json` e o comando do Codex para os outros. Nos arquivos JSON entra só a
+  entrada do `kuro`, com o original em `<arquivo>.bak`; arquivo com comentários não é reescrito. O
+  `kuro connect` da CLI é o mesmo código, e o `kuro mcp-config` passa a imprimir o comando novo.
+- **O registro do MCP não depende mais do nome do container.** O `kuro connect` grava no servidor o
+  `~/.kuro/bin/kuro-mcp`, que acha o container pelo rótulo do compose, e é ele que o cliente chama.
+  Quem registrou antes continua funcionando; rodar o comando de novo troca pelo registro novo, que
+  sobrevive a uma pasta renomeada ou a um clone novo do projeto.
 - **`kuro` no host do servidor sem exportar a chave.** Sem `KURO_API_KEY`, a CLI, o `kuro dash` e o
   `kuro-mcp` usam a `ADMIN_API_KEY` do `.env` da pasta atual (sem subir pastas) e, depois, a do
   checkout de onde o `kuro` roda — o `kuro` global instalado com `uv tool install -e <repo>[tui,mcp]`
@@ -352,6 +365,9 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Corrigido
 
+- **Conectar o MCP no Windows.** O comando antigo (`uvx --from "agent-service[mcp] @ git+..." kuro
+  connect`) clona o repositório, e no Windows o clone falhava num caminho longo do `frontend/` se o
+  git não tivesse `core.longpaths` ligado. O comando novo baixa um arquivo só, sem clonar nada.
 - **Falha do modelo gravada como "interrompido".** Quando o modelo devolvia erro (ex.: o Gemini com
   `MALFORMED_FUNCTION_CALL`), o `/chat`, o `/chat/stream` e o `/analyze` respondiam 502, mas o run
   ficava `interrupted`, com "quem chamou desconectou ou cancelou" — apontando para o lado errado.

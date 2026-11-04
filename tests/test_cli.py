@@ -621,7 +621,7 @@ def test_mcp_config_without_domain_or_ip_profile_says_how_to_expose(api, monkeyp
     assert "--profile ip" in data["warnings"][0] and "401" in data["warnings"][1]
     # Sem endereço público, o caminho é o SSH, e não há URL para o MCP por HTTP.
     assert "kuro connect" in data["warnings"][0]
-    assert data["ssh_command"].endswith("kuro connect usuario@servidor") and data["http_command"] is None
+    assert data["ssh_command"] == f"uv run {CONNECT_URL} usuario@servidor" and data["http_command"] is None
     assert "KURO_API_KEY" not in data["mcp_json"]["mcpServers"]["kuro"]["env"]
     assert data["setup"] is None
 
@@ -651,7 +651,7 @@ def test_mcp_config_with_ip_profile_hands_over_the_ca(api, monkeypatch, tmp_path
     assert '--env KURO_CA_BUNDLE="$HOME/.kuro/kuro-ca-69-62-89-141.pem"' in data["claude_command"]
     assert '--env KURO_CA_BUNDLE="$HOME\\.kuro\\kuro-ca-69-62-89-141.pem"' in data["claude_command_powershell"]
     assert data["mcp_json"]["mcpServers"]["kuro"]["env"]["KURO_CA_BUNDLE"] == "${KURO_CA_BUNDLE}"
-    assert data["ssh_command"].endswith("kuro connect usuario@69.62.89.141")
+    assert data["ssh_command"] == f"uv run {CONNECT_URL} usuario@69.62.89.141"
     # O Claude Code (Node) não confia na CA própria: sem MCP por URL no profile `ip`.
     assert data["http_command"] is None
     texto = _run("--url", "http://localhost:8000", "mcp-config").stdout
@@ -674,10 +674,22 @@ def test_mcp_config_uses_the_tls_domain_from_env(api, monkeypatch):
     assert data["http_command"] == (
         'claude mcp add --transport http kuro https://kuro.empresa.com/mcp -s user --header "Authorization: Bearer chav…cdef"'
     )
-    assert 'agent-service[mcp] @ git+' in data["ssh_command"] and data["ssh_command"].endswith("usuario@kuro.empresa.com")
+    assert data["ssh_command"] == f"uv run {CONNECT_URL} usuario@kuro.empresa.com"
     # --url continua mandando
     data = json.loads(_run("--json", "mcp-config", "--url", "https://outro.example.com").stdout)
     assert data["url"] == "https://outro.example.com" and data["url_source"] == "explicit"
+
+
+CONNECT_URL = "https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py"
+
+
+def test_mcp_config_connect_script_follows_the_source(api, monkeypatch):
+    """Um fork ou uma tag (`--source`) aponta o script para lá; fonte fora do GitHub volta ao uvx."""
+    monkeypatch.setenv("KURO_API_DOMAIN", "kuro.empresa.com")
+    fork = json.loads(_run("--json", "mcp-config", "--source", "git+https://github.com/eu/kuro.git@v0.3.0").stdout)
+    assert fork["ssh_command"].startswith("uv run https://raw.githubusercontent.com/eu/kuro/v0.3.0/src/agent_service/")
+    local = json.loads(_run("--json", "mcp-config", "--source", "git+https://gitlab.com/eu/kuro").stdout)
+    assert local["ssh_command"] == 'uvx --from "agent-service[mcp] @ git+https://gitlab.com/eu/kuro" kuro connect usuario@kuro.empresa.com'
 
 
 def test_sessions_list_title_drops_the_dependencies_block(api):

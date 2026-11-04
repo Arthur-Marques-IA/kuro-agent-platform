@@ -7,6 +7,7 @@
 
 import json
 import os
+import re
 import shlex
 import sys
 from typing import Any
@@ -120,6 +121,17 @@ MCP_SOURCE = "git+https://github.com/Arthur-Marques-IA/kuro-agent-platform"
 Troque com `--source` ou `KURO_MCP_SOURCE` (um fork, uma tag: `...@v0.3.0`)."""
 
 
+def connect_script_url(source: str) -> str | None:
+    """O `kuro_connect.py` cru no GitHub, para o `uv run <url>`: um arquivo só, sem dependências,
+    em vez de clonar e instalar o projeto inteiro (no Windows, o clone ainda esbarra no limite de
+    tamanho de caminho). `None` quando a fonte não é um repositório do GitHub."""
+    found = re.fullmatch(r"git\+https://github\.com/([^/@]+)/([^/@]+?)(?:\.git)?(?:@(.+))?", source)
+    if not found:
+        return None
+    owner, repo, ref = found.groups()
+    return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref or 'master'}/src/agent_service/kuro_connect.py"
+
+
 def _mask(key: str) -> str:
     return f"{key[:4]}…{key[-4:]}" if len(key) > 12 else "…"
 
@@ -205,7 +217,9 @@ def mcp_config(
 
     # Pelo SSH: o host público, quando se sabe qual é; o usuário do SSH, não (o do container não é).
     host = url.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0] if url_source in ("domain", "ip", "explicit") else ""
-    ssh_cmd = f'uvx --from "{package}" kuro connect usuario@{host or "servidor"}'
+    script_url = connect_script_url(source)
+    target = f'usuario@{host or "servidor"}'
+    ssh_cmd = f"uv run {script_url} {target}" if script_url else f'uvx --from "{package}" kuro connect {target}'
     # Por URL só com certificado público: o Claude Code (Node) não confia na CA própria do
     # profile `ip`, e HTTP puro levaria a chave em texto claro.
     http_cmd = None
@@ -238,7 +252,8 @@ def mcp_config(
         console.print("[bold]Servidor MCP do Kuro[/] — rode na sua máquina.\n")
         console.print(
             "[bold]Pelo SSH[/] (recomendado: não precisa de porta aberta, de certificado nem da chave na sua "
-            "máquina; precisa do uv). Troque `usuario` pelo seu usuário do SSH:"
+            "máquina; precisa só do uv). Registra sozinho no Claude Code, Claude Desktop, Cursor e VS Code que "
+            "achar. Troque `usuario` pelo seu usuário do SSH:"
         )
         console.print(r["ssh_command"], markup=False, highlight=False, soft_wrap=True)
         if r["http_command"]:

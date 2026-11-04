@@ -140,16 +140,19 @@ depura agentes do Kuro sem montar comandos de shell.
 
 ### Serviço num servidor: pelo SSH
 
-Se você entra no servidor por SSH, é um comando, na sua máquina:
+Se você entra no servidor por SSH, é um comando, na sua máquina (bash, zsh ou PowerShell; só
+precisa do [uv](https://docs.astral.sh/uv/)):
 
 ```bash
-uvx --from "agent-service[mcp] @ git+https://github.com/Arthur-Marques-IA/kuro-agent-platform" kuro connect root@meu-servidor
+uv run https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py root@meu-servidor
 ```
 
 Ele entra pelo SSH, acha o container do serviço, testa o MCP de verdade (chama a tool `health`) e
-só então o registra no Claude Code. O MCP roda dentro do container, chamado pelo SSH: não precisa
-abrir porta no firewall, salvar certificado nem copiar a chave de API para a sua máquina. Se o SSH
-pedir senha, ele oferece instalar uma chave SSH, porque o Claude Code não tem como digitar senha.
+só então o registra nos clientes que achar na sua máquina: Claude Code, Claude Desktop, Cursor e
+VS Code. No fim, diz como ativar em cada um. O MCP roda dentro do container, chamado pelo SSH: não
+precisa abrir porta no firewall, salvar certificado nem copiar a chave de API para a sua máquina.
+Se o SSH pedir senha, ele oferece instalar uma chave SSH, porque o cliente MCP não tem como digitar
+senha. Nada do Kuro é instalado: o script usa só a biblioteca padrão do Python.
 
 Com um domínio e o HTTPS do profile `tls`, dá também para conectar pela URL, sem instalar nada: o
 serviço atende o MCP em `/mcp`. O comando pronto sai no servidor, com
