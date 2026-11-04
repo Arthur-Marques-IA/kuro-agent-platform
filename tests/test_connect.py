@@ -92,7 +92,16 @@ def fake(monkeypatch, tmp_path):
     fake.home = tmp_path / "home"
     fake.home.mkdir()
     monkeypatch.setattr(core.Path, "home", lambda: fake.home)
+    # Todo lugar onde um cliente guarda configuração, em qualquer sistema: um teste que esquecesse
+    # um deles gravaria na configuração de verdade de quem roda os testes.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(fake.home / ".config"))
+    monkeypatch.setenv("APPDATA", str(fake.home / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(fake.home / "Local"))
+    for platform in ("linux", "darwin", "win32"):
+        monkeypatch.setattr(core.sys, "platform", platform)
+        for app in core.client_apps():
+            assert fake.home in getattr(app, "path", fake.home / "x").parents, (platform, app.key)
+    monkeypatch.setattr(core.sys, "platform", "linux")
     # As chaves desta máquina não entram no teste; quem quer uma a põe aqui.
     fake.keys = []
     monkeypatch.setattr(core, "_private_keys", lambda ssh: list(fake.keys))
@@ -115,7 +124,7 @@ def test_testa_antes_e_registra_o_ssh_no_claude_code(fake):
     assert out["registered"] == ["claude-code"] and not out["replaced"] and out["container"] == CONTAINER
     command = out["command"]
     assert command[:4] == ["ssh", "-T", "-o", "BatchMode=yes"]
-    assert command[-2:] == ["root@69.62.89.141", *WRAPPER]
+    assert command[-3:] == ["root@69.62.89.141", *WRAPPER, CONTAINER]
     # O teste usa exatamente o comando que vai para o cliente, e vem antes do registro.
     assert fake.probed == [command]
     assert fake.claude("add") == [["claude", "mcp", "add", "kuro", "-s", "user", "--", *command]]
@@ -124,11 +133,13 @@ def test_testa_antes_e_registra_o_ssh_no_claude_code(fake):
 
 
 def test_instala_o_script_do_servidor_que_acha_o_container_sozinho(fake):
-    """O comando registrado não leva o nome do container: um clone novo do projeto (pasta com
-    outro nome, container com outro nome) continua funcionando."""
+    """O cliente chama o script com o container de agora: com dois Kuros na máquina, cada
+    registro fica no seu; se o container sumir (pasta renomeada, clone novo), o script acha o
+    novo pelo rótulo do compose."""
     out = json.loads(_run("root@vps").stdout)
     assert fake.wrapper_installs() == [core.WRAPPER]
-    assert CONTAINER not in out["command"] and out["wrapper"] == "~/.kuro/bin/kuro-mcp"
+    assert out["command"][-2:] == [*WRAPPER, CONTAINER] and out["wrapper"] == "~/.kuro/bin/kuro-mcp"
+    assert "{{.State.Running}}" in core.WRAPPER  # só procura outro se este não está rodando
     assert "label=com.docker.compose.service=agent-service" in core.WRAPPER
     assert "KURO_MCP_LOCAL_FILES=0" in core.WRAPPER
 
@@ -160,7 +171,7 @@ def test_comando_registrado_tem_keepalive_antes_do_destino(fake):
     destino = command.index("root@69.62.89.141")
     opcoes = [command[i + 1] for i in range(destino) if command[i] == "-o"]
     assert {"ServerAliveInterval=15", "ServerAliveCountMax=3", "ConnectTimeout=15"} <= set(opcoes)
-    assert command[destino + 1:] == WRAPPER
+    assert command[destino + 1:] == [*WRAPPER, CONTAINER]
 
 
 def test_comando_registrado_nao_tem_nada_que_o_cmd_do_windows_interprete(fake):
@@ -341,6 +352,34 @@ def test_arquivo_com_comentario_nao_e_reescrito(fake):
     result = _run("root@vps")
     assert result.exit_code == 1 and "à mão" in _error(result)
     assert config.read_text(encoding="utf-8") == original
+    # Recusado antes de registrar qualquer cliente: nada fica pela metade.
+    assert not fake.claude("add")
+
+
+def test_claude_desktop_da_microsoft_store_no_windows(fake, monkeypatch):
+    """A instalação nova do Claude Desktop no Windows (MSIX) tira os dados de %APPDATA%/Claude,
+    que fica só com um marcador, e os põe em %LOCALAPPDATA%/Claude-Data/<id>."""
+    monkeypatch.setattr(core.sys, "platform", "win32")
+    monkeypatch.setenv("APPDATA", str(fake.home / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(fake.home / "Local"))
+    (fake.home / "Roaming" / "Claude").mkdir(parents=True)
+    (fake.home / "Roaming" / "Claude" / ".user-data-left.claude_abc123").touch()
+    real = fake.home / "Local" / "Claude-Data" / "claude_abc123"
+    real.mkdir(parents=True)
+    (real / "claude_desktop_config.json").write_text(json.dumps({"preferences": {"x": 1}}), encoding="utf-8")
+    out = json.loads(_run("root@vps").stdout)
+    assert "claude-desktop" in out["registered"]
+    data = json.loads((real / "claude_desktop_config.json").read_text(encoding="utf-8"))
+    assert data["preferences"] == {"x": 1} and "kuro" in data["mcpServers"]
+    assert not (fake.home / "Roaming" / "Claude" / "claude_desktop_config.json").exists()
+
+
+def test_claude_desktop_instalacao_antiga_no_windows(fake, monkeypatch):
+    monkeypatch.setattr(core.sys, "platform", "win32")
+    monkeypatch.setenv("APPDATA", str(fake.home / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(fake.home / "Local"))
+    (fake.home / "Roaming" / "Claude").mkdir(parents=True)
+    assert core.claude_desktop_dir() == fake.home / "Roaming" / "Claude"
 
 
 def test_cursor(fake):

@@ -96,16 +96,18 @@ KEEPALIVE = ("-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-o"
 WRAPPER_PATH = "~/.kuro/bin/kuro-mcp"
 WRAPPER = """#!/bin/sh
 # Instalado pelo `kuro connect`: sobe o servidor MCP do Kuro dentro do container do agent-service.
-# Sem argumento, acha o container pelo rótulo do docker compose, então sobrevive a uma pasta
-# renomeada ou a um clone novo do projeto. Com um argumento, usa esse container.
+# Usa o container do argumento enquanto ele estiver rodando (com dois Kuros na máquina, cada
+# registro fica no seu). Se ele sumiu (pasta renomeada, clone novo do projeto), acha o novo pelo
+# rótulo do docker compose.
 container="$1"
-if [ -z "$container" ]; then
-  container=$(docker ps --filter label=com.docker.compose.service=agent-service --format '{{.Names}}')
-  case "$container" in
+if [ -z "$container" ] || [ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null)" != "true" ]; then
+  found=$(docker ps --filter label=com.docker.compose.service=agent-service --format '{{.Names}}')
+  case "$found" in
     "") echo "kuro-mcp: nenhum container do agent-service rodando; suba o serviço com docker compose up -d" >&2; exit 1 ;;
     *"
-"*) echo "kuro-mcp: mais de um Kuro rodando; rode o kuro connect de novo com --container" >&2; exit 1 ;;
+"*) echo "kuro-mcp: o container $container não está rodando e há mais de um Kuro; rode o kuro connect de novo com --container" >&2; exit 1 ;;
   esac
+  container="$found"
 fi
 exec docker exec -i -e KURO_MCP_LOCAL_FILES=0 "$container" kuro-mcp
 """
@@ -113,21 +115,21 @@ exec docker exec -i -e KURO_MCP_LOCAL_FILES=0 "$container" kuro-mcp
 servidor, não de quem pediu — as tools pedem o conteúdo inline."""
 
 
-def mcp_command(ssh: Ssh, container: str | None, wrapper: bool = True) -> list[str]:
+def mcp_command(ssh: Ssh, container: str, wrapper: bool = True) -> list[str]:
     """O comando que os clientes rodam. Sem `&&`, `$(...)` nem aspas: no Windows o `claude`
     costuma ser um `.cmd`, e os argumentos passam pelo cmd.exe.
 
-    `wrapper`: o script de `WRAPPER_PATH` no servidor (o padrão), com o container só quando ele
-    foi escolhido com `--container`. Sem o script (não deu para instalar), o `docker exec` direto,
-    com o nome do container fixo.
+    `wrapper`: o script de `WRAPPER_PATH` no servidor (o padrão), que recebe o container de
+    agora e acha outro se ele sumir. Sem o script (não deu para instalar), o `docker exec`
+    direto, com o nome do container fixo.
 
     Keepalive (`KEEPALIVE`): a sessão dura o dia inteiro, e com a rede caída (Wi-Fi trocado,
     notebook que dormiu) a conexão fica meio aberta — a tool pendurava até o timeout do cliente.
     Assim o ssh desiste em ~45 s e o cliente MCP vê o servidor cair, em vez de esperar calado."""
     head = [*ssh.base()[:-1], *KEEPALIVE, ssh.destination]
     if wrapper:
-        return [*head, WRAPPER_PATH, *([container] if container else [])]
-    return [*head, "docker", "exec", "-i", "-e", "KURO_MCP_LOCAL_FILES=0", str(container), "kuro-mcp"]
+        return [*head, WRAPPER_PATH, container]
+    return [*head, "docker", "exec", "-i", "-e", "KURO_MCP_LOCAL_FILES=0", container, "kuro-mcp"]
 
 
 def mcp_env() -> dict[str, str]:
@@ -418,26 +420,52 @@ def _config_dir(app: str) -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / app
 
 
+def claude_desktop_dir() -> Path:
+    """A pasta da configuração do Claude Desktop. No Windows, a instalação nova (MSIX) tirou os
+    dados do %APPDATA%\\Claude, que fica só com um marcador `.user-data-left.<id>`, e os pôs em
+    %LOCALAPPDATA%\\Claude-Data\\<id>: gravar no lugar antigo não teria efeito nenhum."""
+    base = _config_dir("Claude")
+    if sys.platform == "win32":
+        local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "Claude-Data"
+        for marker in sorted(base.glob(".user-data-left.*")) if base.is_dir() else []:
+            moved = local / marker.name.removeprefix(".user-data-left.")
+            if moved.is_dir():
+                return moved
+        if not base.is_dir() and local.is_dir():
+            found = [d for d in local.iterdir() if d.is_dir()]
+            if len(found) == 1:
+                return found[0]
+    return base
+
+
 def _entry(command: list[str], env: dict[str, str]) -> dict[str, Any]:
     return {"command": command[0], "args": command[1:], **({"env": env} if env else {})}
+
+
+def read_json_config(path: Path, key: str, name: str, entry: dict[str, Any]) -> dict[str, Any]:
+    """O arquivo de configuração como objeto, ou `StepFailed` se não dá para reescrevê-lo sem
+    perder nada. JSON com comentário (JSONC) não é reescrito: perderia os comentários."""
+    if not path.exists():
+        return {}
+    text = path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(text) if text.strip() else {}
+    except ValueError as exc:
+        raise StepFailed(
+            f"{path} não é JSON puro (tem comentário ou vírgula sobrando?), e eu não reescrevo o arquivo para "
+            f"não perder nada. Ponha à mão, em \"{key}\": \"{name}\": {json.dumps(entry, ensure_ascii=False)}"
+        ) from exc
+    if not isinstance(data, dict) or not isinstance(data.get(key, {}), dict):
+        raise StepFailed(f"{path} não tem o formato esperado (um objeto com \"{key}\"): não mexi nele")
+    return data
 
 
 def write_json_entry(path: Path, key: str, name: str, entry: dict[str, Any]) -> None:
     """Põe `entry` em `path[key][name]` sem mexer no resto do arquivo. Guarda o original em
     `<arquivo>.bak` e grava num temporário antes de trocar, para um arquivo pela metade nunca
-    ficar no lugar. JSON com comentário (JSONC) não é reescrito: perderia os comentários."""
-    data: Any = {}
+    ficar no lugar."""
+    data = read_json_config(path, key, name, entry)
     if path.exists():
-        text = path.read_text(encoding="utf-8")
-        try:
-            data = json.loads(text) if text.strip() else {}
-        except ValueError as exc:
-            raise StepFailed(
-                f"{path} não é JSON puro (tem comentário ou vírgula sobrando?), e eu não reescrevo o arquivo para "
-                f"não perder nada. Ponha à mão, em \"{key}\": \"{name}\": {json.dumps(entry, ensure_ascii=False)}"
-            ) from exc
-        if not isinstance(data, dict) or not isinstance(data.get(key, {}), dict):
-            raise StepFailed(f"{path} não tem o formato esperado (um objeto com \"{key}\"): não mexi nele")
         shutil.copy2(path, path.with_name(path.name + ".bak"))
     data.setdefault(key, {})[name] = entry
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -471,6 +499,10 @@ class ClientApp:
 
     def has(self, name: str, runner: Runner) -> bool:
         raise NotImplementedError
+
+    def check(self, name: str, command: list[str], env: dict[str, str]) -> None:
+        """Falha (`StepFailed`) se o registro não vai dar certo. Roda para todos os clientes antes
+        de qualquer `add`, para nunca deixar um cliente registrado e outro não."""
 
     def add(self, name: str, command: list[str], env: dict[str, str], runner: Runner, existing: bool) -> None:
         raise NotImplementedError
@@ -518,6 +550,9 @@ class JsonFileClient(ClientApp):
     def has(self, name: str, runner: Runner) -> bool:
         return self.path.exists() and _json_has(self.path, "mcpServers", name)
 
+    def check(self, name: str, command: list[str], env: dict[str, str]) -> None:
+        read_json_config(self.path, "mcpServers", name, _entry(command, env))
+
     def add(self, name: str, command: list[str], env: dict[str, str], runner: Runner, existing: bool) -> None:
         write_json_entry(self.path, "mcpServers", name, _entry(command, env))
 
@@ -543,7 +578,7 @@ class VsCode(ClientApp):
 
 
 def client_apps(scope: str = "user") -> list[ClientApp]:
-    desktop = _config_dir("Claude")
+    desktop = claude_desktop_dir()
     cursor = Path.home() / ".cursor"
     return [
         ClaudeCode("claude-code", "Claude Code", "abra uma sessão nova (numa já aberta, `/mcp`)", scope=scope),
@@ -688,8 +723,8 @@ def connect(opts: Options, ui: Ui, runner: Runner | None = None) -> dict[str, An
         check_kuro_mcp(ssh, runner, target)
         wrapper = install_wrapper(ssh, runner)
         if wrapper:
-            done(f"{WRAPPER_PATH} no servidor (acha o container sozinho, mesmo se o nome mudar)")
-        command = mcp_command(ssh, opts.container, wrapper) if wrapper else mcp_command(ssh, target, False)
+            done(f"{WRAPPER_PATH} no servidor (se o container mudar de nome, ele acha o novo)")
+        command = mcp_command(ssh, target, wrapper)
         env = mcp_env()
         health = probe(command, env)
         service = health.get("service") or {}
@@ -717,6 +752,8 @@ def connect(opts: Options, ui: Ui, runner: Runner | None = None) -> dict[str, An
         missing = [a.label for a in apps if opts.clients and not a.present()]
         if missing:
             raise StepFailed(f"não achei nesta máquina: {', '.join(missing)}", EXIT_USAGE)
+        for app in apps:
+            app.check(opts.name, command, env)
         existing = {a.key: a.has(opts.name, runner) for a in apps}
         to_replace = [a for a in apps if existing[a.key]]
         replacing = ", ".join(a.label for a in to_replace)

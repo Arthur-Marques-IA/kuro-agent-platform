@@ -52,19 +52,24 @@ passo antes do próximo:
 2. acha o container do `agent-service` (`docker ps` pelo rótulo do compose). Com mais de um Kuro na
    máquina, escolha com `--container`;
 3. confere se a imagem já tem o MCP. Imagem de antes desta versão: `docker compose up -d --build`;
-4. grava no servidor o `~/.kuro/bin/kuro-mcp`, um script de poucas linhas que acha o container pelo
-   rótulo do compose e roda o `kuro-mcp` nele. É ele que o cliente chama, então o registro continua
-   valendo se a pasta do projeto mudar de nome ou o projeto for clonado de novo (o nome do container
-   muda junto). Se não der para gravar, o registro usa o `docker exec` direto, com o nome do container;
+4. grava no servidor o `~/.kuro/bin/kuro-mcp`, um script de poucas linhas que roda o `kuro-mcp` no
+   container. O cliente o chama com o container de agora: com dois Kuros na máquina, cada registro
+   fica no seu; se esse container sumir (a pasta do projeto mudou de nome, o projeto foi clonado de
+   novo), o script acha o novo pelo rótulo do compose. Se não der para gravar o script, o registro
+   usa o `docker exec` direto, com o nome do container;
 5. sobe o MCP com o mesmo comando que o cliente vai usar e chama a tool `health`;
 6. só então registra em cada cliente que achar nesta máquina, e diz como ativá-lo:
 
 | Cliente | Como registra | Para ativar |
 |---|---|---|
 | Claude Code | `claude mcp add` (escopo `user`) | sessão nova; numa aberta, `/mcp` |
-| Claude Desktop | `mcpServers` do `claude_desktop_config.json` | fechar por completo e abrir de novo |
+| Claude Desktop | `mcpServers` do `claude_desktop_config.json`¹ | fechar por completo e abrir de novo |
 | Cursor | `mcpServers` do `~/.cursor/mcp.json` | reiniciar o Cursor |
 | VS Code | `code --add-mcp` | `MCP: List Servers` → kuro → Start |
+
+¹ No macOS, em `~/Library/Application Support/Claude`; no Linux, em `~/.config/Claude`; no Windows, em
+`%APPDATA%\Claude` ou, na instalação nova (Microsoft Store), em `%LOCALAPPDATA%\Claude-Data\<id>`, que
+é para onde o `%APPDATA%\Claude` aponta.
 
 No terminal, pergunta uma vez onde registrar, e avisa se vai trocar um `kuro` que já existe; sem
 terminal, registra em todos os que achar e só troca um registro existente com `--yes`. Os arquivos

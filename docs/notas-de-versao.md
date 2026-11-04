@@ -24,6 +24,11 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Ação necessária
 
+- **`kuro connect --json` e `kuro mcp-config --json` mudaram de formato.** No `kuro connect`,
+  `registered` e `replaced` deixam de ser `true`/`false` e passam a ser listas com os clientes
+  (`["claude-code", "vscode"]`; vazia quando nada foi registrado), e entram `wrapper`, `codex` e
+  `activate`. No `kuro mcp-config`, `ssh_command` passa a ser `uv run <url do kuro_connect.py>
+  usuario@host`. Quem lê essas saídas num script precisa ajustar.
 - **Todo documento passa a ser cortado pela regra dos sites.** Texto colado, arquivo enviado (PDF,
   DOCX, PPTX, XLSX, TXT, MD) e a correção de documento deixam o corte do Agno (até 5.000 caracteres,
   sem olhar o conteúdo) e usam o mesmo de páginas de site: trechos de até 1.500 caracteres, cortados
