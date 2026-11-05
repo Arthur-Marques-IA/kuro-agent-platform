@@ -24,6 +24,11 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Ação necessária
 
+- **MCP: mexer num agente no ar pede confirmação.** `agent_set`, `agent_apply`, `feedback_send`,
+  `feedback_remove` e `feedback_rollback` num agente com execução real (fora de `dry_run`) nos
+  últimos 7 dias perguntam à pessoa antes de gravar, lembrando o caminho do draft. Num cliente MCP
+  sem elicitation, a tool é recusada e devolve o comando da CLI. Draft, agente parado e validação
+  (`dry_run=true`) seguem sem pergunta. A CLI não muda.
 - **`kuro connect --json` e `kuro mcp-config --json` mudaram de formato.** No `kuro connect`,
   `registered` e `replaced` deixam de ser `true`/`false` e passam a ser listas com os clientes
   (`["claude-code", "vscode"]`; vazia quando nada foi registrado), e entram `wrapper`, `codex` e
@@ -46,6 +51,23 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Novo
 
+- **Replay de conversa: o teste de regressão dos agentes conversacionais.** `kuro sessions replay
+  <session_id>` (e a tool `session_replay` do MCP) reenvia as falas de uma conversa guardada, todas e
+  na ordem, numa sessão nova e com as mesmas `dependencies`, e mostra a decisão do agente em cada
+  turno contra a original. `-a` escolhe quem responde (o draft), `--compare` roda também em outro
+  agente, `-n` repete, `-f tool.arg` resume a decisão pelo argumento de uma tool. Sempre em
+  `dry_run`, com `replay_of`/`replay_turn` na metadata. O `eval` continua só para `analysis`.
+- **Achar uma execução.** `kuro runs list` e a tool `runs_list` aceitam `--since/--until`,
+  `--search` (pedaço do `session_id`, do `user_id` ou de metadata), `--sort cost|latency` e
+  `--rag searched|empty|flagged`; a tool aceita também `prompt_version` e vários agentes. Quando
+  uma conversa não é achada, o `kuro sessions show` e o `session_show` dizem de quem ela é (outro
+  `user_id`) ou sugerem os ids parecidos.
+- **MCP: tools novas.** `guide(topic)` traz os conceitos que as tools não explicam sozinhas (o fluxo
+  draft → teste → promote, de onde vem cada parâmetro de uma tool, procedural, analysis, RAG, como
+  investigar), para quem conecta a partir de outro repositório. A fila de jobs (`jobs_list`,
+  `job_show`, `job_retry`, `job_cancel`), `collection_set_site`, `collection_delete` (pede
+  confirmação), `chunk_unmark` e `session_rename` alcançam o que antes só a CLI fazia.
+  `collection_search` passa a respeitar o teto de tamanho da resposta.
 - **Conectar o MCP sem instalar o Kuro, em qualquer cliente.** Na sua máquina, só com o uv:
   `uv run https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py root@servidor`.
   O `kuro connect` virou um arquivo só, que usa apenas a biblioteca padrão do Python: começa em

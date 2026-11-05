@@ -155,6 +155,9 @@ uv run kuro agents feedback suporte --rollback 2    # volta para as regras da v2
 
 ```bash
 uv run kuro runs list --agent suporte           # execuções com latência, tokens, custo e status
+uv run kuro runs list --since 2026-11-04T17:30-03:00 --until 2026-11-04T17:45-03:00   # o horário de um print
+uv run kuro runs list --search a1b2c3d4         # um pedaço do session_id, do user_id ou de metadata
+uv run kuro runs list --sort cost --no-tests    # as mais caras primeiro (latency: as mais lentas)
 uv run kuro runs show <run_id>                  # chamadas ao modelo, tools e avaliações
 uv run kuro runs score <run_id> 1 --comment "resposta correta"
 uv run kuro runs chunk-feedback <run_id> <chunk_id> wrong --comment "tabela de 2023"   # relevant | irrelevant | wrong
@@ -168,7 +171,36 @@ uv run kuro runs stats --agent suporte          # total, erros, tokens, custo e 
 uv run kuro runs sessions --agent suporte       # execuções agrupadas por sessão (o mesmo recorte dos Logs)
 uv run kuro sessions list                       # conversas guardadas deste user_id
 uv run kuro sessions show <session_id>          # a transcrição, mensagem a mensagem
+uv run kuro sessions show <session_id> -u <user_id>   # conversa de uma integração (o padrão é `cli`)
 ```
+
+**Testar um agente conversacional: o replay**
+
+O `kuro eval` compara saídas estruturadas e só serve para agentes `analysis`. Para um agente
+conversacional (ou procedural), o teste é reenviar conversas reais: `sessions replay` manda as falas
+do contato, todas e na ordem, numa sessão nova, com as mesmas `dependencies`, e mostra a decisão do
+agente em cada turno contra a original. Sempre em `dry_run`.
+
+```bash
+uv run kuro agents promote r6 --to r6-draft --yes          # o draft, cópia da produção
+uv run kuro agents set r6-draft instructions='["..."]'     # a mudança, só no draft
+uv run kuro sessions replay <session_id> -a r6-draft --compare r6 -n 3 -f regente_r6_decidir.acao
+```
+
+A saída de um replay de verdade (`kuro sessions replay <id> -n 3 -f regente_r6_decidir.acao`, só no
+`r6`): no 2º turno o aluno só disse a data, e o agente ainda efetivou o acordo em 2 de 3 rodadas.
+
+```text
+ turno ┃ original                                       ┃ r6
+     1 │ {"regente_r6_decidir.acao": "responder"}       │ 3× {"regente_r6_decidir.acao": "responder"}
+     2 │ {"regente_r6_decidir.acao": "efetivar_acordo"} │ 2× {"regente_r6_decidir.acao": "efetivar_acordo"}
+       │                                                │ 1× {"regente_r6_decidir.acao": "responder"}
+```
+
+`-f tool.arg` resume a decisão pelo argumento de uma tool (sem ele, a sequência de tools chamadas);
+`-n` repete a conversa, porque o modelo varia; `--turns` usa só os primeiros; `-d campo=valor`
+sobrepõe uma dependency (um id de teste no lugar do real). Com `--json`, cada run do replay vem
+com o `run_id`, para abrir com `kuro runs show`.
 
 `runs` lê as execuções registradas (tokens, custo, spans); `sessions` lê a
 conversa em si. Os dois funcionam sem Langfuse.

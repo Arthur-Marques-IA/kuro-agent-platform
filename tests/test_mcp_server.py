@@ -595,3 +595,167 @@ async def test_run_feedback_and_related_timeline(api):
     assert saved["reference_saved"] is True
     assert json.loads(calls[0].content) == {"value": 0, "comment": None, "reference": {"nota": 5}}
     assert related["key"] == "ciclo_id" and [r["run_id"] for r in related["items"]] == ["r0", "r1"]
+
+
+# -- revisão das tools: trava de produção, filtros, replay, jobs, guia ----------------
+
+REAL_RUN = {"items": [{"run_id": "r9", "started_at": "2026-11-04T20:39:09Z"}], "next_cursor": None}
+
+
+def _runs_route(real: bool):
+    """`/observability/runs`: um run real recente (o agente está no ar) ou nenhum."""
+    return lambda request: httpx.Response(200, json=REAL_RUN if real else {"items": [], "next_cursor": None})
+
+
+@MODES
+async def test_set_on_live_agent_asks_and_explains_the_draft(api, mode):
+    server, routes, calls = api
+    routes[("GET", "/observability/runs")] = _runs_route(real=True)
+    routes[("PUT", "/agents/suporte")] = httpx.Response(200, json=AGENT)
+    callback, asked = _answer("accept")
+    async with McpClient(server, mode=mode, elicitation_callback=callback) as mcp:
+        result = await mcp.call_tool("agent_set", {"agent_type": "suporte", "changes": {"num_history_runs": 5}})
+    assert not result.is_error, _text(result)
+    assert len(asked) == 1 and "está no ar" in asked[0] and "suporte-draft" in asked[0]
+    assert _mutations(calls) == ["PUT /agents/suporte"]
+    query = next(r for r in calls if r.url.path == "/observability/runs").url.params
+    assert query["include_dry_run"] == "false" and query["agent_type"] == "suporte" and "since" in query
+
+
+@MODES
+async def test_set_on_live_agent_declined_changes_nothing(api, mode):
+    server, routes, calls = api
+    routes[("GET", "/observability/runs")] = _runs_route(real=True)
+    callback, _ = _answer("accept", confirmar=False)
+    async with McpClient(server, mode=mode, elicitation_callback=callback) as mcp:
+        result = await mcp.call_tool("agent_set", {"agent_type": "suporte", "changes": {"num_history_runs": 5}})
+    assert _data(result) == {"cancelled": True} and _mutations(calls) == []
+
+
+async def test_set_on_draft_or_validation_does_not_ask(api):
+    """Sem run real nos últimos dias (o draft), ou só validando: nada a perguntar."""
+    server, routes, calls = api
+    routes[("GET", "/observability/runs")] = _runs_route(real=False)
+    routes[("PUT", "/agents/suporte-draft")] = httpx.Response(200, json=AGENT)
+    routes[("PUT", "/agents/suporte")] = httpx.Response(200, json=AGENT)
+    callback, asked = _answer("accept")
+    async with McpClient(server, elicitation_callback=callback) as mcp:
+        draft = await mcp.call_tool("agent_set", {"agent_type": "suporte-draft", "changes": {"num_history_runs": 5}})
+        routes[("GET", "/observability/runs")] = _runs_route(real=True)
+        checked = len(calls)
+        valida = await mcp.call_tool(
+            "agent_set", {"agent_type": "suporte", "changes": {"num_history_runs": 5}, "dry_run": True}
+        )
+    assert not draft.is_error and not valida.is_error and asked == []
+    assert not any(r.url.path == "/observability/runs" for r in calls[checked:])  # validação nem consulta
+
+
+async def test_feedback_on_live_agent_asks(api):
+    server, routes, calls = api
+    routes[("GET", "/observability/runs")] = _runs_route(real=True)
+    callback, asked = _answer("accept", confirmar=False)
+    async with McpClient(server, elicitation_callback=callback) as mcp:
+        result = await mcp.call_tool(
+            "feedback_send", {"agent_type": "suporte", "session_id": "s1", "message": "confirme o CPF"}
+        )
+    assert _data(result) == {"cancelled": True} and len(asked) == 1 and _mutations(calls) == []
+
+
+async def test_runs_list_passes_period_search_sort_and_rag(api):
+    server, routes, calls = api
+    routes[("GET", "/observability/runs")] = httpx.Response(200, json={"items": [], "next_cursor": None})
+    async with McpClient(server) as mcp:
+        await mcp.call_tool("runs_list", {
+            "agent_type": ["r6", "r8-v2"], "since": "2026-11-04T17:30:00-03:00", "until": "2026-11-04T17:45:00-03:00",
+            "search": "a1b2c3d4", "sort": "cost", "rag": "empty", "prompt_version": 5,
+        })
+        await mcp.call_tool("runs_list", {})
+    params, default = (r.url.params for r in calls)
+    assert params.get_list("agent_type") == ["r6", "r8-v2"]
+    assert params["since"] == "2026-11-04T17:30:00-03:00" and params["until"] == "2026-11-04T17:45:00-03:00"
+    assert params["search"] == "a1b2c3d4" and params["sort"] == "cost" and params["rag"] == "empty"
+    assert params["prompt_version"] == "5"
+    assert "sort" not in default and "search" not in default
+
+
+async def test_session_show_404_points_to_the_similar_session(api):
+    server, routes, _ = api
+    routes[("GET", "/observability/runs")] = lambda r: httpx.Response(
+        200, json={"items": [{"session_id": "a1b2c3d4-7827-r6v2", "user_id": "5511900000000"}] if r.url.params.get("search") else []}
+    )
+    async with McpClient(server) as mcp:
+        result = await mcp.call_tool("session_show", {"session_id": "a1b2c3d4-7827-r6"})
+    assert result.is_error and "a1b2c3d4-7827-r6v2" in _text(result)
+
+
+async def test_session_show_404_says_who_owns_the_session(api):
+    server, routes, _ = api
+    routes[("GET", "/observability/runs")] = httpx.Response(200, json={"items": [{"session_id": "s1", "user_id": "5511900000000"}]})
+    async with McpClient(server) as mcp:
+        result = await mcp.call_tool("session_show", {"session_id": "s1", "user_id": "mcp"})
+    assert result.is_error and "Ela é de 5511900000000" in _text(result)
+
+
+async def test_session_replay_explains_usage_errors(api):
+    server, routes, _ = api
+    routes[("GET", "/observability/runs")] = httpx.Response(200, json={"items": [], "next_cursor": None})
+    async with McpClient(server) as mcp:
+        tools = {t.name: t for t in (await mcp.list_tools()).tools}
+        result = await mcp.call_tool("session_replay", {"session_id": "nada"})
+    assert result.is_error and "nenhuma execução" in _text(result)
+    assert set(tools["session_replay"].input_schema["properties"]) == {
+        "session_id", "agent_type", "compare_with", "repeat", "turns", "focus", "dependencies"
+    }
+    # A confirmação não vira parâmetro que o modelo preencha.
+    assert set(tools["agent_set"].input_schema["properties"]) == {"agent_type", "changes", "dry_run"}
+    assert set(tools["feedback_send"].input_schema["properties"]) == {"agent_type", "session_id", "message"}
+
+
+async def test_jobs_tools(api):
+    server, routes, calls = api
+    routes[("GET", "/jobs")] = httpx.Response(200, json={"counts": {"failed": 1}, "items": [{"id": "j1", "status": "failed"}]})
+    routes[("POST", "/jobs/j1/retry")] = httpx.Response(200, json={"id": "j1", "status": "queued"})
+    routes[("POST", "/jobs/j1/cancel")] = httpx.Response(409, json={"detail": "O job já terminou (succeeded)."})
+    async with McpClient(server) as mcp:
+        listed = await mcp.call_tool("jobs_list", {"status": "failed"})
+        retried = await mcp.call_tool("job_retry", {"job_id": "j1"})
+        cancelled = await mcp.call_tool("job_cancel", {"job_id": "j1"})
+    assert _data(listed)["items"][0]["id"] == "j1" and calls[0].url.params["status"] == "failed"
+    assert _data(retried)["status"] == "queued"
+    assert cancelled.is_error and "já terminou" in _text(cancelled)
+
+
+async def test_guide_lists_topics_and_explains_parameter_sources(api):
+    server, _, calls = api
+    async with McpClient(server) as mcp:
+        index = _text(await mcp.call_tool("guide", {}))
+        tools = _text(await mcp.call_tool("guide", {"topic": "tools"}))
+        fluxo = _text(await mcp.call_tool("guide", {"topic": "fluxo"}))
+    assert "tools" in index and "procedural" in index
+    assert '"dependency"' in tools and "dependency_fields" in tools
+    assert "session_replay" in fluxo
+    assert calls == []  # o guia não depende do serviço
+
+
+@MODES
+async def test_collection_delete_asks(api, mode):
+    server, routes, calls = api
+    routes[("DELETE", "/collections/manuais")] = httpx.Response(204)
+    callback, asked = _answer("accept")
+    async with McpClient(server, mode=mode, elicitation_callback=callback) as mcp:
+        result = await mcp.call_tool("collection_delete", {"name": "manuais"})
+    assert _data(result) == {"deleted": "manuais"} and len(asked) == 1
+    assert _mutations(calls) == ["DELETE /collections/manuais"]
+
+
+async def test_collection_set_site_and_chunk_unmark(api):
+    server, routes, calls = api
+    routes[("PATCH", "/collections/manuais/sources/s1")] = httpx.Response(200, json={"id": "s1", "refresh": "weekly"})
+    routes[("DELETE", "/observability/chunk-feedback/f1")] = httpx.Response(204)
+    async with McpClient(server) as mcp:
+        bad = await mcp.call_tool("collection_set_site", {"name": "manuais", "source_id": "s1", "changes": {"url": "x"}})
+        ok = await mcp.call_tool("collection_set_site", {"name": "manuais", "source_id": "s1", "changes": {"refresh": "weekly"}})
+        unmark = await mcp.call_tool("chunk_unmark", {"feedback_id": "f1"})
+    assert bad.is_error and "url" in _text(bad)
+    assert _data(ok)["refresh"] == "weekly" and _data(unmark) == {"deleted": "f1"}
+    assert _mutations(calls) == ["PATCH /collections/manuais/sources/s1", "DELETE /observability/chunk-feedback/f1"]
