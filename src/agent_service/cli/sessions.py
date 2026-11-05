@@ -16,7 +16,9 @@ from typing import Any
 import typer
 from rich.table import Table
 
-from agent_service.cli.common import EXIT_USAGE, call, console, emit, fail, state
+from agent_service.cli.client import ApiError, ServiceUnavailable
+from agent_service.cli.common import EXIT_FAILED, EXIT_USAGE, call, console, emit, fail, fail_from, parse_pairs, state
+from agent_service.cli.replay import ReplayError, not_found_hint, replay
 
 app = typer.Typer(help="Sessões (conversas): listar, ver a transcrição, apagar.")
 
@@ -96,7 +98,78 @@ def show_session(
 ) -> None:
     """Transcrição da conversa: cada mensagem, a resposta e os tokens do run."""
     st = state(ctx)
-    emit(st, call(st, st.client.session_runs, session_id, user_id), _render_transcript)
+    try:
+        runs = st.client.session_runs(session_id, user_id)
+    except ApiError as exc:
+        if exc.status != 404:
+            fail_from(st, exc)
+        fail(st, f"conversa {session_id!r} não encontrada para o user_id {user_id!r}.{_hint(st, session_id, user_id)}", EXIT_FAILED)
+    except ServiceUnavailable as exc:
+        fail_from(st, exc)
+    emit(st, runs, _render_transcript)
+
+
+def _hint(st: Any, session_id: str, user_id: str) -> str:
+    """Por que não achou: a conversa é de outro dono (uma integração grava com o próprio
+    user_id, e o padrão aqui é `cli`) ou o id está um pouco diferente."""
+    try:
+        owners = {r.get("user_id") for r in st.client.list_runs(session_id=session_id, limit=5).get("items") or []}
+    except (ApiError, ServiceUnavailable):
+        return ""
+    owners.discard(None)
+    if owners and user_id not in owners:
+        return f" Ela é de {', '.join(sorted(owners))}: use -u {sorted(owners)[0]}."
+    return not_found_hint(st.client, session_id)
+
+
+@app.command("replay")
+def replay_session(
+    ctx: typer.Context,
+    session_id: str,
+    agent: str | None = typer.Option(None, "--agent", "-a", help="Quem responde (padrão: o agente da conversa). Ex.: o draft."),
+    compare: str | None = typer.Option(None, "--compare", help="Roda também neste agente (ex.: o de produção) e compara."),
+    repeat: int = typer.Option(1, "--repeat", "-n", min=1, max=10, help="Quantas vezes rodar a conversa em cada agente."),
+    turns: int | None = typer.Option(None, "--turns", min=1, help="Só os primeiros N turnos."),
+    focus: list[str] = typer.Option(
+        [], "--focus", "-f", help="Argumento de tool que resume a decisão, como tool.arg (repetível). Ex.: regente_r6_decidir.acao"
+    ),
+    dep: list[str] = typer.Option([], "--dep", "-d", help="Sobrepõe uma dependency da conversa: nome=valor (repetível)."),
+) -> None:
+    """Reenvia as falas de uma conversa guardada, na ordem e numa sessão nova, e mostra a decisão
+    do agente em cada turno — o teste de regressão de um agente conversacional (o eval é só para
+    analysis). Sempre em dry_run. Ex.: `kuro sessions replay <id> -a r6-draft --compare r6 -n 3
+    -f regente_r6_decidir.acao`."""
+    st = state(ctx)
+    try:
+        report = replay(
+            st.client, session_id, agent_type=agent, compare_with=compare, repeat=repeat, turns=turns,
+            focus=focus or None, dependencies=parse_pairs(st, dep, "--dep") or None,
+        )
+    except ReplayError as exc:
+        fail(st, str(exc), EXIT_USAGE)
+    except (ApiError, ServiceUnavailable) as exc:
+        fail_from(st, exc)
+    emit(st, report, _render_replay)
+
+
+def _render_replay(r: dict[str, Any]) -> None:
+    console.print(
+        f"Conversa [cyan]{r['session_id']}[/] ({r['source_agent']}, {r['turns']} turnos), {r['repeat']}× em cada agente",
+        highlight=False,
+    )
+    table = Table(show_edge=False, header_style="bold")
+    table.add_column("turno", justify="right")
+    table.add_column("original")
+    for name in r["agents"]:
+        table.add_column(name)
+    for i, orig in enumerate(r["original"]):
+        cells = []
+        for data in r["agents"].values():
+            row = data["summary"][i]
+            cells.append("\n".join(f"{n}× {d}" for d, n in row["decisions"].items()))
+        table.add_row(str(i + 1), orig["decision"], *cells)
+    console.print(table)
+    console.print("[dim]os runs do replay ficam como teste (dry_run): `kuro runs list --session-id <replay-…>`[/]")
 
 
 @app.command("rename")

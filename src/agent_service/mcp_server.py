@@ -36,6 +36,7 @@ import logging
 import os
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -50,7 +51,9 @@ from agent_service.cli.chat import _coerce, collect_stream
 from agent_service.cli.client import ApiError, Client, PortBlocked, ServiceUnavailable, TlsError
 from agent_service.cli.connection import client_from_env
 from agent_service.cli.eval import EvalInputError, check_rules_spec, parse_cases, run_evaluation
+from agent_service.cli.replay import ReplayError, not_found_hint, replay
 from agent_service.cli.tools import EDITABLE_FIELDS as TOOL_FIELDS
+from agent_service.mcp_guide import TOPICS, guide_text
 
 # Texto que volta ao modelo: um trace inteiro ou uma transcrição longa comeria o
 # contexto dele. Corta cada string e diz que cortou.
@@ -76,14 +79,19 @@ RECRAWL = ToolAnnotations(read_only_hint=False, destructive_hint=True, open_worl
 
 INSTRUCTIONS = """\
 Opera o Kuro (agent-service): agentes de IA, tools, execuções, bases de conhecimento.
+Os conceitos (tools e de onde vem cada parâmetro, procedural, analysis, RAG) estão em guide(topic).
 
 Fluxo seguro para mudar um agente em produção: agent_promote(origem=prod, destino=<prod>-draft)
-→ agent_set/agent_apply no draft → eval(draft, compare_with=prod) → agent_promote(draft → prod).
+→ agent_set/agent_apply no draft → teste → agent_promote(draft → prod). O teste depende do kind:
+eval(draft, compare_with=prod) para analysis; session_replay(conversa real, agent_type=draft,
+compare_with=prod, repeat=3) para conversational/procedural (o eval só serve para analysis).
+Alterar direto um agente que atendeu de verdade nos últimos dias pede confirmação: prefira o draft.
 Antes de editar, agent_get(editable=true) devolve exatamente os campos aceitos.
-chat/analyze/tool_invoke/eval rodam em dry_run por padrão (as tools sabem que é teste).
+chat/analyze/tool_invoke/eval/session_replay rodam em dry_run (as tools sabem que é teste).
 Para continuar uma conversa, repasse o session_id que o chat devolveu.
 Remover, restaurar e promover pedem confirmação ao usuário — não tente contornar.
-Para investigar uma resposta ruim: runs_list(agent_type=...) → run_show(run_id).
+Para investigar uma resposta ruim: runs_list(agent_type=..., since/until, search, feedback="down")
+→ run_show(run_id). search acha um pedaço do session_id, do user_id ou de metadata.
 runs_list, runs_overview e procedure_funnel deixam os testes (dry_run) de fora por padrão — e o chat
 daqui é dry_run: para ver o run que você acabou de criar, use run_show(run_id), runs_list(session_id=...)
 ou include_tests=true.
@@ -100,6 +108,16 @@ class NadaAFazer(Confirmacao):
     """O resolver viu que a ação não mudaria nada e não perguntou. Não autoriza
     escrita: se o estado mudou até o corpo da tool rodar, ela recusa em vez de
     gravar sem ninguém ter confirmado."""
+
+
+class SemUsoReal(Confirmacao):
+    """O agente não atendeu de verdade nos últimos dias (ou é só validação): mudá-lo não mexe
+    em nada que esteja no ar, e o resolver não pergunta."""
+
+
+PRODUCTION_DAYS = 7
+"""Um agente com run real (fora de dry_run) nestes dias está no ar: mudar a configuração dele
+direto pede confirmação, porque a próxima requisição de verdade já usa a mudança."""
 
 
 def _ask(ctx: Context, cli: str, message: str) -> Elicit[Confirmacao]:
@@ -232,6 +250,12 @@ def _extras(
 COLLECTION_FIELDS = ("label", "description", "search_mode", "max_results", "vector_weight", "reranker")
 """O que `PUT /collections/{nome}` aceita (`CollectionUpdateIn`)."""
 
+SITE_FIELDS = (
+    "refresh", "label", "max_pages", "max_depth", "include", "exclude", "format", "include_files",
+    "formatter_provider", "formatter_model_id", "formatter_credential_id",
+)
+"""O que `PATCH /collections/{nome}/sources/{id}` aceita (`SourceUpdateIn`)."""
+
 NO_LOCAL_FILES = (
     "este servidor MCP roda no servidor do Kuro, não na sua máquina: não lê arquivos por caminho. "
     "Mande o conteúdo inline ({inline})."
@@ -345,6 +369,33 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     server = MCPServer(name="kuro", title="Kuro", instructions=instructions, version=_version())
     _read_text, _read_bytes = _files(local_files)
 
+    def _in_production(agent_type: str) -> str | None:
+        """Quando foi o último run real (fora de dry_run) do agente nos últimos
+        `PRODUCTION_DAYS` dias, ou `None`."""
+        since = (datetime.now(UTC) - timedelta(days=PRODUCTION_DAYS)).isoformat()
+        try:
+            page = client.list_runs(agent_type=agent_type, include_dry_run=False, since=since, limit=1)
+        except (ApiError, ServiceUnavailable):
+            return None  # sem o trace store local (ou fora do ar) não há como saber: não trava
+        items = page.get("items") or []
+        return str(items[0].get("started_at") or "?") if items else None
+
+    def _production_guard(agent_type: Any, ctx: Context, cli: str, what: str) -> Elicit[Confirmacao] | Confirmacao:
+        last = _in_production(agent_type) if isinstance(agent_type, str) and agent_type else None
+        if last is None:
+            return SemUsoReal()
+        when = last[:16].replace("T", " ")
+        return _ask(
+            ctx,
+            cli,
+            f"{agent_type!r} está no ar: atendeu de verdade em {when} (UTC). {what} vale já na próxima "
+            f"requisição real. O caminho seguro é o draft: agent_promote({agent_type} → {agent_type}-draft), "
+            "mudar lá, testar (eval ou session_replay) e promover. Mudar direto em produção?",
+        )
+
+    def _allowed(ok: Confirmacao) -> bool:
+        return isinstance(ok, SemUsoReal) or ok.confirmar
+
     # -- saúde e modelos ------------------------------------------------------
 
     @server.tool(annotations=READ)
@@ -419,18 +470,29 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         # Para editar não se corta nada: o modelo devolveria o texto cortado no agent_apply.
         return agent_editable(definition) if editable else _fit(definition)
 
+    def _confirm_apply(definition: dict[str, Any], dry_run: bool, ctx: Context) -> Elicit[Confirmacao] | Confirmacao:
+        agent_type = definition.get("agent_type") if isinstance(definition, dict) else None
+        # Só validação, ou uma definição que o corpo da tool vai recusar: nada a perguntar.
+        if dry_run or not isinstance(definition, dict) or set(definition) - {"agent_type", *AGENT_FIELDS}:
+            return SemUsoReal()
+        return _production_guard(agent_type, ctx, f"kuro agents apply -f {agent_type}.json", "A nova definição")
+
     @server.tool(annotations=OVERWRITE)
     def agent_apply(
         definition: Annotated[
             dict[str, Any],
             Field(description="A definição do agente: agent_type (obrigatório) e os campos de agent_get(editable=true)."),
         ],
+        ok: Annotated[Confirmacao, Resolve(_confirm_apply)],
         dry_run: ValidateOnly = False,
     ) -> dict[str, Any]:
         """Cria o agente se não existir; senão envia só os campos que mudaram. Mesmo formato
         de `kuro agents apply`: agent_type, name, instructions, tools, model_provider,
         model_id, kind, response_schema, dependency_fields... `dry_run=true` valida no
-        servidor sem gravar. Mudar `instructions` gera uma versão nova do prompt."""
+        servidor sem gravar. Mudar `instructions` gera uma versão nova do prompt. Num agente
+        que atendeu de verdade nos últimos dias, pede confirmação: prefira o draft."""
+        if not _allowed(ok):
+            return {"cancelled": True}
         agent_type = definition.get("agent_type")
         if not isinstance(agent_type, str) or not agent_type:
             raise ToolError("a definição precisa do campo agent_type")
@@ -445,6 +507,11 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         agent = _call(client.update_agent, agent_type, changes, dry_run=dry_run)
         return {"action": "update", "dry_run": dry_run, "changed": sorted(changes), "agent": agent}
 
+    def _confirm_set(agent_type: str, changes: dict[str, Any], dry_run: bool, ctx: Context) -> Elicit[Confirmacao] | Confirmacao:
+        if dry_run or set(changes) - set(AGENT_FIELDS):  # validação, ou o corpo vai recusar os campos
+            return SemUsoReal()
+        return _production_guard(agent_type, ctx, f"kuro agents set {agent_type} campo=valor", "A mudança")
+
     @server.tool(annotations=OVERWRITE)
     def agent_set(
         agent_type: AgentType,
@@ -452,10 +519,14 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             dict[str, Any],
             Field(description='Só os campos a mudar, ex.: {"num_history_runs": 5}. Aceitos: os de agent_get(editable=true).'),
         ],
+        ok: Annotated[Confirmacao, Resolve(_confirm_set)],
         dry_run: ValidateOnly = False,
     ) -> dict[str, Any]:
         """Altera só os campos informados, ex.: {"num_history_runs": 5, "tools": ["calculator"]}.
-        `instructions` aceita lista de strings (ou uma string só)."""
+        `instructions` aceita lista de strings (ou uma string só). Num agente que atendeu de
+        verdade nos últimos dias, pede confirmação: prefira o draft."""
+        if not _allowed(ok):
+            return {"cancelled": True}
         _fields_only(changes, AGENT_FIELDS)
         if isinstance(changes.get("instructions"), str):
             changes = {**changes, "instructions": [changes["instructions"]]}
@@ -619,6 +690,9 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         """Histórico de versões da nota de feedback (textos longos vêm cortados)."""
         return _fit({"items": _call(client.feedback_versions, agent_type)})
 
+    def _confirm_feedback(agent_type: str, ctx: Context) -> Elicit[Confirmacao] | Confirmacao:
+        return _production_guard(agent_type, ctx, f"kuro agents feedback {agent_type} ...", "A mudança nas regras")
+
     @server.tool(annotations=OVERWRITE)
     def feedback_send(
         agent_type: AgentType,
@@ -626,18 +700,25 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         message: Annotated[
             str, Field(description="O que o agente deveria ter feito, ex.: confirmar o CPF antes de dar detalhes.")
         ],
+        ok: Annotated[Confirmacao, Resolve(_confirm_feedback)],
     ) -> dict[str, Any]:
         """Ensina o agente a partir de uma conversa (a `session_id` que o chat devolveu):
         o feedback é mesclado nas regras e a resposta traz o `diff`. Só para agentes
-        conversacionais. Vale na próxima mensagem — prefira fazer isso num draft."""
+        conversacionais. Vale na próxima mensagem — prefira fazer isso num draft (num agente
+        que atendeu de verdade nos últimos dias, pede confirmação)."""
+        if not _allowed(ok):
+            return {"cancelled": True}
         return _call(client.send_feedback, agent_type, session_id, message)
 
     @server.tool(annotations=OVERWRITE)
     def feedback_remove(
         agent_type: AgentType,
         rule_ids: Annotated[list[str], Field(description="Ids das regras a apagar (veja feedback_show).")],
+        ok: Annotated[Confirmacao, Resolve(_confirm_feedback)],
     ) -> dict[str, Any]:
         """Apaga regras da nota pelo id (veja feedback_show). Fica no histórico."""
+        if not _allowed(ok):
+            return {"cancelled": True}
         current = _call(client.get_feedback, agent_type)
         keep = [r for r in current["rules"] if r["id"] not in set(rule_ids)]
         if len(keep) == len(current["rules"]):
@@ -650,8 +731,11 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     def feedback_rollback(
         agent_type: AgentType,
         version: Annotated[int, Field(description="A versão da nota a restaurar (veja feedback_versions).")],
+        ok: Annotated[Confirmacao, Resolve(_confirm_feedback)],
     ) -> dict[str, Any]:
         """Reaplica as regras de uma versão anterior da nota (vira uma versão nova)."""
+        if not _allowed(ok):
+            return {"cancelled": True}
         return _call(client.rollback_feedback, agent_type, version)
 
     def _confirm_clear(agent_type: str, ctx: Context) -> Elicit[Confirmacao]:
@@ -840,8 +924,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         ],
     ) -> dict[str, Any]:
         """Cria a tool (precisa de tool_name e kind: builtin | api | python) ou atualiza
-        os campos informados. O kind de uma tool existente não muda. Ver AGENTS.md,
-        "Tools: de onde vem cada parâmetro" (source model | dependency | const)."""
+        os campos informados. O kind de uma tool existente não muda. Formato de config e de
+        onde vem cada parâmetro (source model | dependency | const): guide("tools")."""
         tool_name = definition.get("tool_name")
         if not isinstance(tool_name, str) or not tool_name:
             raise ToolError("a definição precisa do campo tool_name")
@@ -895,7 +979,25 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
 
     @server.tool(annotations=READ)
     def runs_list(
-        agent_type: AgentFilter = None,
+        agent_type: Annotated[
+            str | list[str] | None, Field(description="Só deste agente, ou destes (lista). Sem ele, todos.")
+        ] = None,
+        since: Since = None,
+        until: Annotated[str | None, Field(description="Fim do período em ISO 8601, ex.: 2026-11-04T17:45:00-03:00.")] = None,
+        search: Annotated[
+            str | None,
+            Field(description="Trecho do session_id, do user_id ou de um valor de metadata, ou o run_id/trace_id "
+                  "inteiro. Acha a conversa `…-r6v2` a partir de `…-r6`."),
+        ] = None,
+        sort: Annotated[
+            Literal["recent", "cost", "latency"], Field(description="recent (padrão), ou as mais caras/lentas primeiro.")
+        ] = "recent",
+        rag: Annotated[
+            Literal["searched", "empty", "flagged"] | None,
+            Field(description="searched: buscou na base; empty: alguma busca voltou vazia; flagged: trecho marcado "
+                  "errado e aberto."),
+        ] = None,
+        prompt_version: Annotated[int | None, Field(description="Só runs desta versão do prompt (agent_versions).")] = None,
         status: Annotated[
             Literal["success", "error"] | None, Field(description="Só os que deram certo ou só os com erro.")
         ] = None,
@@ -937,13 +1039,21 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         cursor: Annotated[str | None, Field(description="O next_cursor da página anterior.")] = None,
     ) -> dict[str, Any]:
         """Execuções mais recentes, com filtros de revisão: `complexity` (1–3),
-        `tool_failed`, `side_effect`, `feedback`, `sample` (amostra aleatória),
+        `tool_failed`, `side_effect`, `feedback`, `rag`, `sample` (amostra aleatória),
         `meta` (metadata que quem chamou mandou, ex.: {"conversation_id": "98231"}).
+        Para achar uma execução: `since`/`until` (o horário de um print) e `search` (um pedaço
+        do id da conversa). `sort` põe as mais caras ou lentas primeiro.
         Os testes em dry_run (como o chat daqui) ficam de fora, a menos que `include_tests=true`
         ou que se filtre por `session_id`. Detalhe: run_show."""
         page = _call(
             client.list_runs,
             agent_type=agent_type,
+            since=since,
+            until=until,
+            search=search,
+            sort=sort if sort != "recent" else None,
+            rag=rag,
+            prompt_version=prompt_version,
             status=status,
             session_id=session_id,
             user_id=user_id,
@@ -1214,9 +1324,77 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         """Transcrição de uma conversa, compacta: por turno a fala do contato, o contexto
         só quando mudou, cada tool numa linha e a resposta; mais o resumo da sessão e as
         memórias do contato. `raw=true` devolve os runs crus do Agno."""
-        if raw:
-            return _fit({"items": _call(client.session_runs, session_id, user_id)})
-        return _fit(_call(client.session_transcript, session_id, user_id), paginated=True)
+        try:
+            if raw:
+                return _fit({"items": client.session_runs(session_id, user_id)})
+            return _fit(client.session_transcript(session_id, user_id), paginated=True)
+        except ApiError as exc:
+            if exc.status == 404:
+                raise ToolError(f"{_api_message(exc)}.{_session_hint(session_id, user_id)}") from exc
+            raise _tool_error(exc) from exc
+        except ServiceUnavailable as exc:
+            raise _tool_error(exc) from exc
+
+    def _session_hint(session_id: str, user_id: str | None) -> str:
+        """Por que a conversa não apareceu: é de outro dono, ou o id está um pouco diferente."""
+        if user_id:
+            try:
+                owners = {r.get("user_id") for r in client.list_runs(session_id=session_id, limit=5).get("items") or []}
+            except (ApiError, ServiceUnavailable):
+                owners = set()
+            owners.discard(None)
+            if owners and user_id not in owners:
+                return f" Ela é de {', '.join(sorted(owners))}: repita com esse user_id (ou sem user_id)."
+        return not_found_hint(client, session_id) or " Procure com runs_list(search=<um pedaço do id>)."
+
+    @server.tool(annotations=WRITE)
+    def session_rename(
+        session_id: SessionId,
+        name: Annotated[str, Field(description="O nome da conversa, ex.: Cliente X — acordo.")],
+    ) -> dict[str, Any]:
+        """Dá um nome a uma conversa guardada (é o que aparece na lista, aqui e no console)."""
+        return _call(client.rename_session, session_id, name)
+
+    @server.tool(annotations=RUN)
+    def session_replay(
+        session_id: Annotated[
+            str, Field(description="A conversa a reenviar (session_id), como sessions_list, runs_list ou run_show mostram.")
+        ],
+        agent_type: Annotated[
+            str | None, Field(description="Quem responde: o draft, por exemplo. Sem ele, o próprio agente da conversa.")
+        ] = None,
+        compare_with: Annotated[
+            str | None, Field(description="Roda a mesma conversa também neste agente (ex.: o de produção) e compara.")
+        ] = None,
+        repeat: Annotated[
+            int, Field(description="Quantas vezes rodar a conversa em cada agente (1 a 10): o modelo varia de uma para outra.")
+        ] = 1,
+        turns: Annotated[int | None, Field(description="Só os primeiros N turnos.")] = None,
+        focus: Annotated[
+            list[str] | None,
+            Field(description='O argumento de tool que resume a decisão, como "tool.arg" ou "tool.arg.sub", ex.: '
+                  '["regente_r6_decidir.acao"]. Sem ele, a decisão é a sequência de tools chamadas.'),
+        ] = None,
+        dependencies: Annotated[
+            dict[str, Any] | None, Field(description="Sobrepõe dependencies da conversa original, ex.: um id de teste.")
+        ] = None,
+    ) -> dict[str, Any]:
+        """Teste de regressão de um agente conversacional ou procedural (o eval só serve para
+        analysis): reenvia as falas do contato de uma conversa guardada, na ordem e numa sessão
+        nova, com as mesmas dependencies, e mostra a decisão do agente em cada turno contra a
+        decisão original. Sempre em dry_run. Reenviar um turno solto pelo chat não serve: o que
+        o agente sabe num turno pode ter chegado só num anterior. `summary` conta, por turno,
+        as decisões de cada agente nas `repeat` rodadas; `rounds` traz cada run (run_show)."""
+        try:
+            report = replay(
+                client, session_id, agent_type=agent_type, compare_with=compare_with, repeat=repeat,
+                turns=turns, focus=focus, dependencies=dependencies, user_id="mcp",
+            )
+        except ReplayError as exc:
+            raise ToolError(str(exc)) from exc
+        except (ApiError, ServiceUnavailable) as exc:
+            raise _tool_error(exc) from exc
+        return _fit(report)
 
     def _confirm_delete_session(session_id: str, ctx: Context) -> Elicit[Confirmacao]:
         return _ask(ctx, f"kuro sessions delete {session_id} --yes", f"Apagar a conversa {session_id!r}? Não tem volta (o registro em runs continua).")
@@ -1346,7 +1524,7 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     ) -> dict[str, Any]:
         """Busca na collection — o mesmo que o agente enxerga (modo, k e idioma dela). Cada
         trecho traz `score_kind`: similarity (vetorial), hybrid (vetor + texto) ou rerank."""
-        return {"items": _clip(_call(client.search_collection, name, query, limit), 1500)}
+        return _fit({"items": _clip(_call(client.search_collection, name, query, limit), 1500)}, paginated=True)
 
     @server.tool(annotations=WRITE)
     def collection_add(
@@ -1492,6 +1670,92 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             return {"cancelled": True}
         _call(client.delete_source, name, source_id)
         return {"deleted": source_id}
+
+    @server.tool(annotations=OVERWRITE)
+    def collection_set_site(
+        name: CollectionName,
+        source_id: SourceId,
+        changes: Annotated[
+            dict[str, Any],
+            Field(description='Os campos a mudar: refresh (never|daily|weekly|monthly), label, max_pages, max_depth, '
+                  'include, exclude, format, include_files, formatter_provider, formatter_model_id. Ex.: '
+                  '{"refresh": "weekly", "exclude": ["/blog/*"]}.'),
+        ],
+    ) -> dict[str, Any]:
+        """Altera o agendamento ou as opções de coleta de um site. Vale a partir do próximo sync
+        (collection_sync_site para rodar agora)."""
+        _fields_only(changes, SITE_FIELDS)
+        return _call(client.update_source, name, source_id, changes)
+
+    def _confirm_delete_collection(name: str, ctx: Context) -> Elicit[Confirmacao]:
+        return _ask(
+            ctx,
+            f"kuro collections delete {name} --yes",
+            f"Remover a collection {name!r}? Os agentes que a usam ficam sem base. Os vetores indexados continuam "
+            "na tabela dela, então recriar com o mesmo nome é recusado enquanto houver documentos.",
+        )
+
+    @server.tool(annotations=DESTRUCTIVE)
+    def collection_delete(name: CollectionName, ok: Annotated[Confirmacao, Resolve(_confirm_delete_collection)]) -> dict[str, Any]:
+        """Remove o cadastro de uma collection (pede confirmação). Para tirar só um documento,
+        collection_rm_doc; um site, collection_rm_site."""
+        if not ok.confirmar:
+            return {"cancelled": True}
+        _call(client.delete_collection, name)
+        return {"deleted": name}
+
+    @server.tool(annotations=OVERWRITE)
+    def chunk_unmark(
+        feedback_id: Annotated[str, Field(description="O id da marcação (chunk_feedback_list).")],
+    ) -> dict[str, Any]:
+        """Apaga uma marcação de trecho feita por engano. Para dizer que ela não procedia, prefira
+        chunk_feedback_status(status="dismissed"), que fica no histórico."""
+        _call(client.delete_chunk_feedback, feedback_id)
+        return {"deleted": feedback_id}
+
+    # -- fila de jobs (sincronização de sites) --------------------------------
+
+    @server.tool(annotations=READ)
+    def jobs_list(
+        status: Annotated[
+            Literal["queued", "running", "succeeded", "failed", "cancelled"] | None,
+            Field(description="Só os jobs neste estado, ex.: failed."),
+        ] = None,
+        kind: Annotated[str | None, Field(description="Só deste tipo, ex.: web_source_sync.")] = None,
+        limit: Annotated[int, Field(description="Quantos, dos mais recentes (1 a 100).")] = 20,
+    ) -> dict[str, Any]:
+        """A fila de jobs do serviço (hoje, as sincronizações de site): a contagem por estado e os
+        jobs, com tentativas e o erro de cada falha."""
+        return _fit(_call(client.list_jobs, status=status, kind=kind, limit=max(1, min(limit, 100))))
+
+    @server.tool(annotations=READ)
+    def job_show(job_id: Annotated[str, Field(description="O id do job (jobs_list).")]) -> dict[str, Any]:
+        """Um job: tipo, estado, tentativas, agendamento, o que ele recebeu e o erro."""
+        return _fit(_call(client.get_job, job_id))
+
+    @server.tool(annotations=WRITE)
+    def job_retry(job_id: Annotated[str, Field(description="O id do job (jobs_list).")]) -> dict[str, Any]:
+        """Põe de novo na fila um job que falhou ou foi cancelado."""
+        return _call(client.retry_job, job_id)
+
+    @server.tool(annotations=OVERWRITE)
+    def job_cancel(job_id: Annotated[str, Field(description="O id do job (jobs_list).")]) -> dict[str, Any]:
+        """Cancela um job na fila ou rodando (409 se ele já terminou). O que já foi coletado fica."""
+        return _call(client.cancel_job, job_id)
+
+    # -- guia -------------------------------------------------------------------
+
+    @server.tool(annotations=READ)
+    def guide(
+        topic: Annotated[
+            Literal[tuple(TOPICS)] | None,  # type: ignore[valid-type]
+            Field(description="O tema: " + ", ".join(TOPICS) + ". Sem ele, a lista de temas."),
+        ] = None,
+    ) -> str:
+        """Os conceitos do Kuro que as tools não explicam sozinhas: o fluxo draft → teste →
+        promote, tools e de onde vem cada parâmetro (source model/dependency/const), agentes
+        analysis, conversational e procedural, a base de conhecimento e como investigar."""
+        return guide_text(topic)
 
     return server
 
