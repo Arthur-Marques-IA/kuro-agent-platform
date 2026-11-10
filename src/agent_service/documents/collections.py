@@ -17,6 +17,7 @@ resolvida por nome, como no resto do módulo. A ingestão por URL continua lá.
 """
 
 import asyncio
+import hashlib
 import logging
 from functools import lru_cache
 from pathlib import Path
@@ -160,7 +161,7 @@ async def add_text(
     # enquanto os vetores ficam em `knowledge_<coleção>`. Sem o nome da coleção
     # no hash, o mesmo texto em duas coleções vira uma linha só — e um
     # `skip_if_exists` de outra coleção poderia pular a indexação.
-    content.content_hash = knowledge._build_content_hash(content)
+    content.content_hash = _content_hash(knowledge, content, text.encode("utf-8"))
     content.id = generate_id(f"{collection_name}:{content.content_hash}")
     _chunked(content, [(None, text)])
     await _load_first_revision(knowledge, collection_name, content, text=text)
@@ -200,11 +201,22 @@ async def add_file(
     )
     # Mesmo id determinístico do `add_text`, pela mesma razão: a tabela de
     # conteúdo é uma só para todas as coleções.
-    content.content_hash = knowledge._build_content_hash(content)
+    content.content_hash = _content_hash(knowledge, content, content_bytes)
     content.id = generate_id(f"{collection_name}:{content.content_hash}")
     text = await _chunk_file(content, content_bytes, filename)
     await _load_first_revision(knowledge, collection_name, content, text=text, filename=filename)
     return content.id
+
+
+def _content_hash(knowledge: Knowledge, content: Content, payload: bytes) -> str:
+    """O hash do Agno com o CONTEÚDO dentro. Para `FileData` com `type` ou `filename`
+    o Agno usa só nome, metadata e tipo/nome do arquivo — o texto fica de fora. Aí
+    uma correção pelo `replace_document` parecia "igual à revisão atual" e era
+    descartada calada (`changed: false`), e dois textos avulsos de mesmo nome caíam
+    no mesmo id."""
+    return hashlib.sha256(
+        knowledge._build_content_hash(content).encode("utf-8") + b":" + hashlib.sha256(payload).digest()
+    ).hexdigest()
 
 
 def _chunked(content: Content, pages: list[tuple[int | None, str]]) -> str:
@@ -360,7 +372,7 @@ async def replace_document(
     )
     if resolves is None:
         resolves = [f["id"] for f in chunk_feedback.list_feedback(content_id=content_id, status="open")]
-    content_hash = knowledge._build_content_hash(content)
+    content_hash = _content_hash(knowledge, content, file_data.content)
     current = revisions.current(collection_name, content_id)
     last = revisions.latest(content_id) or {}
     if last.get("content_hash") == content_hash:
