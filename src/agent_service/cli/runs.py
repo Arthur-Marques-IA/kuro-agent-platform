@@ -92,9 +92,20 @@ def list_runs(
     feedback: str | None = typer.Option(None, "--feedback", help="up | down | none"),
     no_tests: bool = typer.Option(False, "--no-tests", help="Tira os testes do Playground (dry_run)."),
     sample: int | None = typer.Option(None, "--sample", min=1, max=100, help="Amostra aleatória deste tamanho."),
+    since: str | None = typer.Option(None, "--since", help="Desde quando, em ISO 8601: 2026-11-04 ou 2026-11-04T17:30:00-03:00."),
+    until: str | None = typer.Option(None, "--until", help="Até quando, em ISO 8601."),
+    search: str | None = typer.Option(
+        None, "--search", "-s", help="Trecho do session_id, do user_id ou de um valor de metadata, ou o run_id/trace_id inteiro."
+    ),
+    sort: str | None = typer.Option(None, "--sort", help="recent (padrão) | cost | latency: as mais caras ou lentas primeiro."),
+    rag: str | None = typer.Option(
+        None, "--rag", help="searched: buscou na base | empty: alguma busca voltou vazia | flagged: trecho marcado errado e aberto."
+    ),
 ) -> None:
     """Execuções mais recentes. Os filtros de revisão montam a fila do que vale olhar,
-    ex.: `kuro runs list -a r8 -c 3 --no-tests` ou `kuro runs list -a r8 --sample 20 --no-tests`."""
+    ex.: `kuro runs list -a r8 -c 3 --no-tests` ou `kuro runs list -a r8 --sample 20 --no-tests`.
+    Para achar uma execução: `--since/--until` (o horário de um print) e `--search` (um pedaço
+    do id da conversa)."""
     st = state(ctx)
     page = call(
         st,
@@ -116,6 +127,11 @@ def list_runs(
         feedback=feedback,
         include_dry_run=False if no_tests else None,
         sample=sample,
+        since=since,
+        until=until,
+        search=search,
+        sort=sort,
+        rag=rag,
     )
     emit(st, page, _render_runs)
 

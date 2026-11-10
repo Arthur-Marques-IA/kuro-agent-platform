@@ -196,24 +196,63 @@ subiu; quem confirma que ele alcança o serviço é a tool `health`.
 |---|---|
 | Diagnóstico e modelos | `health`, `providers_list`, `provider_models`, `credentials_list`, `credentials_test` |
 | Agentes | `agents_list`, `agent_get`, `agent_apply`, `agent_set`, `agent_versions`, `agent_revisions`, `agent_integration`, `agents_export`, `agent_rollback`\*, `agent_promote`\*, `agent_delete`\* |
-| Executar | `chat`, `analyze`, `eval`, `tool_invoke` |
+| Executar e testar | `chat`, `analyze`, `eval` (analysis), `session_replay` (conversational e procedural), `tool_invoke` |
+| Guia | `guide`: os conceitos que as tools não explicam sozinhas (fluxo draft → teste → promote, de onde vem cada parâmetro de uma tool, procedural, analysis, RAG, como investigar) |
 | Feedback | `feedback_show`, `feedback_versions`, `feedback_send`, `feedback_remove`, `feedback_rollback`, `feedback_clear`\* |
 | Tools | `tools_list`, `tool_get`, `tool_catalog`, `tool_apply`, `tool_invoke`, `tool_delete`\* |
 | Execuções | `runs_list`, `run_show`, `run_related`, `run_feedback`, `runs_stats`, `runs_overview`, `runs_sessions`, `run_score` |
 | Modo shadow | `runs_agreement`, `runs_reference`, `runs_export` |
-| Feedback por trecho do RAG | `run_chunk_feedback`, `chunk_feedback_list`, `chunk_feedback_status`, `chunk_feedback_flagged`, `chunk_feedback_export` |
-| Conversas | `sessions_list`, `session_show`, `session_delete`\* |
-| Bases de conhecimento | `collections_list`, `collection_get`, `collection_embedders`, `collection_create`, `collection_set`, `collection_versions`, `collection_docs`, `collection_search`, `collection_add`, `collection_edit_doc`, `collection_doc_revisions`, `collection_retest`, `collection_reindex`, `collection_rm_doc`\*, `collection_add_site`, `collection_sources`, `collection_sync_site`, `collection_rm_site`\* |
+| Feedback por trecho do RAG | `run_chunk_feedback`, `chunk_feedback_list`, `chunk_feedback_status`, `chunk_feedback_flagged`, `chunk_feedback_export`, `chunk_unmark` |
+| Conversas | `sessions_list`, `session_show`, `session_rename`, `session_replay`, `session_delete`\* |
+| Fila de jobs (sincronização de sites) | `jobs_list`, `job_show`, `job_retry`, `job_cancel` |
+| Bases de conhecimento | `collections_list`, `collection_get`, `collection_embedders`, `collection_create`, `collection_set`, `collection_versions`, `collection_docs`, `collection_search`, `collection_add`, `collection_edit_doc`, `collection_doc_revisions`, `collection_retest`, `collection_reindex`, `collection_rm_doc`\*, `collection_add_site`, `collection_sources`, `collection_set_site`, `collection_sync_site`, `collection_rm_site`\*, `collection_delete`\* |
 
-\* Pede confirmação ao usuário (ver abaixo).
+\* Pede confirmação ao usuário (ver abaixo). `agent_set`, `agent_apply` e as tools que mudam a nota de
+feedback pedem também, mas só quando o agente está no ar.
 
 O fluxo seguro para mudar um agente em produção é o mesmo da CLI, e o servidor o descreve ao
 cliente nas instruções de conexão:
 
 1. `agent_promote(source="r8", to="r8-draft")` cria o draft como cópia da produção;
 2. `agent_set` / `agent_apply` no draft;
-3. `eval(agent_type="r8-draft", cases_file="casos.jsonl", compare_with="r8")` — veja `verdict.ok`;
+3. o teste, que depende do tipo do agente:
+   - `analysis`: `eval(agent_type="r8-draft", cases=[...], compare_with="r8")` — veja `verdict.ok`;
+   - `conversational` ou `procedural`: `session_replay` (abaixo), com conversas reais que mostram o
+     problema;
 4. `agent_promote(source="r8-draft", to="r8")`, que pede confirmação.
+
+### Replay de conversa: o teste de um agente conversacional
+
+O `eval` compara saídas estruturadas, então não serve para um agente que responde texto e decide
+pelas tools que chama. O `session_replay` pega uma conversa guardada e reenvia as falas do contato,
+**todas e na ordem**, numa sessão nova, com as mesmas `dependencies`. Reenviar um turno solto pelo
+`chat` testaria outra coisa: o que o agente sabe no 2º turno pode ter chegado só no 1º (o bloco de
+dados que o sistema integrado manda uma vez).
+
+```text
+session_replay(session_id="a1b2c3d4-…-r6v2", agent_type="r6-draft", compare_with="r6",
+               repeat=3, focus=["regente_r6_decidir.acao"])
+```
+
+- `focus` resume a decisão pelo argumento de uma tool (`tool.arg`, ou `tool.arg.sub`); sem ele, a
+  decisão é a sequência de tools chamadas;
+- `repeat` roda a conversa várias vezes em cada agente, porque o modelo varia de uma vez para outra;
+- `summary` conta, por turno, as decisões de cada agente contra a original; `rounds` traz cada run,
+  para abrir com `run_show`;
+- tudo roda em `dry_run`: as tools recebem `X-Kuro-Dry-Run: true` e o run fica marcado como teste,
+  com `replay_of` e `replay_turn` na metadata. `dependencies` sobrepõe as da conversa, para trocar um
+  id real por um de teste;
+- o teto é de 40 mensagens por chamada (turnos × repetições × agentes); `turns` limita aos primeiros.
+
+Na CLI, o mesmo: `kuro sessions replay <id> -a r6-draft --compare r6 -n 3 -f regente_r6_decidir.acao`.
+
+### Achar uma execução
+
+`runs_list` aceita, além dos filtros de revisão, `since`/`until` (o horário de um print),
+`search` (um pedaço do `session_id`, do `user_id` ou de um valor de metadata; acha `…-r6v2` a partir
+de `…-r6`), `sort` (`cost` ou `latency`: as mais caras ou lentas primeiro), `rag` (`searched`,
+`empty`, `flagged`), `prompt_version` e mais de um agente. Quando o `session_show` não acha uma
+conversa, a mensagem diz de quem ela é (outro `user_id`) ou sugere os ids parecidos.
 
 No modo shadow, o dataset do passo 3 sai das próprias execuções, também sem deixar o MCP:
 
@@ -238,9 +277,14 @@ Não existe parâmetro que o modelo possa preencher para se autoconfirmar. Se o 
 suporta elicitation, a tool falha e devolve o comando equivalente da CLI (ex.:
 `kuro agents delete suporte --yes`), para a própria pessoa rodar no terminal.
 
-Editar um agente (`agent_set`, `agent_apply`), uma tool (`tool_apply`) ou as regras de feedback não
-pede confirmação, como na CLI: tem histórico e versão para voltar. Isso inclui editar direto o
-agente de produção, sem passar pelo draft. Essas tools levam `destructiveHint`, porque sobrescrevem
+Editar um agente (`agent_set`, `agent_apply`) ou as regras de feedback (`feedback_send`,
+`feedback_remove`, `feedback_rollback`) pede confirmação **só quando o agente está no ar**: quando ele
+teve uma execução real (fora de `dry_run`) nos últimos 7 dias, porque a próxima requisição de verdade
+já usa a mudança. A pergunta lembra o caminho do draft. Num draft, num agente parado ou só validando
+(`dry_run=true`), nada é perguntado. Sem o trace store local (só Langfuse), não há como saber, e
+nada é perguntado. Editar uma tool (`tool_apply`) não pede confirmação, como na CLI.
+
+Essas tools levam `destructiveHint`, porque sobrescrevem
 o que existia. As de leitura levam `readOnlyHint`, e só `run_score` e `collection_add`, que apenas
 acrescentam, ficam sem nenhuma das duas. `collection_add_site` aceita `include_files` (padrão: sim — os PDF, DOCX, PPTX e XLSX linkados no
 escopo entram, lidos sem formatador e com a página em cada trecho). `collection_add_site` e

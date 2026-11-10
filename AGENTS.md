@@ -118,11 +118,18 @@ kuro --json agents procedures abertura-chamado                        # funil po
 kuro --json agents procedures abertura-chamado <session_id>           # estado de uma conversa
 # Tool com side_effect=true não entra em `tools` de um procedural (vira etapa action).
 
-# Mudar um agente em produção sem risco: draft → eval → promote
+# Mudar um agente em produção sem risco: draft → teste → promote
 kuro --json agents promote r8 --to r8-draft --yes            # cria/atualiza o draft (cópia do prod)
 kuro --json agents set r8-draft instructions='["..."]'       # mexa só no draft
-kuro --json eval r8-draft -f casos.jsonl -r regras.json --compare r8   # sai com 1 se piorou
-kuro --json agents promote r8-draft --to r8 --yes            # só depois do eval passar
+kuro --json eval r8-draft -f casos.jsonl -r regras.json --compare r8   # analysis: sai com 1 se piorou
+kuro --json agents promote r8-draft --to r8 --yes            # só depois do teste passar
+# Conversacional/procedural: o eval não serve (compara saída estruturada). O teste é o replay de
+# conversas reais: reenvia as falas, todas e na ordem, numa sessão nova, sempre em dry_run.
+kuro --json sessions replay <session_id> -a r6-draft --compare r6 -n 3 -f regente_r6_decidir.acao
+# -f tool.arg resume a decisão (sem ele, a sequência de tools); -n repete (o modelo varia);
+# --turns N, -d campo=valor sobrepõe uma dependency. Teto: 40 mensagens (turnos × -n × agentes).
+# Pelo MCP: session_replay. Mexer direto num agente no ar (run real nos últimos 7 dias) pelo MCP
+# (agent_set, agent_apply, feedback_*) pede confirmação à pessoa.
 # casos.jsonl: {"id", "input": {...}|"texto", "dependencies": {...}, "expected": {"acao": "...", ...}} por linha.
 # Comparação determinística campo a campo; objetos viram caminhos (acordo.qtd_parcelas).
 # regras.json: [{"name", "field", "op", "value", "when"?}] — op: eq ne in not_in lt lte gt gte exists not_exists;
@@ -163,6 +170,9 @@ kuro --json runs tail --agent suporte           # acompanha ao vivo; um objeto J
 kuro --json runs sessions --agent suporte       # execuções agrupadas por sessão (tokens, custo, erros)
 kuro --json runs list --agent r8 --meta conversation_id=98231   # pela metadata que quem chamou mandou
 kuro --json runs list --agent r8 --version 7    # só runs de uma versão da configuração
+kuro --json runs list --since 2026-11-04T17:30-03:00 --until 2026-11-04T17:45-03:00   # o horário de um print
+kuro --json runs list --search a1b2c3d4         # pedaço do session_id, user_id ou metadata (acha `…-r6v2` por `…-r6`)
+kuro --json runs list --sort cost --no-tests    # as mais caras primeiro (latency: as mais lentas); --rag empty|flagged
 # Fila de revisão: o que vale um humano olhar (complexidade 1–3 pelas tools de negócio distintas)
 kuro --json runs list -a r8 -c 3 --no-tests      # complexidade 3, sem os testes do Playground
 kuro --json runs list -a r8 --tool-failed        # o agente respondeu, mas alguma tool falhou
@@ -181,6 +191,7 @@ kuro --json runs export -a r8 -o casos.jsonl    # runs com referência viram dat
 # O user_id é o mesmo do chat: `cli` por padrão, ou KURO_USER_ID.
 kuro --json sessions list --agent suporte
 kuro --json sessions show <session_id>          # transcrição: cada mensagem, a resposta e os tokens
+kuro --json sessions show <session_id> -u <user_id>   # conversa de uma integração; no 404, diz de quem ela é
 kuro --json sessions rename <session_id> "Cliente X"
 kuro --json sessions delete <session_id> --yes  # apaga a conversa (não tem volta); o registro em `kuro runs` continua
 

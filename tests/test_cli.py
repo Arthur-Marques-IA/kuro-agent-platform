@@ -1005,3 +1005,18 @@ def test_runs_chunk_feedback_marca_e_exporta(api, tmp_path):
     assert out.exit_code == 0, out.output
     assert calls[-1].url.params["collection"] == "m"
     assert json.loads(destino.read_text(encoding="utf-8"))["query"] == "garantia"
+
+
+def test_runs_list_finds_by_period_and_piece_of_session_id(api):
+    """O horário de um print e um pedaço do id da conversa: os dois jeitos de achar um run
+    que antes pediam listar dezenas e filtrar à mão."""
+    routes, calls = api
+    routes[("GET", "/observability/runs")] = httpx.Response(200, json={"items": [], "next_cursor": None})
+    result = _run(
+        "--json", "runs", "list", "--since", "2026-11-04T17:30:00-03:00", "--until", "2026-11-04T17:45:00-03:00",
+        "--search", "a1b2c3d4", "--sort", "cost", "--rag", "flagged",
+    )
+    assert result.exit_code == 0, result.stderr
+    params = calls[-1].url.params
+    assert params["since"] == "2026-11-04T17:30:00-03:00" and params["until"] == "2026-11-04T17:45:00-03:00"
+    assert params["search"] == "a1b2c3d4" and params["sort"] == "cost" and params["rag"] == "flagged"
