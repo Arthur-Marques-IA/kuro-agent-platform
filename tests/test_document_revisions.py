@@ -41,7 +41,9 @@ class FakeKnowledge:
         self.max_results = 5
 
     def _build_content_hash(self, content) -> str:
-        raw = json.dumps([content.name, content.metadata, content.file_data.content.decode("utf-8", "replace")], default=str)
+        # Como o do Agno para FileData com `type`/`filename`: o CONTEÚDO não entra.
+        fd = content.file_data
+        raw = json.dumps([content.name, content.metadata, fd.filename or fd.type], default=str)
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     async def aget_content_by_id(self, content_id):
@@ -279,3 +281,11 @@ def test_reindex_recorta_mantendo_id_paginas_e_cria_revisao(base):
     with patch("agent_service.documents.sources_store.source_of_content", return_value={"source_id": "s"}):
         [pulado] = asyncio.run(reindex(base.name, content_id=content_id))
     assert pulado.status == "skipped"
+
+
+def test_textos_diferentes_de_mesmo_nome_nao_colidem(base):
+    """O hash do Agno ignora o texto de um FileData com `type`: sem o conteúdo no
+    hash, o segundo texto avulso de mesmo nome caía no id do primeiro."""
+    a = _add(base, "Texto A", name="Avulso")
+    b = _add(base, "Texto B", name="Avulso")
+    assert a != b
