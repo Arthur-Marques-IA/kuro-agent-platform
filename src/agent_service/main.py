@@ -43,6 +43,8 @@ configure_tracing()
 settings = get_settings()
 # Antes de tudo: uma lista de origens inválida (`*`, um caminho) derruba a subida com o motivo.
 cors_origins = cors.parse_origins(settings.cors_origins)
+# Sem chave de API, só sobe com ALLOW_OPEN=1 (`api/auth.py`).
+auth.check_startup_auth()
 
 upgrade_database()
 seed_default_collection()

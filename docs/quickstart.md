@@ -38,7 +38,7 @@ No `.env`, preencha:
 |---|---|
 | `GOOGLE_API_KEY` | A chave do Gemini |
 | `CREDENTIALS_ENCRYPTION_KEY` | Cifra as credenciais guardadas no banco. Gere com `uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
-| `ADMIN_API_KEY` | A chave de quem opera: CLI, painel, MCP e console. **Sem ela o serviço fica aberto** |
+| `ADMIN_API_KEY` | A chave de quem opera: CLI, painel, MCP e console. **Sem chave nenhuma o serviço só sobe com `ALLOW_OPEN=1`** (o `docker-compose.yml` liga isso por padrão, com a porta só no loopback) |
 | `RUNTIME_API_KEY` | A chave dos outros sistemas que chamam `/chat` e `/analyze` |
 
 Para as duas chaves de API, qualquer texto longo e aleatório serve (`openssl rand -hex 32`).
@@ -226,6 +226,8 @@ claude mcp add kuro --env KURO_API_URL=http://127.0.0.1:58000 --env KURO_API_KEY
 | `ensurepip is not available` | Falta o `python3.12-venv` (`apt install python3.12-venv`); apague a `.venv` pela metade e crie de novo |
 | `kuro: command not found` | Use `uv run kuro ...`, ou instale como comando (passo 7) |
 | `sem permissão (HTTP 401)` | Exporte `KURO_API_KEY` com a `ADMIN_API_KEY` (passo 3) |
+| O serviço não sobe: `recusei subir sem autenticação` | Nenhuma chave de API definida e `ALLOW_OPEN=0` (ou fora do compose). Defina `ADMIN_API_KEY` e `RUNTIME_API_KEY` no `.env`, ou `ALLOW_OPEN=1` só na sua máquina |
+| `caddy` (profile `tls`) não sobe | A autenticação está desligada: defina as chaves (`docker compose logs caddy` diz o que falta) |
 | MCP: `o certificado de https://... não foi aceito` | O `KURO_CA_BUNDLE` não aponta para o certificado salvo, ou a CA do servidor mudou (o volume do Caddy foi apagado): rode o `mcp-config` de novo e salve outra vez |
 | MCP: "a porta parece bloqueada por um firewall" | O firewall do painel do provedor descarta a porta (58443 no profile `ip`). Libere lá ou conecte pelo SSH (passo 6), que não precisa de porta |
 | MCP: conexão recusada na porta 58443 | O profile `ip` não está de pé (`docker compose ps`; o motivo aparece em `docker compose logs caddy-ip`, como chave de API faltando) |

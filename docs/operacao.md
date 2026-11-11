@@ -58,6 +58,10 @@ na frente, que resolve certificado e renovação sozinho:
 docker compose --profile tls up -d
 ```
 
+**Só sobe com a autenticação ligada.** O profile põe o serviço na internet; sem
+`ADMIN_API_KEY`/`RUNTIME_API_KEY`, o `caddy` recusa começar e diz o que falta no log
+(`docker compose logs caddy`). `KURO_TLS_ALLOW_OPEN=1` pula a verificação, só para teste local.
+
 Com o domínio apontando para a máquina e as portas 80/443 alcançáveis, o
 certificado é emitido pelo Let's Encrypt no primeiro acesso e renovado antes de
 vencer. A porta 80 precisa ficar aberta: é por onde a validação acontece e por
@@ -150,7 +154,8 @@ agent-service). A chave privada dela fica no volume do Caddy.
 
 | Variável | Padrão | Para quê |
 |---|---|---|
-| `ADMIN_API_KEY` / `RUNTIME_API_KEY` | — | chaves de API; **sem elas o serviço fica aberto**. Aceitam lista `nova,antiga` para [rotacionar](#rotacionar-as-chaves) |
+| `ADMIN_API_KEY` / `RUNTIME_API_KEY` | — | chaves de API; **sem nenhuma o serviço não sobe** (salvo `ALLOW_OPEN=1`). Aceitam lista `nova,antiga` para [rotacionar](#rotacionar-as-chaves) |
+| `ALLOW_OPEN` | `false` (`1` no `docker-compose.yml`) | `1` deixa subir **sem chave**, aberto a quem alcança a porta, com aviso no log. Só para a máquina de quem desenvolve; com chave, não faz diferença. Ver [Segurança](#segurança-e-limitações-atuais) |
 | `KURO_API_DOMAIN` / `KURO_TLS_EMAIL` | `localhost` / — | domínio e e-mail do certificado (profile `tls`) |
 | `KURO_PUBLIC_IP` / `KURO_IP_PORT` | descoberto / `58443` | IP e porta do HTTPS pelo IP (profile `ip`) |
 | `KURO_PUBLIC_URL` | — | endereço do serviço visto de fora, se nenhum dos profiles acerta (o `kuro mcp-config` e o contrato de integração usam) |
@@ -239,11 +244,21 @@ chave só: `-H "Authorization: Bearer ${ADMIN_API_KEY%%,*}"` (a lista inteira re
 Leia antes de expor o serviço fora de uma rede confiável:
 
 - **Autenticação: defina as duas chaves antes de sair da sua máquina.**
-  `ADMIN_API_KEY` e `RUNTIME_API_KEY` no `.env`. Sem elas o serviço fica aberto
-  (comportamento de antes, para não quebrar quem roda local) e quem alcança a
-  porta lê toda conversa que passou por ali (`/observability/runs`, `/sessions`),
-  reescreve o prompt de um agente em produção e lê as credenciais de modelo.
-  `kuro health` mostra em vermelho quando está aberto.
+  `ADMIN_API_KEY` e `RUNTIME_API_KEY` no `.env`. Aberto, quem alcança a porta lê
+  toda conversa que passou por ali (`/observability/runs`, `/sessions`), reescreve
+  o prompt de um agente em produção e lê as credenciais de modelo. Por isso, **sem
+  chave nenhuma o serviço não sobe**: o log diz o que definir. Rodar aberto de
+  propósito pede `ALLOW_OPEN=1`; aí ele sobe com um aviso no log, o `/health`
+  responde `"auth": "disabled"` e o `kuro health` mostra em vermelho.
+
+  O `docker-compose.yml` liga o `ALLOW_OPEN` por padrão, para o `docker compose up`
+  de quem desenvolve funcionar sem chave: a porta só é publicada no loopback. Os
+  profiles que publicam para fora (`tls` e `ip`) conferem o `/health` e recusam subir
+  com a autenticação desligada, então não herdam isso em silêncio. Duas coisas que
+  não são conferidas: um `AGENT_SERVICE_BIND` fora do loopback (defina as chaves
+  antes de mudá-lo) e um proxy seu na frente. Para desligar no compose,
+  `ALLOW_OPEN=0` no `.env` (vazio conta como não definido e vira `1`). Fora do
+  compose (`uv run uvicorn`, outra orquestração), o padrão é fechado.
 
   | Escopo | Alcança | Quem usa |
   |---|---|---|

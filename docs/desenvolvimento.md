@@ -7,6 +7,8 @@ Windows PowerShell 5.1 não aceita) e sem `VAR=valor comando`.
 # backend fora do Docker (precisa do postgres do compose rodando)
 docker compose up -d postgres
 uv sync                     # o grupo dev já traz os extras `observability`, `mcp` e `tui`, usados nos testes
+# sem chave de API o serviço não sobe: ADMIN_API_KEY/RUNTIME_API_KEY no .env, ou ALLOW_OPEN=1
+# no .env para rodar aberto na sua máquina (fora do compose o padrão é fechado; ver operacao.md)
 uv run uvicorn agent_service.main:app --app-dir src --reload
 
 # frontend (o endereço do backend vai em frontend/.env.local, que vale em qualquer shell:
@@ -19,7 +21,7 @@ npm --prefix frontend run dev
 uv run kuro-migrate
 # mudança de schema nova = um arquivo em src/agent_service/migrations/versions/
 
-# testes
+# testes (o conftest liga ALLOW_OPEN=1: a suíte roda sem chave)
 uv run pytest
 npm --prefix frontend test   # a conta dos gráficos do console (frontend/src/lib/*.test.ts)
 ```

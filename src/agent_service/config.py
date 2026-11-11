@@ -3,6 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,6 +35,19 @@ class Settings(BaseSettings):
     """Chave que só executa: `/chat`, `/chat/stream`, `/analyze` e scores. É a que
     vai para os outros módulos da plataforma — se vazar, não lê conversa alheia
     nem troca prompt. Também aceita lista (`nova,antiga`)."""
+    allow_open: bool = False
+    """`ALLOW_OPEN=1` deixa o serviço subir **sem** chave nenhuma (aberto a quem alcança a
+    porta). Sem ela e sem chave, a subida falha (`api/auth.py`, `check_startup_auth`). Só
+    para a máquina de quem desenvolve: o `docker-compose.yml` liga por padrão, porque publica
+    a porta só no loopback. Com chave configurada, não faz diferença."""
+
+    @field_validator("allow_open", mode="before")
+    @classmethod
+    def _allow_open_vazio(cls, value: object) -> object:
+        # `ALLOW_OPEN=` (vazio, como o compose repassa uma variável não definida) é "não":
+        # sem isto o pydantic recusa a string vazia e a subida morre com um erro de validação
+        # em vez da mensagem que diz o que definir.
+        return False if isinstance(value, str) and not value.strip() else value
 
     cors_origins: str | None = None
     """Sites (no navegador) que podem chamar a API, separados por vírgula. Vazio = a lista
@@ -169,7 +183,8 @@ class Settings(BaseSettings):
     NÃO são uma sandbox forte contra um autor mal-intencionado — só ligue se
     quem tem a chave de escopo `admin` já for confiável, porque é ela que
     permite criar uma tool Python (`api/auth.py`). Sem `ADMIN_API_KEY`
-    configurada, isso é qualquer um que alcance a porta."""
+    configurada (só sobe assim com `ALLOW_OPEN=1`), isso é qualquer um que
+    alcance a porta."""
 
 
 @lru_cache

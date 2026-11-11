@@ -13,8 +13,8 @@ isolado, fora do escopo deste serviço). Por isso:
 
 - desligado por padrão (`CUSTOM_PYTHON_TOOLS_ENABLED=false`);
 - só ligue se quem tem a chave de escopo `admin` já for confiável: é ela que
-  permite criar uma tool Python. Sem `ADMIN_API_KEY` configurada, o serviço
-  fica aberto e isso vira qualquer um que alcance a porta (ver `api/auth.py`);
+  permite criar uma tool Python. Sem chave configurada (só sobe assim com
+  `ALLOW_OPEN=1`), o serviço fica aberto e isso vira qualquer um que alcance a porta (ver `api/auth.py`);
 - código pode importar `httpx`: tools Python alcançam a rede de propósito,
   mas pelo `httpx` guardado deste módulo, que passa todo destino pelo mesmo
   controle de `tools/egress.py` usado pelas tools `kind="api"`. Sem isso,

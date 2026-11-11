@@ -47,10 +47,16 @@ services:
       # (timeout de 20s por run). Ligue junto com o profile:
       # `LANGFUSE_ENABLED=true docker compose --profile observability up -d`
       LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
-      # Sem as duas, o serviço fica aberto a quem alcança a porta (ver
-      # agent_service/api/auth.py). Obrigatórias em qualquer ambiente compartilhado.
+      # Obrigatórias em qualquer ambiente compartilhado (ver agent_service/api/auth.py).
       ADMIN_API_KEY: ${ADMIN_API_KEY:-}
       RUNTIME_API_KEY: ${RUNTIME_API_KEY:-}
+      # Sem chave nenhuma, o serviço só sobe com ALLOW_OPEN=1. Aqui vem ligado por
+      # padrão para quem desenvolve: a porta acima só é publicada no loopback. Os
+      # profiles que publicam para fora (`tls`, `ip`) recusam subir com a
+      # autenticação desligada, então não herdam isto em silêncio. Para desligar:
+      # ALLOW_OPEN=0 no .env (vazio conta como não definido, e vira 1).
+      # Mudou AGENT_SERVICE_BIND para fora do loopback? Defina as chaves.
+      ALLOW_OPEN: ${ALLOW_OPEN:-1}
       # A CLI `kuro` já vem instalada na imagem. Estas duas fazem
       # `docker compose exec agent-service kuro health` funcionar sem argumento
       # nenhum — é por onde se dá manutenção quando o console está desligado.
@@ -110,6 +116,8 @@ services:
     profiles: ["tls"]
     image: caddy:2-alpine
     restart: unless-stopped
+    # Confere a autenticação antes de publicar (o mesmo que o `caddy-ip` faz).
+    entrypoint: ["/bin/sh", "/etc/caddy/caddy-tls.sh"]
     ports:
       # 80 precisa estar aberto: é por onde o Let's Encrypt valida o domínio
       # (desafio HTTP-01) e por onde o Caddy redireciona http -> https.
@@ -120,8 +128,11 @@ services:
       KURO_API_DOMAIN: ${KURO_API_DOMAIN:-localhost}
       KURO_CONSOLE_DOMAIN: ${KURO_CONSOLE_DOMAIN:-console.localhost}
       KURO_TLS_EMAIL: ${KURO_TLS_EMAIL:-admin@example.com}
+      # Só sobe com a autenticação ligada; 1 pula a verificação (teste local).
+      KURO_TLS_ALLOW_OPEN: ${KURO_TLS_ALLOW_OPEN:-}
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./docker/caddy-tls.sh:/etc/caddy/caddy-tls.sh:ro
       # Os certificados vivem aqui. Sem volume, cada restart pediria certificado
       # novo e o Let's Encrypt bloqueia por excesso de emissão (5 por semana
       # para o mesmo domínio) — o serviço ficaria sem HTTPS por dias.

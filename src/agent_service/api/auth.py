@@ -28,11 +28,14 @@ próprio serviço usa quando chama a si mesmo (o MCP em `/mcp`, a CLI no contain
 o console). Várias chaves por integração, com revogação e `last_used_at`, é o passo
 seguinte (ROADMAP H0) e precisa de tabela e CRUD.
 
-**Sem nenhuma chave configurada, o serviço fica aberto** — é o comportamento de
-antes, para não quebrar quem já roda local. `GET /health` avisa, e `kuro health`
-mostra em vermelho. Em qualquer ambiente compartilhado, configure as duas.
+**Sem nenhuma chave configurada, o serviço não sobe** (`check_startup_auth`), a não ser
+com `ALLOW_OPEN=1` explícito — aí fica aberto como era antes, com aviso no log, e
+`GET /health` diz `"auth": "disabled"` (`kuro health` mostra em vermelho). O
+`docker-compose.yml` liga o `ALLOW_OPEN` por padrão porque publica a porta só no
+loopback. Em qualquer ambiente compartilhado, configure as duas.
 """
 
+import logging
 import re
 import secrets
 from typing import Literal
@@ -43,6 +46,8 @@ from fastapi.responses import JSONResponse
 from agent_service.config import get_settings, split_keys
 
 Scope = Literal["runtime", "admin"]
+
+logger = logging.getLogger(__name__)
 
 PUBLIC_PATHS = frozenset({"/health", "/ready"})
 """Aberto sempre, e só isto: é o healthcheck do container e de qualquer load
@@ -93,6 +98,36 @@ def configured_keys() -> dict[Scope, list[str]]:
 
 def auth_enabled() -> bool:
     return bool(configured_keys())
+
+
+class OpenServiceRefused(RuntimeError):
+    """A subida sem chave nenhuma e sem `ALLOW_OPEN=1`."""
+
+
+OPEN_REFUSED_MESSAGE = (
+    "kuro: recusei subir sem autenticação. Nenhuma chave de API está configurada, e assim "
+    "qualquer um que alcance a porta leria as conversas, trocaria prompts e leria as "
+    "credenciais de modelo. Defina ADMIN_API_KEY e RUNTIME_API_KEY no .env (gere cada uma com "
+    "`python -c \"import secrets; print(secrets.token_urlsafe(32))\"`) e suba de novo. "
+    "Só na sua máquina, para rodar aberto de propósito: ALLOW_OPEN=1."
+)
+
+
+def check_startup_auth() -> None:
+    """Chamada na subida (`main.py`): sem chave nenhuma, só sobe com `ALLOW_OPEN=1`.
+
+    Vale qualquer escopo: só a `RUNTIME_API_KEY` já fecha o serviço (as rotas de admin
+    ficam inalcançáveis), então não é o caso que esta trava existe para impedir. Com
+    chave, `ALLOW_OPEN` não faz diferença."""
+    if auth_enabled():
+        return
+    if not get_settings().allow_open:
+        raise OpenServiceRefused(OPEN_REFUSED_MESSAGE)
+    logger.warning(
+        "kuro: subindo SEM autenticação (ALLOW_OPEN=1 e nenhuma chave de API). Qualquer um que "
+        "alcance a porta lê as conversas e troca prompts. Só para a sua máquina; fora dela, "
+        "defina ADMIN_API_KEY e RUNTIME_API_KEY."
+    )
 
 
 def _presented_key(request: Request) -> str | None:

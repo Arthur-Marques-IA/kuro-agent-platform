@@ -24,6 +24,20 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Ação necessária
 
+- **Sem chave de API, o serviço não sobe mais.** Antes, sem `ADMIN_API_KEY` nem `RUNTIME_API_KEY`
+  ele subia aberto a quem alcançasse a porta. Agora a subida falha com uma mensagem que diz o que
+  definir, a não ser com `ALLOW_OPEN=1` explícito (aí sobe aberto como antes, com aviso no log, e o
+  `/health` segue dizendo `"auth": "disabled"`). Uma instalação sem chave pode parar de subir depois
+  de atualizar: defina `ADMIN_API_KEY` e `RUNTIME_API_KEY` no `.env` (o recomendado) ou, só na sua
+  máquina, `ALLOW_OPEN=1`. Com chave configurada, nada muda.
+  - No `docker-compose.yml`, `ALLOW_OPEN` vem ligado por padrão (a porta só é publicada no
+    loopback), então o `docker compose up` local segue funcionando sem chave. Para desligar,
+    `ALLOW_OPEN=0` no `.env`.
+  - O profile `tls` passa a conferir a autenticação como o `ip` já fazia: com ela desligada, o
+    `caddy` recusa publicar e diz o que falta (`docker compose logs caddy`).
+    `KURO_TLS_ALLOW_OPEN=1` pula a verificação, só para teste local.
+  - Fora do compose (`uv run uvicorn`, Kubernetes, outra orquestração) o padrão é fechado: defina as
+    chaves ou `ALLOW_OPEN=1`.
 - **`kuro connect --json` e `kuro mcp-config --json` mudaram de formato.** No `kuro connect`,
   `registered` e `replaced` deixam de ser `true`/`false` e passam a ser listas com os clientes
   (`["claude-code", "vscode"]`; vazia quando nada foi registrado), e entram `wrapper`, `codex` e
