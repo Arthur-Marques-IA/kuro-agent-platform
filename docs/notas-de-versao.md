@@ -367,6 +367,12 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 - **URL sem domínio próprio, documentada:** `KURO_API_DOMAIN=<ip-com-hífens>.sslip.io` com o profile
   `tls` dá HTTPS com certificado válido, inclusive para o MCP por `/mcp`. Precisa das portas 80 e
   443 livres. Ver [operação](operacao.md#sem-domínio-próprio-sslipio).
+- **Uma consulta ao banco para achar o agente.** Cada `/chat`, `/chat/stream` e `/analyze` lia a
+  definição do agente, a nota de feedback e uma linha por tool (2 + N consultas); agora é uma só, que
+  traz a definição e os carimbos da nota e das tools, e o agente em cache é reaproveitado quando nada
+  mudou. Editar agente, tool ou nota continua valendo na requisição seguinte, em qualquer worker ou
+  réplica. O que é por processo (cache, vagas de execução, fila de espera) e o que isso implica com
+  mais de um worker está em [operação](operacao.md#mais-de-um-worker-ou-réplica).
 
 ### Corrigido
 
