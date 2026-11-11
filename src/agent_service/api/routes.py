@@ -17,7 +17,7 @@ from contextlib import aclosing, asynccontextmanager
 from typing import Annotated, Any
 
 from agno.agent import Agent
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -25,7 +25,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from agno.run.agent import RunEvent
 
-from agent_service.api import idempotency
+from agent_service.api import idempotency, rate_limit
 from agent_service.agents import structured_input
 from agent_service.agents.attachments import AttachmentError, AttachmentIn, build_media, describe_attachments
 from agent_service.agents.structured_input import MAX_CONTEXT_BLOCKS, MAX_EVENTS, ContextBlock, InputEvent
@@ -53,6 +53,9 @@ from agent_service.tools.registry import ToolBuildError, UnknownToolError
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_RATE_LIMITED = [Depends(rate_limit.check_rate_limit)]
+"""`RATE_LIMIT_PER_MINUTE` por chave, só nas rotas que executam agente (`api/rate_limit.py`)."""
 
 _slots: asyncio.Semaphore | None = None
 _waiting = 0
@@ -444,7 +447,7 @@ def _check_input_size(text: str, field: str) -> None:
         )
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/chat", response_model=ChatResponse, dependencies=_RATE_LIMITED)
 async def chat(request: ChatRequest, idempotency_key: IdempotencyKey = None) -> ChatResponse:
     _check_chat_input(request)
     return await _idempotent("chat", request, idempotency_key, lambda: _chat(request, idempotency_key))
@@ -552,7 +555,7 @@ class AnalyzeResponse(BaseModel):
     """Ver `ChatResponse.sources`."""
 
 
-@router.post("/analyze", response_model=AnalyzeResponse)
+@router.post("/analyze", response_model=AnalyzeResponse, dependencies=_RATE_LIMITED)
 async def analyze(request: AnalyzeRequest, idempotency_key: IdempotencyKey = None) -> AnalyzeResponse:
     """One-shot: sem sessão/histórico — devolve o `document` analisado como
     objeto estruturado (`response_schema` do agente), não texto."""
@@ -630,7 +633,7 @@ async def _analyze(request: AnalyzeRequest, idempotency_key: str | None) -> Anal
     )
 
 
-@router.post("/chat/stream")
+@router.post("/chat/stream", dependencies=_RATE_LIMITED)
 async def chat_stream(request: ChatRequest, idempotency_key: IdempotencyKey = None) -> EventSourceResponse:
     """Streaming via POST (não GET): a mensagem do usuário vai no corpo, não
     na query string — evita acabar em log de acesso. `EventSource` do browser

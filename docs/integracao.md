@@ -315,6 +315,7 @@ por run, do mais antigo ao mais novo — é o que o console, o `kuro sessions sh
 | 409 | Agente procedural: outra mensagem da mesma sessão ainda está sendo processada. Ou: a mesma `Idempotency-Key` ainda em andamento | Esperar a resposta dela e reenviar |
 | 502 / 504 num agente procedural | Pode ter vindo depois da ação já executada | Ler `GET /agents/{t}/procedures/{session_id}` antes do fallback |
 | 422 | Requisição inválida: dependency faltando ou de tipo errado, texto grande demais, agente não é `analysis` | Bug de quem chama: não repetir, alertar |
+| 429 com `Retry-After` | A chave passou de `RATE_LIMIT_PER_MINUTE` chamadas no último minuto (`/chat`, `/chat/stream` e `/analyze` somados). Corpo: `{"detail", "error": "rate_limited"}`. Desligado por padrão ([operação](operacao.md#limite-de-requisições)) | **Fallback agora**, repetir depois do `Retry-After`. Não é erro de configuração; se acontece sempre, peça um limite maior a quem opera o Kuro |
 | 502 | Falha do provedor de modelo ou saída que não fecha com o schema | **Fallback.** Pode tentar no próximo ciclo |
 | 503 com `Retry-After` | Sem vaga de execução (a fila de espera cheia, ou a espera nela esgotada), ou banco fora | **Fallback agora**, repetir depois do `Retry-After` |
 | 503 com `error` | Configuração do Kuro: `model_provider_not_configured` (sem chave do provedor do modelo) ou `encryption_not_configured` (sem `CREDENTIALS_ENCRYPTION_KEY`). O `detail` diz o que falta | **Fallback** e alertar quem opera o Kuro: repetir não resolve |
