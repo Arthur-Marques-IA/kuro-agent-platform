@@ -90,7 +90,7 @@ export function SessionsTable({ params }: { params: Record<string, string | stri
         <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              <th className="w-[28%] px-4 py-2.5 font-medium">Sessão</th>
+              <th className="w-[34%] px-4 py-2.5 font-medium">Contato e última fala</th>
               <th className="px-3 py-2.5 font-medium">Usuário</th>
               <th className="px-3 py-2.5 font-medium">Agentes</th>
               <th className="px-3 py-2.5 text-right font-medium">Execuções</th>
@@ -117,8 +117,15 @@ function SessionRow({ session }: { session: LogSessionSummary }) {
   return (
     <tr className="group relative transition-colors hover:bg-accent/50">
       <td className="max-w-0 px-4 py-2.5">
-        <Link href={href} className="absolute inset-0" aria-label={`Ver sessão: ${session.session_id}`} />
-        <p className="truncate font-mono text-xs">{session.session_id}</p>
+        <Link href={href} className="absolute inset-0" aria-label={`Ver sessão: ${session.contact_name ?? session.session_id}`} />
+        {session.contact_name && <p className="truncate font-medium">{session.contact_name}</p>}
+        <p className="truncate text-[13px]" title={session.last_message ?? undefined}>
+          {session.last_message || <span className="text-muted-foreground">(sem mensagem)</span>}
+        </p>
+        <p className="truncate font-mono text-[11px] text-muted-foreground">
+          {session.session_id}
+          {session.channel && <span className="font-sans"> · {session.channel}</span>}
+        </p>
         {session.error_count > 0 && (
           <p className="truncate text-xs text-destructive">
             {session.error_count} {session.error_count === 1 ? "erro" : "erros"}

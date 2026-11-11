@@ -773,6 +773,7 @@ class DbTraceStore:
                     .where(*conditions, in_page, run_scores.c.name == FEEDBACK)
                 ):
                     votes[sid][0 if value else 1] += 1
+            heads = _session_heads(conn, conditions, session_ids)
         items = [
             SessionSummary(
                 session_id=g.session_id,
@@ -786,6 +787,7 @@ class DbTraceStore:
                 error_count=g.error_count or 0,
                 feedback_up=votes[g.session_id][0],
                 feedback_down=votes[g.session_id][1],
+                **heads.get(g.session_id, {}),
             )
             for g in groups
         ]
@@ -898,6 +900,63 @@ def referenced_runs(query: RunQuery, *, limit: int = 5000) -> list[dict[str, Any
     return items
 
 
+def _session_heads(conn: Any, conditions: list[Any], session_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """O run mais recente de cada sessão, reduzido ao que o cabeçalho e a listagem
+    mostram: a prévia da última fala, o nome do contato e o canal (`identity.py`). Uma
+    consulta para os runs (com o span raiz, de onde saem as `dependencies`) e uma para a
+    metadata de canal."""
+    from agent_service.observability import identity
+
+    if not session_ids:
+        return {}
+    in_page = runs.c.session_id.in_(session_ids)
+    latest = (
+        select(runs.c.session_id, func.max(runs.c.started_at).label("at"))
+        .where(*conditions, in_page)
+        .group_by(runs.c.session_id)
+        .subquery()
+    )
+    rows = list(
+        conn.execute(
+            select(
+                runs.c.run_id,
+                runs.c.session_id,
+                runs.c.input_message,
+                runs.c.message,
+                runs.c.input_context,
+                run_spans.c.input.label("root_input"),
+            )
+            .join(latest, and_(runs.c.session_id == latest.c.session_id, runs.c.started_at == latest.c.at))
+            .outerjoin(run_spans, run_spans.c.id == runs.c.run_id + ":root")
+            .where(*conditions, in_page)
+            .order_by(runs.c.run_id)
+        )
+    )
+    by_session: dict[str, Any] = {}
+    for row in rows:  # empate no started_at: fica um só, o de maior run_id
+        by_session[row.session_id] = row
+    metadata: dict[str, dict[str, str]] = {}
+    run_ids = [r.run_id for r in by_session.values()]
+    if run_ids:
+        for run_id, key, value in conn.execute(
+            select(run_metadata.c.run_id, run_metadata.c.key, run_metadata.c.value).where(
+                run_metadata.c.run_id.in_(run_ids), run_metadata.c.key.in_(identity.CHANNEL_KEYS)
+            )
+        ):
+            metadata.setdefault(run_id, {})[key] = value
+    heads = {}
+    for sid, row in by_session.items():
+        root = row.root_input if isinstance(row.root_input, dict) else {}
+        deps = root.get("dependencies") if isinstance(root.get("dependencies"), dict) else None
+        context = row.input_context if isinstance(row.input_context, list) else None
+        heads[sid] = {
+            "last_message": identity.preview(row.input_message or row.message),
+            "contact_name": identity.contact_name(deps, context),
+            "channel": identity.channel(metadata.get(row.run_id), deps),
+        }
+    return heads
+
+
 def session_timeline(
     session_id: str, *, user_id: str | None = None, limit: int = 100, cursor: str | None = None
 ) -> dict[str, Any] | None:
@@ -987,7 +1046,9 @@ def session_timeline(
             if tool_names
             else {}
         )
+        head = _session_heads(conn, conditions, [session_id]).get(session_id, {})
     return {
+        "head": head,
         "total": total._mapping,
         "agent_types": agent_types,
         "rows": page,

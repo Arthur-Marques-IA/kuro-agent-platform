@@ -173,6 +173,14 @@ class SessionSummary(BaseModel):
     feedback_up: int | None = 0
     feedback_down: int | None = 0
     """`None` quando havia avaliações demais para contar com segurança — ver `RunSummary.feedback_up`."""
+    last_message: str | None = None
+    """Prévia (até 160 caracteres) da fala do run mais recente: `input_message`, ou o
+    `message` inteiro num run não estruturado. `None` no backend Langfuse."""
+    contact_name: str | None = None
+    """Nome do contato pelo run mais recente (dependency ou bloco de contexto com chave
+    conhecida — a regra está em `observability/identity.py`). `None` sem nome ou no Langfuse."""
+    channel: str | None = None
+    """Canal pela metadata (`channel`/`canal`) ou dependency do run mais recente."""
 
 
 class SessionPage(BaseModel):

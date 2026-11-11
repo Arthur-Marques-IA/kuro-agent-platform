@@ -233,6 +233,56 @@ def test_timeline_pela_api_http():
     assert client.get(f"/observability/sessions/{sid}/timeline", params={"limit": 999}).status_code == 422
 
 
+# -- quem é o contato: nome e canal no cabeçalho e na listagem ------------------------
+
+
+def test_nome_do_contato_regra_em_ordem():
+    from agent_service.observability.identity import channel, contact_name
+
+    dados = [_block("dados_aluno", "Curso: Pedagogia\n  NOME:  Maria  Souza \nCPF: 1")]
+    # 3. só a linha `nome:` do bloco de dados
+    assert contact_name(None, dados) == "Maria Souza"
+    # 2. bloco com a chave do nome vence o bloco de dados: primeira linha não vazia
+    assert contact_name(None, dados + [_block("contact_name", "\n Ana \nsobrenome")]) == "Ana"
+    # 1. dependency vence tudo
+    assert contact_name({"nome": "Bia", "cpf": "1"}, dados) == "Bia"
+    # nada com chave conhecida: sem nome (não procura no texto de outros blocos)
+    assert contact_name({"cpf": "1"}, [_block("divida", "Nome: Fulano")]) is None
+    assert contact_name({"nome": 42}, None) is None
+    assert contact_name(None, [_block("contact_name", "x" * 200)]).endswith("…")
+    # canal: metadata antes de dependency
+    assert channel({"canal": "whatsapp"}, {"channel": "email"}) == "whatsapp"
+    assert channel(None, {"channel": "email"}) == "email"
+    assert channel({}, {}) is None
+
+
+def test_timeline_e_listagem_trazem_nome_canal_e_ultima_fala():
+    from agent_service.api.observability_routes import list_sessions
+
+    sid = f"s-{uuid4().hex[:8]}"
+    agent = f"r6-{uuid4().hex[:6]}"
+    _record(sid, 0, agent_type=agent, message="oi")
+    _record(
+        sid, 3, agent_type=agent, message="quero  parcelar\na dívida",
+        context=[_block("dados_aluno", "Nome: Maria\nCurso: Pedagogia")],
+        input={"message": "...", "dependencies": {"cpf": "1"}},
+        metadata={"canal": "whatsapp"},
+    )
+    out = session_timeline(sid)
+    assert out.contact_name == "Maria" and out.channel == "whatsapp"
+
+    [session] = [s for s in list_sessions(agent_type=[agent]).items if s.session_id == sid]
+    assert session.last_message == "quero parcelar a dívida"
+    assert session.contact_name == "Maria" and session.channel == "whatsapp"
+
+    # run não estruturado: a prévia é o começo do texto inteiro, e sem nome
+    legacy = f"s-{uuid4().hex[:8]}"
+    _record(legacy, 0, agent_type=agent, structured=False, raw="x " * 200)
+    [old] = [s for s in list_sessions(agent_type=[agent]).items if s.session_id == legacy]
+    assert len(old.last_message) == 160 and old.contact_name is None and old.channel is None
+    assert session_timeline(legacy).contact_name is None
+
+
 # -- transcrição do Agno: resumo e memórias -----------------------------------------
 
 

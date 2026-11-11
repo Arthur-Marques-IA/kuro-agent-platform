@@ -29,6 +29,7 @@ import { Card } from "@/components/ui/card";
 import { CopyButton } from "@/components/ui/copy-button";
 import { EmptyState, RelativeTime, SectionHeading, Skeleton, Spinner } from "@/components/ui/primitives";
 import { AgentAvatar } from "@/components/agents/agent-avatar";
+import { roleLabel } from "@/lib/timeline";
 import { ChunkList } from "@/components/knowledge/chunk-list";
 import { ChunkFeedbackButtons, useChunkFeedback } from "@/components/knowledge/chunk-feedback";
 import { FeedbackCount, RunStatusBadge } from "@/components/observability/run-status";
@@ -89,7 +90,7 @@ export function RunTraceView({ runId }: { runId: string }) {
 
   return (
     <>
-      <PageHeader breadcrumbs={[{ label: "Agentes", href: "/agents" }, { label: "Execução" }]} title="Execução" />
+      <PageHeader breadcrumbs={[{ label: "Logs", href: "/logs" }, { label: "Execuções", href: "/logs/runs" }, { label: "Execução" }]} title="Execução" />
       <PageBody>
         {state.kind === "loading" ? (
           <div className="flex flex-col gap-4" aria-busy="true" aria-label="Carregando trace">
@@ -147,14 +148,15 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
   // Num analista a mensagem é o documento inteiro: no título, só o que identifica o run.
   const title = analysis
     ? [agentLabel, run.metadata?.fase].filter(Boolean).join(" · ")
-    : run.message || "Execução";
+    : run.input_message || run.message || "Execução";
 
   return (
     <>
       <PageHeader
         breadcrumbs={[
-          { label: "Agentes", href: "/agents" },
-          { label: agentLabel, href: `${agentHref}?tab=runs` },
+          { label: "Logs", href: "/logs" },
+          { label: "Execuções", href: "/logs/runs" },
+          ...(run.session_id ? [{ label: "Sessão", href: `/logs/sessions/${encodeURIComponent(run.session_id)}` }] : []),
           { label: "Execução" },
         ]}
         title={
@@ -165,6 +167,9 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
         }
         description={
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <Link href={`${agentHref}?tab=runs`} className="text-xs font-medium text-foreground/80 hover:underline">
+              {agentLabel}
+            </Link>
             <RunStatusBadge status={run.status} title={run.status_message} />
             {!!run.tool_failures && (
               <Badge variant="warning" title="O agente seguiu, mas estas chamadas de tool falharam — veja as spans abaixo.">
@@ -257,7 +262,7 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
         </dl>
 
         <RelatedTimeline runId={run.run_id} />
-        {analysis && <AnalysisIO run={run} schema={agent?.response_schema} />}
+        {analysis ? <AnalysisIO run={run} schema={agent?.response_schema} /> : <RunInput trace={trace} />}
         {trace.procedure_state && <ProcedureTurnState state={trace.procedure_state} />}
         <RunFeedback
           key={run.run_id}
@@ -303,6 +308,76 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
         {scores.length > 0 && <Scores scores={scores} />}
       </PageBody>
     </>
+  );
+}
+
+/**
+ * O que entrou neste turno, como texto: a fala, os eventos estruturados e os blocos de
+ * contexto, cada um no seu cartão (entrada estruturada do `/chat`). Run legado: o texto
+ * inteiro, com as quebras de linha.
+ */
+function RunInput({ trace }: { trace: RunTrace }) {
+  const { run } = trace;
+  const events = trace.input_events ?? [];
+  const context = trace.input_context ?? [];
+  const structured = trace.input_events != null || trace.input_context != null;
+  const speechInEvents = events.some((e) => e.speech);
+  if (!structured && !run.message) return null;
+  return (
+    <Card className="flex min-w-0 flex-col">
+      <div className="flex h-10 items-center justify-between gap-2 border-b border-border px-4">
+        <h2 className="text-sm font-semibold">Entrada</h2>
+        {!structured && <span className="text-xs text-muted-foreground">não estruturada: tudo veio em message</span>}
+      </div>
+      {!structured ? (
+        <pre className="scrollbar-thin max-h-96 overflow-auto whitespace-pre-wrap break-words px-4 py-3 text-[13px] leading-relaxed">
+          {run.message}
+        </pre>
+      ) : (
+        <div className="grid gap-4 p-4 lg:grid-cols-2">
+          <section className="flex min-w-0 flex-col gap-2">
+            <h3 className="text-xs font-medium text-muted-foreground">Conversa neste turno</h3>
+            {events.map((event, i) => (
+              <div key={i} className="rounded-lg border border-border px-3 py-2">
+                <p className="mb-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className="font-medium">{roleLabel(event.role)}</span>
+                  {event.at && <span>{formatDateTime(event.at)}</span>}
+                  {event.kind === "document" && <Badge variant="outline">documento</Badge>}
+                  {event.speech && <Badge variant="default">fala nova</Badge>}
+                </p>
+                {event.content && <p className="whitespace-pre-wrap break-words text-[13px]">{event.content}</p>}
+                {event.attachments?.map((a, j) => (
+                  <p key={j} className="text-xs text-muted-foreground">
+                    anexo: {[a.filename, a.mime_type].filter(Boolean).join(", ")}
+                  </p>
+                ))}
+              </div>
+            ))}
+            {!speechInEvents && run.input_message && (
+              <div className="rounded-lg border border-border px-3 py-2">
+                <p className="mb-0.5 text-[11px] font-medium text-muted-foreground">Fala nova do contato</p>
+                <p className="whitespace-pre-wrap break-words text-[13px]">{run.input_message}</p>
+              </div>
+            )}
+          </section>
+          <section className="flex min-w-0 flex-col gap-2">
+            <h3 className="text-xs font-medium text-muted-foreground">Contexto ({context.length})</h3>
+            {context.length === 0 && <p className="text-xs text-muted-foreground">Sem blocos de contexto.</p>}
+            {context.map((block) => (
+              <div key={block.key} className="rounded-lg border border-border px-3 py-2">
+                <p className="mb-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className="font-medium">{block.title || block.key}</span>
+                  {block.volatile && <Badge variant="outline">volátil</Badge>}
+                </p>
+                <pre className="scrollbar-thin max-h-60 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed">
+                  {block.content}
+                </pre>
+              </div>
+            ))}
+          </section>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -565,6 +640,16 @@ function asText(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
 
+/**
+ * Um objeto com algum campo de texto (ex.: a entrada do span raiz, `{message, dependencies}`)
+ * sai um bloco por campo, o texto com as quebras de linha — e não como JSON escapado.
+ */
+function textFields(value: unknown): [string, unknown][] | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entries = Object.entries(value as Record<string, unknown>).filter(([, v]) => v != null && v !== "");
+  return entries.some(([, v]) => typeof v === "string" && v.includes("\n")) ? entries : null;
+}
+
 function IoSection({ title, value }: { title: string; value: unknown }) {
   if (value == null || value === "") return null;
   const messages = asMessages(value);
@@ -576,7 +661,18 @@ function IoSection({ title, value }: { title: string; value: unknown }) {
         <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
         <CopyButton value={text} label={`Copiar ${title.toLowerCase()}`} className="size-6" />
       </div>
-      {messages ? (
+      {!messages && textFields(value) ? (
+        <dl className="flex flex-col gap-2">
+          {textFields(value)!.map(([key, field]) => (
+            <div key={key} className="rounded-lg border border-border">
+              <dt className="border-b border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground">{key}</dt>
+              <dd className="scrollbar-thin max-h-72 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[12px] leading-relaxed">
+                {asText(field)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : messages ? (
         <ol className="flex flex-col gap-2">
           {messages.map((message, i) => (
             <li key={i} className="rounded-lg border border-border">

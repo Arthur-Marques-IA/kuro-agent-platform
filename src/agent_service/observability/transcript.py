@@ -138,6 +138,12 @@ class SessionTimeline(BaseModel):
     output_tokens: int = 0
     total_tokens: int = 0
     cost_usd: float | None = None
+    contact_name: str | None = None
+    """Nome do contato pelo run mais recente da sessão: dependency ou bloco de contexto
+    com chave conhecida (a regra, em ordem, está em `observability/identity.py`). `None`
+    sem nome — o console mostra o `user_id`."""
+    channel: str | None = None
+    """Canal pela metadata (`channel`/`canal`) ou dependency do run mais recente."""
     items: list[TimelineTurn]
     """Os turnos desta página, do mais antigo ao mais novo."""
     next_cursor: str | None = None
@@ -253,6 +259,8 @@ def build_timeline(session_id: str, data: dict[str, Any]) -> SessionTimeline:
         output_tokens=total["output_tokens"] or 0,
         total_tokens=total["total_tokens"] or 0,
         cost_usd=total["cost_usd"],
+        contact_name=data.get("head", {}).get("contact_name"),
+        channel=data.get("head", {}).get("channel"),
         items=items,
         next_cursor=data["next_cursor"],
     )

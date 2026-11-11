@@ -98,10 +98,52 @@ ela se adapta ao tipo de run:
   - no **conversacional** e no **procedural**, registra o 👎 com comentário e oferece o
     **ensinar**, que mescla o comentário nas regras do agente lendo a conversa da sessão.
 
-Na **sessão** (`/logs/sessions/{id}`), os runs de analista (ex.: `grupo-18`, com triagem e redação)
-aparecem como cartões recolhidos com a fase, o status e o link para a execução; abertos, mostram a
-mesma entrada e saída. O procedural ganha o "feedback sobre a conversa inteira", como o
-conversacional.
+O título é a fala pura do contato (`input_message`; num run legado, o texto que chegou), e a
+migalha volta para **Logs › Execuções** (e para a sessão, quando o run tem uma). Num agente que
+conversa, o cartão **Entrada** mostra o que entrou como texto: os eventos do turno (quem, quando,
+documento, a fala nova) e os blocos de contexto, cada um no seu cartão. Run sem entrada estruturada
+mostra o texto inteiro com as quebras de linha. Nos spans, uma entrada com campos de texto de várias
+linhas sai um bloco por campo, não como JSON escapado.
+
+## A tela da sessão
+
+`/logs/sessions/{id}` lê a linha do tempo da sessão (`GET /observability/sessions/{id}/timeline`,
+ver [integracao.md](integracao.md#linha-do-tempo-da-sessão)): a tela não recorta texto, só lê os
+campos que a entrada estruturada do `/chat` gravou. Capturas em `docs/telas/sessao-*.png`.
+
+- **Cabeçalho:** o nome do contato (`contact_name`; sem ele, o `user_id`), o agente, o canal, o
+  início, a duração, os turnos e o custo da sessão inteira. O `session_id` fica ao lado, copiável.
+- **Conversa:** uma bolha por evento, com autor e horário. Contato à direita; agente à esquerda;
+  atendente humano à esquerda, em outra cor e com o rótulo; sistema numa linha discreta no meio.
+  O que foi enviado em nome do agente (`agent_sent`) igual à resposta anterior dele não aparece de
+  novo (espaços e quebras de linha não contam); se saiu diferente, aparece com o selo
+  **enviado diferente**. Documento (`kind: document`) vem recolhido com o nome do arquivo e abre
+  em markdown.
+- **Tools:** entre a fala e a resposta, uma linha por chamada — o nome legível (o verbo no fim do
+  nome, como `regente_r6_decidir` → "decidiu"; senão o rótulo cadastrado da tool), os argumentos
+  simples em ordem e o começo do resultado: `decidiu: transferir → Secretaria`. Selos para
+  **falhou** (o critério de `tool_failures`), **não encontrado** (404, neutro) e **efeito
+  colateral**. Clicar abre os argumentos e o resultado inteiros (lido do trace do run).
+- **Contexto:** em tela larga, um painel fixo ao lado; em tela estreita, o botão **Contexto** abre
+  uma gaveta. Um cartão por bloco, com o `title`. O painel acompanha o turno em foco (o que está no
+  meio da tela, ou o que foi clicado); turno sem blocos mostra o último turno anterior que tinha.
+  Bloco que mudou desde o turno anterior fica destacado (**mudou**, ou **novo**) e tem
+  **ver diferença**, linha a linha contra o `previous_content`. Bloco `volatile` nunca conta como
+  mudança.
+- **Entrada não estruturada:** run que chegou só com `message` (o legado, ou antes da entrada
+  estruturada) aparece como um cartão recolhido com o texto original e o aviso de que a integração
+  ainda manda tudo em `message`. Ele continua com as tools e a resposta.
+- **Analista:** os runs de analista (ex.: `grupo-18`, com triagem e redação) aparecem como cartões
+  recolhidos com o agente, o status e o link para a execução; abertos, mostram a entrada e a saída.
+- **Embaixo, em abas:** as execuções da sessão, o que o agente lembra (resumo da sessão e memórias
+  do contato) e os gráficos. O "feedback sobre a conversa inteira" fica no fim da conversa, no
+  conversacional e no procedural.
+- Mais de 100 turnos: **Carregar turnos mais novos** pede a página seguinte. Com
+  `TRACE_STORE_BACKEND=langfuse` a conversa não existe (501) e a tela mostra só as abas.
+
+Na lista de **Sessões**, cada linha mostra o nome do contato (quando há), a prévia da última fala e o
+canal; na de **Execuções**, a coluna da mensagem é a fala pura (`input_message`), com o texto antigo
+quando o run não é estruturado.
 
 ## O gráfico do panorama (Logs)
 

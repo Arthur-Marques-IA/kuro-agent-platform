@@ -68,6 +68,23 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   turnos por página (`limit`, padrão 100; `next_cursor` → `cursor`), filtro por `user_id`, escopo
   admin como o resto de `/observability`; 404 para sessão sem runs e 501 com
   `TRACE_STORE_BACKEND=langfuse`. Formato em [integracao.md](integracao.md#linha-do-tempo-da-sessão).
+- **Quem é o contato, na linha do tempo e na listagem de sessões.** `GET .../timeline` ganha
+  `contact_name` e `channel` no envelope; `GET /observability/sessions` ganha, em cada sessão,
+  `contact_name`, `channel` e `last_message` (prévia de até 160 caracteres da fala do run mais
+  recente: `input_message`, ou o `message` inteiro num run não estruturado). Todos opcionais e
+  `null` quando não há o dado (ou no backend Langfuse). O nome sai, em ordem, de uma `dependency`
+  `contact_name`/`nome_contato`/`nome`/`name`; de um bloco de `context` com uma dessas `key` (a
+  primeira linha); ou da linha `nome:` de um bloco `dados_contato`/`dados_aluno`/`dados_cliente`.
+  O canal, da `metadata` ou de uma `dependency` `channel`/`canal`. Para o console mostrar o nome,
+  mande um desses campos.
+- **Console: a sessão como conversa.** A tela da sessão lê a linha do tempo: uma bolha por evento
+  (contato, atendente humano, o que foi enviado em nome do agente, sistema), uma linha por tool com
+  selo de falha e de efeito colateral, o contexto do turno num painel ao lado (gaveta no celular)
+  com "ver diferença" contra o turno anterior, e o cabeçalho com o nome do contato, canal, duração,
+  turnos e custo. O que foi enviado igual à resposta do agente não se repete; o que saiu diferente
+  ganha o selo "enviado diferente". Run legado aparece como "entrada não estruturada", com o texto
+  original. As tabelas de execuções e de sessões mostram a fala pura (`input_message`), e a tela da
+  execução mostra a entrada em blocos, com a migalha em Logs. Detalhes em [console.md](console.md#a-tela-da-sessão).
 
 - **Entrada estruturada no `/chat` e no `/chat/stream`.** Campos opcionais `events` (o que aconteceu
   desde a última resposta do agente: `role` `contact` | `human_agent` | `agent_sent` | `system`,

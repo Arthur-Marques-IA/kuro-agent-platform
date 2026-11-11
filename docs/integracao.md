@@ -304,6 +304,14 @@ por run, do mais antigo ao mais novo — é o que o console, o `kuro sessions sh
   `context` vazios, `message: null` e o texto inteiro em `raw_input`. Nada é recortado.
 - Os totais do envelope (`turns`, tokens, custo, `agent_types`, início e fim) são da sessão inteira,
   não só da página.
+- **`contact_name` e `channel`** (no envelope, e também em cada item de `GET /observability/sessions`,
+  que traz ainda `last_message`, a prévia da última fala) vêm do run mais recente da sessão, lidos de
+  campos com nome conhecido, nesta ordem: uma `dependency` `contact_name`, `nome_contato`, `nome` ou
+  `name`; um bloco de `context` com uma dessas `key` (a primeira linha não vazia); a linha que começa
+  com `nome:` de um bloco `dados_contato`, `dados_aluno` ou `dados_cliente`. O canal sai da
+  `metadata` ou de uma `dependency` `channel`/`canal`. Sem nenhum deles, `null`, e o console mostra o
+  `user_id`. Para o nome aparecer, mande um bloco `contact_name` (ou o `dados_aluno` com a linha
+  `Nome:`), ou a dependency, se o agente a declara em `dependency_fields`.
 
 ## 4. Erros e fallback
 
