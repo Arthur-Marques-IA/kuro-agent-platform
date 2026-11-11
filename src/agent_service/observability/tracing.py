@@ -120,6 +120,12 @@ class RunContext:
     """A definição do agente que vai rodar — a rota decide por ela o caminho
     (um agente procedural não é um run só do modelo)."""
 
+    input_message: str | None = None
+    """Entrada estruturada (`agents/structured_input.py`): a fala pura. `message` é o
+    texto montado que o modelo lê. As três ficam `None` numa chamada só com `message`."""
+    input_events: list[dict[str, Any]] | None = field(default=None, compare=False, repr=False)
+    input_context: list[dict[str, Any]] | None = field(default=None, compare=False, repr=False)
+
     extra_spans: tuple[Any, ...] = ()
     """Spans que aconteceram fora do run do Agno e fazem parte da mesma execução
     (a extração e a ação de um agente procedural), gravados junto no run."""
@@ -365,6 +371,7 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
         user_id=run.user_id,
         session_id=run.session_id,
         message=run.message,
+        **_structured_input(run),
         started_at=datetime.now(timezone.utc),
         metadata=dict(run.metadata),
         input={
@@ -454,6 +461,15 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
         run_store.record_run(record)
 
 
+def _structured_input(run: RunContext) -> dict[str, Any]:
+    """As colunas da entrada estruturada do run (`None` nas três no legado)."""
+    return {
+        "input_message": run.input_message,
+        "input_events": run.input_events,
+        "input_context": run.input_context,
+    }
+
+
 def _set_collection_version(record: Any, run: RunContext) -> None:
     """A versão da configuração de busca com que o run consultou a base.
 
@@ -513,6 +529,7 @@ def record_run_without_model(
         user_id=run.user_id,
         session_id=run.session_id,
         message=run.message,
+        **_structured_input(run),
         started_at=min((s.started_at for s in run.extra_spans), default=started),
         metadata=dict(run.metadata),
         input={"message": run.message, "dependencies": run.dependencies},

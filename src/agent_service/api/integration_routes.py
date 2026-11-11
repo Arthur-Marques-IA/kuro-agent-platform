@@ -99,6 +99,9 @@ class IntegrationContract(BaseModel):
     request_fields: list[RequestField]
     """Os campos do corpo do `endpoint`: os de `request_example` e os opcionais."""
     request_example: dict[str, Any]
+    structured_request_example: dict[str, Any] | None = None
+    """Só em agente conversacional: a mesma chamada com a entrada estruturada (`events` e
+    `context` em vez de tudo concatenado em `message`). Ver docs/integracao.md."""
     response_example: dict[str, Any]
     stream_events: list[StreamEvent] = []
     """Eventos do `stream_url`, na ordem em que podem chegar. Vazio em analista."""
@@ -134,6 +137,16 @@ _DRY_RUN = (
     "O run fica marcado como teste."
 )
 _DEPENDENCIES = "Dados que você já tem (cpf, plano...): viram contexto do prompt e alimentam as tools."
+_EVENTS = (
+    "Entrada estruturada: o que aconteceu desde a última resposta do agente, em ordem (até 200): "
+    "[{role: contact | human_agent | agent_sent | system, content, at?, kind?: text | document, attachments?}]. "
+    "Não vale em agente procedural (422)."
+)
+_CONTEXT = (
+    "Entrada estruturada: blocos de texto para o modelo ler (até 30): [{key, title, content, volatile?}], "
+    "key estável e única. Diferente de dependencies, que são valores tipados para tools e validação. "
+    "Não vale em agente procedural (422)."
+)
 
 CHAT_FIELDS = [
     RequestField(name="agent_type", type="string", required=True, description="Slug do agente."),
@@ -141,12 +154,28 @@ CHAT_FIELDS = [
                  description="Identificador estável do usuário final: base do histórico e das memórias."),
     RequestField(name="session_id", type="string", required=True,
                  description="A conversa. Repita entre mensagens para manter o histórico; outro valor começa do zero."),
-    RequestField(name="message", type="string", required=True, description="O texto do usuário."),
+    RequestField(name="message", type="string", required=False,
+                 description="A fala nova do usuário. Obrigatória, a não ser que events traga um evento "
+                 "role=contact (aí a fala é o último deles)."),
+    RequestField(name="events", type="array", required=False, description=_EVENTS),
+    RequestField(name="context", type="array", required=False, description=_CONTEXT),
     RequestField(name="dependencies", type="object", required=False, description=_DEPENDENCIES),
     RequestField(name="metadata", type="object", required=False, description=_METADATA),
     RequestField(name="dry_run", type="boolean", required=False, description=_DRY_RUN),
     RequestField(name="attachments", type="array", required=False, description=_ATTACHMENTS),
 ]
+
+_STRUCTURED_EXAMPLE: dict[str, Any] = {
+    "message": "boa tarde, me envia novamente o comprovante",
+    "events": [
+        {"role": "agent_sent", "content": "Maria, recebi seus dados. Segue o comprovante.", "at": "2026-11-11T12:36:10Z"},
+        {"role": "contact", "content": "Para finalizar o diploma. Obrigada.", "at": "2026-11-11T12:37:01Z"},
+    ],
+    "context": [
+        {"key": "dados_contato", "title": "Dados do contato", "content": "Nome: Maria\nCurso: Pedagogia"},
+        {"key": "temporal", "title": "Contexto temporal", "content": "Janela 24h aberta", "volatile": True},
+    ],
+}
 
 ANALYZE_FIELDS = [
     RequestField(name="agent_type", type="string", required=True, description="Slug do agente analista."),
@@ -332,6 +361,11 @@ def get_integration_contract(
         dependencies=dependencies,
         request_fields=ANALYZE_FIELDS if is_analysis else CHAT_FIELDS,
         request_example=request_example,
+        structured_request_example=(
+            {**{k: v for k, v in request_example.items() if k != "message"}, **_STRUCTURED_EXAMPLE}
+            if kind == "conversational"
+            else None
+        ),
         response_example=_response_example(agent_type, kind, agent_version, definition.get("response_schema") or []),
         stream_events=[] if is_analysis else STREAM_EVENTS,
         errors=ERRORS,

@@ -41,7 +41,22 @@ def _render_runs(page: dict[str, Any]) -> None:
 def _render_trace(trace: dict[str, Any]) -> None:
     run = trace["run"]
     console.print(f"[bold]{run['agent_type']}[/] [dim]run {run['run_id']} · {run['status']} · {run['total_tokens']} tokens[/]")
-    console.print(f"[cyan]mensagem:[/] {run.get('message') or '—'}", highlight=False)
+    if run.get("input_message") is not None:
+        # Entrada estruturada: a fala, os eventos e os blocos em vez do texto montado.
+        for block in trace.get("input_context") or []:
+            volatil = " [dim](volátil)[/]" if block.get("volatile") else ""
+            console.print(f"[blue]{block['title']}[/]{volatil} [dim]{block['key']} · {block['hash'][:12]}[/]", highlight=False)
+        events = trace.get("input_events") or []
+        for event in events:
+            quando = f" [dim]{event['at']}[/]" if event.get("at") else ""
+            if event.get("speech"):
+                console.print(f"[cyan]fala:[/]{quando} {run['input_message'] or '—'}", highlight=False)
+            else:
+                console.print(f"[dim]{event['role']}[/]{quando}: {event.get('content') or '—'}", highlight=False)
+        if not any(event.get("speech") for event in events):
+            console.print(f"[cyan]fala:[/] {run['input_message'] or '—'}", highlight=False)
+    else:
+        console.print(f"[cyan]mensagem:[/] {run.get('message') or '—'}", highlight=False)
     console.print(f"[magenta]resposta:[/] {run.get('output') or '—'}", highlight=False)
     if run.get("agent_version"):
         console.print(f"[dim]agente v{run['agent_version']} ({run.get('config_hash')})[/]", highlight=False)

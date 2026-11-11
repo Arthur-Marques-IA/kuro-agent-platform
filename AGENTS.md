@@ -72,6 +72,9 @@ kuro --json chat suporte -m "fecha o acordo" --dry-run   # teste: tools recebem 
 # `dry_run: true` no /chat e no /analyze (também `--dry-run` em analyze, eval e tools invoke):
 # as tools recebem o header e `dependencies.dry_run` (sem declarar em dependency_fields);
 # o run fica com metadata.dry_run=true. Quem implementa a tool decide o que simular.
+# Entrada estruturada (pela API): `events` [{role: contact|human_agent|agent_sent|system, content, at}]
+# e `context` [{key, title, content, volatile}] no /chat em vez de tudo em `message`; o run guarda
+# input_message/input_events/input_context (`runs show`). Procedural recusa (422). docs/integracao.md.
 
 # Anexos: imagem, áudio, vídeo ou arquivo (PDF, DOCX, CSV, TXT...) direto ao modelo
 kuro --json chat suporte -m "o que tem nessa foto?" --attach foto.png       # -a, repetível

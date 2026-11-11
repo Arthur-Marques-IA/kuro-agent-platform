@@ -117,6 +117,144 @@ No `/chat/stream`, o mesmo campo chega no evento `sources` (`{"sources": [...]}`
 - O texto de cada trecho não vem na resposta: está no trace (`kuro runs show <run_id>`, span
   `search_knowledge_base`, `metadata.references`).
 
+### Entrada estruturada
+
+No `/chat` e no `/chat/stream`, cada trecho do que o seu sistema sabe pode ir no seu próprio campo,
+em vez de tudo concatenado em `message`. O servidor monta o texto que o modelo lê com um gabarito
+fixo, e o run guarda os trechos separados: o console e a transcrição mostram a fala, o histórico e
+o contexto sem precisar adivinhar onde cada um começa. Os campos são opcionais: uma chamada só com
+`message` continua exatamente como antes.
+
+| Campo | O que é |
+|---|---|
+| `message` | A fala nova do contato. Passa a ser opcional quando `events` traz ao menos um evento `contact`: aí a fala é o último deles. Com os dois, `message` é a fala e `events` é o que veio antes dela. Sem nenhum dos dois, 422 |
+| `events` | O que aconteceu **desde a última resposta do agente**, em ordem (até 200). `role`: `contact` (o contato), `human_agent` (um atendente humano), `agent_sent` (o que a instituição de fato enviou em nome do agente, que pode diferir do que ele respondeu) ou `system`. Cada item aceita `content`, `at` (ISO 8601), `kind` (`text` ou `document`) e `attachments` |
+| `context` | Blocos de texto para o modelo ler (até 30): `key` (identificador estável, o mesmo a cada turno e único na requisição), `title` (o rótulo, que vira o título do bloco no prompt), `content` e `volatile` (`true` no bloco que muda todo turno, como o contexto temporal: ele não conta como "o contexto mudou") |
+
+- **`context` não é `dependencies`.** `dependencies` são valores tipados (`cpf`, `canal`), validados
+  contra os `dependency_fields` do agente e entregues às tools por `source="dependency"`. `context` é
+  texto livre para o modelo ler, sem validação nem uso pelas tools. Um dado que uma tool precisa
+  continua em `dependencies`; um parágrafo sobre a situação do contato vai em `context`.
+- **`attachments` de um evento só descrevem** o arquivo (`filename`, `mime_type`, `url`,
+  `size_bytes`); o modelo vê a descrição, não o conteúdo. Para o modelo ler o arquivo, mande-o em
+  `attachments` do corpo, como sempre. Um `content_base64` dentro de um evento é recusado (422).
+- **Limites:** a soma dos textos (`message`, o `content` de cada evento, o `title` e o `content` de
+  cada bloco) respeita `MAX_INPUT_CHARS` (200 mil caracteres), também no `/chat/stream`. Os rótulos
+  do gabarito não contam.
+- **422 também** para `key` repetida, `role` fora da lista, bloco sem `key` ou `title` e evento sem
+  `content` e sem `attachments`.
+- **Agente procedural recusa** `events` e `context` com 422. A extração dele procura na mensagem os
+  dados que a pessoa informou: com o contexto junto, pegaria o CPF dos dados do contato como se ela
+  tivesse dito. Mande a fala em `message` e os dados que você já tem em `dependencies`, que já
+  preenchem as etapas de coleta.
+- `GET /agents/{t}/integration` traz `structured_request_example`, e o OpenAPI do agente descreve os
+  campos (`InputEvent`, `ContextBlock`).
+
+O gabarito, para uma chamada com os três campos (cada seção vazia some):
+
+```text
+# Contexto
+
+## <title do bloco 1>
+<content do bloco 1>
+
+## <title do bloco 2>
+<content do bloco 2>
+
+# Conversa desde a sua última resposta
+
+[Enviado em seu nome · 2026-11-11T12:36:10Z]
+<content>
+
+[Contato · 2026-11-11T12:37:01Z]
+<content>
+
+# Mensagem nova do contato
+
+<a fala>
+```
+
+Os papéis aparecem como `Contato`, `Atendente humano`, `Enviado em seu nome` e `Sistema`; `at` com
+fuso sai em UTC; um evento `kind="document"` ganha `· documento` no rótulo e cada anexo uma linha
+`(anexo: nome, tipo)`. Se o último evento for `contact` com o mesmo texto de `message`, ele é a fala
+e não se repete na conversa. Sem `message`, a fala é o último evento `contact`, e o que veio depois
+dele entra numa seção `# Depois dessa mensagem`.
+
+#### Antes e depois: uma chamada do Regente
+
+Antes, tudo num texto só (resumido):
+
+```json
+{
+  "agent_type": "r6", "user_id": "aluno-4412", "session_id": "conv-98231",
+  "message": "CONFIGURAÇÃO: EFETIVAÇÃO: LIGADA...\nDADOS DO ALUNO:\nNome: Maria\nCurso: Pedagogia\nCONTEXTO DA DÍVIDA: SEM parcela vencida...\nANOTAÇÕES INTERNAS: ...\nCONTEXTO TEMPORAL: Janela 24h ABERTA\nHISTÓRICO DA CONVERSA\n[ATENDENTE] Maria, recebi seus dados...\n[ALUNO] Para finalizar o diploma. Obrigada.\n[FALA DO CONTATO] boa tarde, me envia novamente o comprovante",
+  "dependencies": {"cpf": "12345678900"},
+  "metadata": {"conversation_id": "98231"}
+}
+```
+
+Depois, cada trecho no seu campo:
+
+```json
+{
+  "agent_type": "r6", "user_id": "aluno-4412", "session_id": "conv-98231",
+  "message": "boa tarde, me envia novamente o comprovante",
+  "events": [
+    {"role": "agent_sent", "content": "Maria, recebi seus dados...", "at": "2026-11-11T12:36:10Z"},
+    {"role": "contact", "content": "Para finalizar o diploma. Obrigada.", "at": "2026-11-11T12:37:01Z"}
+  ],
+  "context": [
+    {"key": "configuracao", "title": "Configuração desta conversa", "content": "EFETIVAÇÃO: LIGADA..."},
+    {"key": "dados_aluno", "title": "Dados do aluno", "content": "Nome: Maria\nCurso: Pedagogia"},
+    {"key": "divida", "title": "Contexto da dívida", "content": "SEM parcela vencida..."},
+    {"key": "anotacoes", "title": "Anotações internas", "content": "..."},
+    {"key": "temporal", "title": "Contexto temporal", "content": "Janela 24h ABERTA", "volatile": true}
+  ],
+  "dependencies": {"cpf": "12345678900"},
+  "metadata": {"conversation_id": "98231"}
+}
+```
+
+#### Guia de migração
+
+Cada trecho do texto de hoje tem um lugar. Monte cada campo direto da fonte que já gera o trecho
+(não recorte o texto que você monta hoje):
+
+| Trecho de hoje | Vai para |
+|---|---|
+| Configuração da conversa (EFETIVAÇÃO, chaves liga/desliga) | `context`, `key: "configuracao"` |
+| Dados do aluno | `context`, `key: "dados_aluno"`. O CPF ou o id que uma tool usa continua **também** em `dependencies` |
+| Contexto da dívida | `context`, `key: "divida"` |
+| Anotações internas | `context`, `key: "anotacoes"` |
+| Linha temporal (`CONTEXTO TEMPORAL: ...`, janela 24h) | `context`, `key: "temporal"`, com `volatile: true` |
+| Histórico com `[ALUNO]` / `[ATENDENTE]` | `events`: `[ALUNO]` vira `role: "contact"`; `[ATENDENTE]` vira `human_agent` quando foi uma pessoa, ou `agent_sent` quando foi a mensagem do agente que o Regente enviou. Mande só o que aconteceu **depois da última resposta do agente** |
+| A fala nova (`[FALA DO CONTATO]`, `ÚLTIMA MENSAGEM DO ALUNO:`) | `message` (ou o último evento `contact`) |
+
+- **Não reenvie a conversa inteira em `events`.** Com `num_history_runs > 0`, o histórico da sessão já
+  devolve ao modelo os turnos anteriores (cada um com o texto montado daquele turno). Reenviar tudo
+  em `events` a cada turno faz o modelo ver o mesmo turno duas vezes. Se o agente roda com
+  `num_history_runs: 0` e o seu sistema é a fonte do histórico, aí sim mande o histórico em `events`.
+- Mantenha as `key` iguais de um turno para o outro: é por elas (e pelo hash de cada bloco, que o run
+  guarda) que o console diz se o contexto mudou.
+- Teste num draft antes (`kuro agents promote r6 --to r6-draft`, eval com casos no formato novo): o
+  texto que o modelo lê muda de forma, e as instructions que citam os rótulos antigos ("veja a
+  seção HISTÓRICO DA CONVERSA") precisam citar os novos.
+
+#### O que o run guarda
+
+`runs.message` continua com o texto que o modelo leu (o montado, na entrada estruturada), para os
+filtros e buscas de sempre. Três colunas novas guardam os trechos, e saem no detalhe do run
+(`GET /observability/runs/{run_id}/trace`, `kuro runs show`):
+
+- `run.input_message`: a fala pura (também na listagem de runs);
+- `input_events`: os eventos na ordem recebida, `{role, content, at, kind, attachments, speech}`;
+  `speech: true` marca o evento que é a fala nova, quando ela veio como evento;
+- `input_context`: os blocos, `{key, title, content, volatile, hash}`, com `hash` = sha256 do `content`.
+
+Numa chamada só com `message`, as três ficam nulas. Os runs e as sessões de antes desta versão
+ficam como **entrada não estruturada**: não há retrocarga, porque separar o texto antigo seria
+adivinhar.
+
 ## 4. Erros e fallback
 
 | Status | Significa | O que fazer |

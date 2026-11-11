@@ -46,6 +46,18 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Novo
 
+- **Entrada estruturada no `/chat` e no `/chat/stream`.** Campos opcionais `events` (o que aconteceu
+  desde a última resposta do agente: `role` `contact` | `human_agent` | `agent_sent` | `system`,
+  `content`, `at`, `kind`, `attachments`) e `context` (blocos `{key, title, content, volatile}`), em
+  vez de tudo concatenado em `message`. O servidor monta o texto do modelo com um gabarito fixo.
+  `message` passa a ser opcional quando `events` traz um evento `contact`; sem nenhum dos dois, 422.
+  Limites: 30 blocos, 200 eventos e a soma dos textos em `MAX_INPUT_CHARS`. Agente procedural recusa
+  os dois campos (422). O run grava `input_message`, `input_events` e `input_context` (no detalhe do
+  run, `GET /observability/runs/{id}/trace` e `kuro runs show`; `input_message` também na
+  listagem), e `GET /agents/{t}/integration` traz `structured_request_example`. Uma chamada só com
+  `message` não muda em nada, e os runs anteriores ficam como entrada não estruturada, sem
+  retrocarga. Antes e depois de uma chamada do Regente e o guia de migração em
+  [integracao.md](integracao.md#entrada-estruturada).
 - **Conectar o MCP sem instalar o Kuro, em qualquer cliente.** Na sua máquina, só com o uv:
   `uv run https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py root@servidor`.
   O `kuro connect` virou um arquivo só, que usa apenas a biblioteca padrão do Python: começa em
@@ -459,6 +471,8 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 - A migração `0014` também roda sozinha: cria `document_revisions` e acrescenta o estado e a revisão
   em `chunk_feedback`. As marcações existentes ficam `open`, com a revisão desconhecida; os documentos
   já indexados ganham a revisão 1 na primeira vez que alguém a consulta, sem reindexar nada.
+- A migração `0016` também roda sozinha: acrescenta `input_message`, `input_events` e
+  `input_context` em `runs`. Os runs existentes ficam com as três nulas (entrada não estruturada).
 - `AGENT_SERVICE_PUBLIC_URL` do console deixou de ter `http://localhost:58000` fixo no compose:
   vazia, a aba Integração mostra a URL que o agent-service conhece. Para forçar outra, defina-a no
   `.env`.

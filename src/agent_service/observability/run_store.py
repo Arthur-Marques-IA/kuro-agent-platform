@@ -108,7 +108,20 @@ runs = Table(
     Column("tool_calls", Integer, nullable=True),
     Column("tool_failures", Integer, nullable=True),
     Column("complexity", Integer, nullable=True),
+    # Entrada estruturada do `/chat` (`agents/structured_input.py`, migração 0016). As três
+    # ficam NULL num run só com `message` (o legado): é assim que se distingue um do outro.
+    # `message` continua com o texto montado que o modelo leu, para filtros e buscas.
+    Column("input_message", Text, nullable=True),
+    # `none_as_null`: o None do legado vira SQL NULL, e não o JSON `null` (o padrão do
+    # SQLAlchemy) — `input_events IS NULL` é o filtro de "run não estruturado".
+    Column("input_events", JSON(none_as_null=True), nullable=True),
+    Column("input_context", JSON(none_as_null=True), nullable=True),
 )
+
+_HEAVY_COLUMNS = ("input_events", "input_context")
+_LIST_COLUMNS = [c for c in runs.c if c.name not in _HEAVY_COLUMNS]
+"""A listagem não carrega os eventos e os blocos de contexto (até 200 e 30 por run):
+eles saem só no detalhe (`get_run`)."""
 
 run_spans = Table(
     "run_spans",
@@ -215,6 +228,9 @@ class RunRecord:
     collection_version: int | None = None
     collection_config_hash: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+    input_message: str | None = None
+    input_events: list[dict[str, Any]] | None = None
+    input_context: list[dict[str, Any]] | None = None
 
 
 def _write_run(record: RunRecord) -> None:
@@ -284,6 +300,9 @@ def _write_run(record: RunRecord) -> None:
                 status=record.status,
                 status_message=record.status_message,
                 message=record.message,
+                input_message=record.input_message,
+                input_events=record.input_events,
+                input_context=record.input_context,
                 output=record.output,
                 model=record.model,
                 input_tokens=record.input_tokens,
@@ -596,6 +615,7 @@ def _summary(
         tool_calls=row.tool_calls,
         tool_failures=row.tool_failures,
         complexity=row.complexity,
+        input_message=row.input_message,
     )
 
 
@@ -603,7 +623,7 @@ class DbTraceStore:
     """`TraceStore` sobre as tabelas acima — o backend padrão do serviço."""
 
     def list_runs(self, query: RunQuery) -> RunPage:
-        stmt = select(runs).where(*_filters(query))
+        stmt = select(*_LIST_COLUMNS).where(*_filters(query))
         if query.sample:
             # Amostra: o que nenhum filtro apontaria também precisa ser visto às vezes.
             with get_db().db_engine.connect() as conn:
@@ -712,6 +732,8 @@ class DbTraceStore:
             scores=scores,
             reference=reference,
             procedure_state=procedure_state if isinstance(procedure_state, dict) else None,
+            input_events=row.input_events,
+            input_context=row.input_context,
         )
 
     def list_sessions(self, query: RunQuery) -> SessionPage:

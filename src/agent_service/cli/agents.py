@@ -674,6 +674,11 @@ def _render_integration(c: dict[str, Any]) -> None:
 
     console.print("\n[bold]exemplo[/]")
     console.print(c["curl"], highlight=False)
+    if c.get("structured_request_example"):
+        console.print(
+            "[dim]entrada estruturada (events + context em vez de tudo em message): "
+            "structured_request_example no --json; guia em docs/integracao.md[/]"
+        )
     if c.get("errors"):
         console.print("\n[bold]erros[/]")
         for erro in c["errors"]:

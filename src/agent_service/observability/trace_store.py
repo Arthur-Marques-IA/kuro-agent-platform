@@ -96,6 +96,11 @@ class RunSummary(BaseModel):
     muda por isso. `None` = não informado; 0 = nenhuma falha."""
     complexity: int | None = None
     """1 = nenhuma tool de negócio; 2 = uma ou duas distintas; 3 = três ou mais (`tools/failures.py`)."""
+    input_message: str | None = None
+    """Entrada estruturada do `/chat`: a fala pura do contato, sem contexto nem histórico
+    (`message` traz o texto montado que o modelo leu). `None` = run só com `message`
+    (o legado, ou anterior à entrada estruturada) ou backend Langfuse. Os eventos e os
+    blocos de contexto vêm no detalhe (`RunTrace.input_events`, `RunTrace.input_context`)."""
 
 
 class RunPage(BaseModel):
@@ -144,6 +149,15 @@ class RunTrace(BaseModel):
     procedure_state: dict[str, Any] | None = None
     """Só em turno de agente procedural: o `state` como o turno terminou (etapa,
     collected, missing, invalid, done) — o mesmo que o `/chat` devolveu."""
+    input_events: list[dict[str, Any]] | None = None
+    """Entrada estruturada: os `events` da requisição, na ordem recebida —
+    `{role, content, at, kind, attachments, speech}`; `speech: true` marca o evento que
+    é a fala nova (`run.input_message`), se algum é. `[]` quando veio só `context`;
+    `None` em run não estruturado."""
+    input_context: list[dict[str, Any]] | None = None
+    """Entrada estruturada: os blocos de `context` — `{key, title, content, volatile, hash}`,
+    com `hash` = sha256 hex do `content`. `[]` quando veio só `events`; `None` em run não
+    estruturado."""
 
 
 class SessionSummary(BaseModel):
