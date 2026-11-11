@@ -3,9 +3,10 @@
 import { DryRunToggle, useDryRun } from "@/components/tools/dry-run-toggle";
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { FileSearch, Paperclip, Play, X } from "lucide-react";
+import { Braces, FileSearch, ListTree, Paperclip, Play, X } from "lucide-react";
 import { errorMessage, requestJson } from "@/lib/http";
-import type { AnalyzeResponse, Attachment } from "@/lib/types";
+import { outputTree } from "@/lib/structured-output";
+import type { AnalyzeResponse, Attachment, SchemaField } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -18,6 +19,9 @@ import { useWorkspace } from "@/components/workspace/workspace-provider";
 import { readAttachment } from "@/lib/attachments";
 import { parseDependencies } from "@/lib/agent-meta";
 import { DependenciesForm } from "@/components/schema/dependencies-form";
+import { OutputFields, RawJsonToggle } from "@/components/schema/output-fields";
+import { SchemaFieldsTable } from "@/components/schema/schema-fields-table";
+import { CopyButton } from "@/components/ui/copy-button";
 
 const NO_FIELDS: never[] = [];
 
@@ -35,7 +39,10 @@ export function AnalyzeView() {
   const [deps, setDeps] = useState("");
   const [anexos, setAnexos] = useState<{ attachment: Attachment; name: string }[]>([]);
   const [rodando, setRodando] = useState(false);
-  const [resultado, setResultado] = useState<AnalyzeResponse | null>(null);
+  // O schema vai junto do resultado: trocar de agente depois não pode reetiquetar a saída.
+  const [resultado, setResultado] = useState<{ response: AnalyzeResponse; schema: SchemaField[] } | null>(null);
+  const [resultadoCru, setResultadoCru] = useState(false);
+  const [schemaCru, setSchemaCru] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [dryRun, setDryRun] = useDryRun();
 
@@ -50,19 +57,19 @@ export function AnalyzeView() {
     try {
       if (depsCheck.error) throw new Error(`Dependencies: ${depsCheck.error}`);
       const dependencies = depsCheck.value ?? undefined;
-      setResultado(
-        await requestJson<AnalyzeResponse>("/api/analyze", {
-          method: "POST",
-          json: {
-            agent_type: escolhido.agent_type,
-            document,
-            dependencies,
-            attachments: anexos.map((a) => a.attachment),
-            dry_run: dryRun || undefined,
-          },
-          fallbackError: "Falha ao analisar",
-        })
-      );
+      const schema = escolhido.response_schema;
+      const response = await requestJson<AnalyzeResponse>("/api/analyze", {
+        method: "POST",
+        json: {
+          agent_type: escolhido.agent_type,
+          document,
+          dependencies,
+          attachments: anexos.map((a) => a.attachment),
+          dry_run: dryRun || undefined,
+        },
+        fallbackError: "Falha ao analisar",
+      });
+      setResultado({ response, schema });
     } catch (err) {
       setErro(errorMessage(err));
     } finally {
@@ -189,16 +196,49 @@ export function AnalyzeView() {
           <div className="flex flex-col gap-3">
             <SectionHeading
               title="Resultado"
-              description={`run ${resultado.run_id} — validado contra o response_schema do agente.`}
+              description={`run ${resultado.response.run_id} — validado contra o response_schema do agente.`}
             />
-            <CodeBlock code={JSON.stringify(resultado.result, null, 2)} title="result" />
+            <Card className="flex min-w-0 flex-col">
+              <div className="flex h-10 items-center justify-between gap-2 border-b border-border px-4">
+                <h3 className="flex items-center gap-2 text-sm font-semibold">
+                  {resultadoCru ? (
+                    <Braces className="size-4 text-muted-foreground" aria-hidden />
+                  ) : (
+                    <ListTree className="size-4 text-muted-foreground" aria-hidden />
+                  )}
+                  {resultadoCru ? "result (JSON)" : "Campos"}
+                </h3>
+                <span className="flex items-center gap-1">
+                  <RawJsonToggle raw={resultadoCru} onChange={setResultadoCru} />
+                  <CopyButton
+                    value={JSON.stringify(resultado.response.result, null, 2)}
+                    label="Copiar JSON do resultado"
+                    className="size-6"
+                  />
+                </span>
+              </div>
+              {resultadoCru ? (
+                <pre className="scrollbar-thin max-h-[32rem] overflow-auto px-4 py-3 font-mono text-[12px] leading-relaxed">
+                  {JSON.stringify(resultado.response.result, null, 2)}
+                </pre>
+              ) : (
+                <OutputFields nodes={outputTree(resultado.response.result ?? {}, resultado.schema)} />
+              )}
+            </Card>
           </div>
         )}
 
         {escolhido && (
           <div className="flex flex-col gap-2">
-            <h3 className="text-sm font-semibold">Campos que este agente devolve</h3>
-            <CodeBlock code={JSON.stringify(escolhido.response_schema, null, 2)} title="response_schema" />
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">Campos que este agente devolve</h3>
+              <RawJsonToggle raw={schemaCru} onChange={setSchemaCru} />
+            </div>
+            {schemaCru ? (
+              <CodeBlock code={JSON.stringify(escolhido.response_schema, null, 2)} title="response_schema" />
+            ) : (
+              <SchemaFieldsTable fields={escolhido.response_schema} />
+            )}
           </div>
         )}
       </PageBody>

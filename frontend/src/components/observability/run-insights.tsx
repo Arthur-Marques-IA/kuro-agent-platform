@@ -6,7 +6,7 @@ import { Check, CircleAlert, FileText, GitCommitVertical, ListTree, ThumbsDown, 
 import { cn } from "@/lib/cn";
 import { errorMessage, requestJson } from "@/lib/http";
 import { formatDateTime, formatMs } from "@/lib/format";
-import { displayValue, outputTree, parseStructured, type OutputNode } from "@/lib/structured-output";
+import { displayValue, outputTree, parseStructured } from "@/lib/structured-output";
 import type { ProcedureState, RelatedRuns, RunSummary, SchemaField } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import { useToast } from "@/components/ui/toast";
 import { TeachAgent } from "@/components/agents/teach-agent";
 import { STAGE_TYPE_META } from "@/components/chat/procedure-progress";
 import { RunStatusBadge } from "@/components/observability/run-status";
+import { OutputFields, RawJsonToggle } from "@/components/schema/output-fields";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
 
 /** Execução do `/analyze`: o endpoint gravado no run, não o `kind` atual do agente (que pode ter mudado). */
@@ -31,6 +32,7 @@ export function isAnalysisRun(run: RunSummary): boolean {
 /** O documento que entrou (quebras de linha preservadas) e a saída como árvore de campos. */
 export function AnalysisIO({ run, schema }: { run: RunSummary; schema?: SchemaField[] | null }) {
   const structured = useMemo(() => parseStructured(run.output), [run.output]);
+  const [raw, setRaw] = useState(false);
   return (
     <div className="grid items-start gap-4 lg:grid-cols-2">
       <Card className="flex min-w-0 flex-col">
@@ -52,10 +54,17 @@ export function AnalysisIO({ run, schema }: { run: RunSummary; schema?: SchemaFi
           <h2 className="flex items-center gap-2 text-sm font-semibold">
             <ListTree className="size-4 text-muted-foreground" aria-hidden /> Saída
           </h2>
-          {run.output && <CopyButton value={run.output} label="Copiar saída" className="size-6" />}
+          <span className="flex items-center gap-1">
+            {structured && <RawJsonToggle raw={raw} onChange={setRaw} />}
+            {run.output && <CopyButton value={run.output} label="Copiar saída" className="size-6" />}
+          </span>
         </div>
-        {structured ? (
-          <OutputTreeView nodes={outputTree(structured, schema)} />
+        {structured && raw ? (
+          <pre className="scrollbar-thin max-h-[32rem] overflow-auto px-4 py-3 font-mono text-[12px] leading-relaxed">
+            {JSON.stringify(structured, null, 2)}
+          </pre>
+        ) : structured ? (
+          <OutputFields nodes={outputTree(structured, schema)} />
         ) : (
           <pre className="scrollbar-thin max-h-[32rem] overflow-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12px]">
             {run.output || (run.status === "success" ? "—" : "O run não produziu saída.")}
@@ -63,37 +72,6 @@ export function AnalysisIO({ run, schema }: { run: RunSummary; schema?: SchemaFi
         )}
       </Card>
     </div>
-  );
-}
-
-function OutputTreeView({ nodes, depth = 0 }: { nodes: OutputNode[]; depth?: number }) {
-  if (nodes.length === 0) return <p className="px-4 py-3 text-xs text-muted-foreground">(vazio)</p>;
-  return (
-    <dl className={cn("flex flex-col text-[13px]", depth === 0 && "scrollbar-thin max-h-[32rem] overflow-auto py-1")}>
-      {nodes.map((node) => (
-        <Fragment key={node.path}>
-          <div
-            className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-3 border-b border-border/60 px-4 py-1.5 last:border-b-0"
-            style={{ paddingLeft: 16 + depth * 16 }}
-          >
-            <dt className="truncate text-muted-foreground" title={node.path}>
-              {node.label}
-              {node.label !== node.key && <span className="ml-1 font-mono text-[11px] opacity-70">{node.key}</span>}
-            </dt>
-            <dd className="min-w-0 whitespace-pre-wrap break-words">
-              {node.kind === "value" ? (
-                <span className={cn(node.value == null && "text-muted-foreground")}>{displayValue(node.value)}</span>
-              ) : (
-                <span className="text-xs text-muted-foreground">
-                  {node.kind === "array" ? `${node.children?.length ?? 0} itens` : "objeto"}
-                </span>
-              )}
-            </dd>
-          </div>
-          {node.children && node.children.length > 0 && <OutputTreeView nodes={node.children} depth={depth + 1} />}
-        </Fragment>
-      ))}
-    </dl>
   );
 }
 
