@@ -237,7 +237,44 @@ class RunRecord:
     input_context: list[dict[str, Any]] | None = None
 
 
+def _redacted(record: RunRecord) -> RunRecord:
+    """Cópia do registro com `TRACE_REDACT_KEYS` aplicado (`redaction.py`): entrada da
+    raiz (`dependencies`, anexos), entrada/saída e metadata de cada span e a `metadata`
+    do run. O `record` original — cujos dicts são os mesmos que o modelo e as tools
+    usaram — não muda. Sem chaves configuradas, devolve o próprio `record`."""
+    from dataclasses import replace
+
+    from agent_service.observability.redaction import REDACTED, redact, redact_keys
+
+    keys = redact_keys()
+    if not keys:
+        return record
+    spans = []
+    for span in record.spans:
+        output = redact(span.output, keys)
+        status_message = span.status_message
+        # A falha de uma tool repete no `status_message` o começo do resultado (`tracing._tool_span`).
+        if status_message and output != span.output and status_message == str(span.output or "")[:500]:
+            status_message = str(output or "")[:500]
+        spans.append(
+            replace(
+                span,
+                input=redact(span.input, keys),
+                output=output,
+                status_message=status_message,
+                metadata=redact(span.metadata, keys),
+            )
+        )
+    return replace(
+        record,
+        input=redact(record.input, keys),
+        spans=spans,
+        metadata={k: (REDACTED if k.lower() in keys else v) for k, v in record.metadata.items()},
+    )
+
+
 def _write_run(record: RunRecord) -> None:
+    record = _redacted(record)
     ended_at = record.ended_at or datetime.now(timezone.utc)
     latency = round((ended_at - record.started_at).total_seconds() * 1000, 1)
     root_id = f"{record.run_id}:root"

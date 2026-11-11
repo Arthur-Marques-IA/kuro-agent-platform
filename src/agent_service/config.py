@@ -1,8 +1,9 @@
 """Configurações centrais do microserviço, carregadas de variáveis de ambiente."""
 
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -76,6 +77,27 @@ class Settings(BaseSettings):
     trace_write_shutdown_seconds: float = 5.0
     """No encerramento, quanto esperar as gravações de trace pendentes. Fique bem
     abaixo do prazo do `docker stop` (10 s antes do SIGKILL)."""
+    run_retention_days: int = 0
+    """Prazo do trace store local (`runs` e dependentes), em dias. Vazio ou 0 = sem
+    prazo (o padrão). Ligado, um job recorrente da fila de jobs apaga ou anonimiza
+    (`run_retention_mode`) os runs mais antigos — ver `observability/retention.py`."""
+    run_retention_mode: Literal["delete", "anonymize"] = "delete"
+    """`delete` remove o run e o que depende dele; `anonymize` mantém a linha (tokens,
+    custo, status, datas, agente, versão) e apaga o conteúdo da conversa."""
+    trace_redact_keys: str = ""
+    """Chaves mascaradas na gravação do trace, separadas por vírgula (`cpf,telefone`):
+    em `dependencies`, argumentos e resultados JSON das tools e `metadata`, o valor
+    vira `[redigido]`. Comparação exata, sem diferenciar maiúsculas; não varre texto
+    livre. O modelo e as tools continuam recebendo o valor real."""
+
+    @field_validator("run_retention_days", "run_retention_mode", mode="before")
+    @classmethod
+    def _empty_retention(cls, value: object, info: Any) -> object:
+        # `RUN_RETENTION_DAYS=` (vazio) no .env é "desligado", não erro de validação na subida.
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return 0 if info.field_name == "run_retention_days" else "delete"
+        return value.strip() if isinstance(value, str) else value
+
     idempotency_ttl_hours: int = 24
     """Por quanto tempo um `Idempotency-Key` de `/chat`/`/analyze` devolve a resposta
     guardada (`api/idempotency.py`). Passou disso, a mesma chave roda de novo."""

@@ -57,6 +57,21 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Novo
 
+- **Retenção do trace store e redação por chave.** Três variáveis novas, todas opcionais e
+  desligadas por padrão (nada muda sem configurá-las):
+  `RUN_RETENTION_DAYS` (vazio ou `0` = sem prazo) liga um job recorrente na fila de jobs
+  (`trace_retention`, a cada 6 h, um só entre as réplicas) que trata os runs mais antigos que o
+  prazo conforme `RUN_RETENTION_MODE`: `delete` (padrão) apaga o run com spans, metadata, scores,
+  referência do shadow e marcações de trecho; `anonymize` mantém as linhas para as estatísticas
+  (tokens, custo, status, datas, agente, versão) e apaga o conteúdo (mensagem, entrada estruturada,
+  saída, entrada/saída dos spans, `dependencies`, anexos), marcando o run com a metadata
+  `retention=anonymized`. `TRACE_REDACT_KEYS` (ex.: `cpf,telefone`) mascara como `[redigido]`, na
+  gravação do trace, o valor dessas chaves em `dependencies`, argumentos e resultados JSON das
+  tools, spans e `metadata` — por chave, não em texto livre; o modelo e as tools continuam
+  recebendo o valor real. Com o Langfuse ligado, o mesmo mascaramento vale para o que é enviado a
+  ele. A retenção não alcança as sessões do Agno, memórias, estado de procedurais nem o Langfuse:
+  ver [operação](operacao.md#retenção-e-dados-pessoais).
+
 - **Gravação de trace com fila própria.** O registro de cada execução sai do executor padrão do
   processo e vai para uma fila só dele (uma thread, `kuro-trace-writer`), limitada por
   `TRACE_WRITE_QUEUE_MAX` (1000): com o banco lento, a fila cheia descarta a gravação e conta, sem

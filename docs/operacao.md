@@ -161,6 +161,9 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `QUEUE_MAX_SIZE` | `64` | chamadas esperando vaga, por processo; fila cheia = 503 com `Retry-After` |
 | `TRACE_WRITE_QUEUE_MAX` | `1000` | gravações de trace (`runs`/`run_spans`) esperando o banco, por processo; fila cheia = a gravação é descartada e contada, a resposta não espera. Ver [gravação de trace](#gravação-de-trace) |
 | `TRACE_WRITE_SHUTDOWN_SECONDS` | `5` | no encerramento, quanto esperar as gravações de trace pendentes; fique bem abaixo dos 10 s do `docker stop` antes do SIGKILL |
+| `RUN_RETENTION_DAYS` | — (sem prazo) | prazo do trace store local, em dias; vazio ou `0` desliga. Ver [retenção e dados pessoais](#retenção-e-dados-pessoais) |
+| `RUN_RETENTION_MODE` | `delete` | o que a retenção faz com o run vencido: `delete` (apaga com os dependentes) ou `anonymize` (mantém os números, apaga o conteúdo) |
+| `TRACE_REDACT_KEYS` | — (nada) | chaves mascaradas na gravação do trace, separadas por vírgula (`cpf,telefone`): o valor vira `[redigido]`. Só por chave, nunca em texto livre |
 | `QUEUE_MAX_WAIT_SECONDS` | `30` | espera máxima na fila antes do 503; `0` desliga a fila. Deixe abaixo do timeout de quem chama |
 | `CORS_ORIGINS` | — (a lista do AgentOS) | páginas, em outro domínio, que podem ler as respostas da API no navegador; `none` fecha. Ver [segurança](#segurança-e-limitações-atuais) |
 | `IDEMPOTENCY_TTL_HOURS` | `24` | por quanto tempo um `Idempotency-Key` no `/chat`/`/analyze` devolve a resposta guardada ([integração](integracao.md#repetir-sem-duplicar-idempotency-key)) |
@@ -239,6 +242,76 @@ uv run kuro jobs cancel <id>              # para um job na fila ou rodando (em q
 
 O status que importa ao usuário continua no recurso: a fonte de site mostra `running`, o
 progresso e o erro como antes. `/jobs` é para o operador destravar (escopo `admin`).
+
+## Retenção e dados pessoais
+
+### O que fica guardado, e onde
+
+| Onde | O que tem de conversa | Prazo |
+|---|---|---|
+| `runs` | a mensagem montada (`message`), a fala pura (`input_message`), os eventos e blocos de contexto da entrada estruturada (`input_events`, `input_context`) e a resposta (`output`) | `RUN_RETENTION_DAYS` |
+| `run_spans` | na raiz, a entrada do run: `message`, `dependencies` e a lista de anexos (nome, tipo, tamanho; o conteúdo do anexo não); em cada tool, os argumentos, o resultado e, se falhou, o começo do resultado em `status_message`; na busca na base, a pergunta e o texto dos trechos (`metadata.references`); num procedural, o `state` com os campos coletados | `RUN_RETENTION_DAYS` |
+| `run_metadata`, `run_scores`, `run_references`, `chunk_feedback` | a correlação mandada por quem chama, os votos e seus comentários, a decisão do legado (shadow) e as marcações de trecho com a pergunta da busca | `RUN_RETENTION_DAYS` |
+| `agno_sessions` e `agno_runs` (sessões do Agno) | o histórico que volta como contexto nos turnos seguintes: cada mensagem, resposta e **anexo** | sem prazo — `kuro sessions delete <id>` apaga uma |
+| memórias (`agno_memories`, Mem0) | fatos extraídos sobre o usuário, com `memory_backend` diferente de `none` | sem prazo |
+| `procedure_runs` | o estado de cada conversa de um agente procedural: os campos coletados (CPF, nome...) e a última resposta | sem prazo |
+| `idempotency_keys` | a resposta inteira de um `/chat`/`/analyze` com `Idempotency-Key` | `IDEMPOTENCY_TTL_HOURS` (24 h; as vencidas são apagadas sozinhas) |
+| `agent_feedback_notes` e versões | as regras escritas a partir do feedback, que podem citar a conversa | sem prazo |
+| Langfuse (se ligado) | uma cópia dos traces, inclusive o texto mandado ao modelo | o do próprio Langfuse (configure lá) |
+
+### Retenção: `RUN_RETENTION_DAYS`
+
+Desligada por padrão. Com `RUN_RETENTION_DAYS=90`, um job da [fila de jobs](#fila-de-jobs)
+(`kind` `trace_retention`) trata os runs com início há mais de 90 dias, roda de novo a cada 6 h e
+aparece em `kuro jobs list`. Vale para as tabelas da primeira parte da tabela acima — o trace store
+local — e para nada mais:
+
+- `RUN_RETENTION_MODE=delete` (padrão): apaga o run e o que depende dele (`run_spans`,
+  `run_metadata`, `run_scores`, `run_references`, `chunk_feedback`). Some de `kuro runs`, dos
+  dashboards e das estatísticas. **Exporte antes** o que quiser guardar: as referências do shadow
+  (`kuro runs export`) e as marcações de trecho `relevant` (o gabarito do eval de RAG).
+- `RUN_RETENTION_MODE=anonymize`: mantém as linhas — tokens, custo, latência, status, datas,
+  agente, versões, tools chamadas e falhas, votos, `user_id`, `session_id` e a `metadata` — e apaga o
+  conteúdo: `message`, `input_message`, `input_events`, `input_context`, `output`, a entrada e a
+  saída de todos os spans (com `dependencies` e anexos), o `status_message` das tools, a pergunta e
+  o texto dos trechos em `metadata.references`, o comentário dos votos e a referência do shadow; a
+  pergunta das marcações de trecho vira `[removido]`. O run ganha a metadata
+  `retention=anonymized` (`kuro runs list --meta retention=anonymized`). `user_id`, `session_id` e a
+  `metadata` de correlação são identificadores e **ficam**: se forem dado pessoal, mascare-os na
+  origem ou use `delete`.
+
+Trabalha em lotes de 500 runs, uma transação curta por lote, sem travar a tabela. Com várias
+réplicas roda **um** de cada vez: o job tem uma `dedupe_key` fixa e a fila só aceita um ativo por
+chave. Rodar de novo não refaz nada (os apagados sumiram; os anonimizados têm o marcador). Trocar
+`delete` por `anonymize` não traz nada de volta; trocar `anonymize` por `delete` apaga também os
+já anonimizados. Desligar (`RUN_RETENTION_DAYS=` e reiniciar) tira da fila o job agendado. Precisa
+de pelo menos uma réplica com `JOBS_ENABLED=true`.
+
+### Redação na gravação: `TRACE_REDACT_KEYS`
+
+Com `TRACE_REDACT_KEYS=cpf,telefone`, o trace grava `"[redigido]"` no lugar do valor de toda chave
+`cpf` ou `telefone` (comparação exata do nome, sem diferenciar maiúsculas), em qualquer
+profundidade, em:
+
+- `dependencies` e os outros campos da entrada do run (span raiz);
+- argumentos e resultados das tools, inclusive o resultado que chega como texto JSON (o corpo da
+  resposta de uma tool de API) e o `status_message` de uma tool que falhou;
+- a metadata dos spans, o `state` de um procedural e a `metadata` do run (pela chave).
+
+Só o que é **gravado** muda: o modelo recebe as `dependencies` reais e as tools são chamadas com o
+valor real. O que já estava gravado não é reescrito. Limites:
+
+- **Não é varredura de texto livre.** O CPF que o contato digita na mensagem fica em `message`,
+  `input_message`, `input_events`, `output` e em qualquer texto que não seja JSON. Para isso, a
+  retenção.
+- O `kuro runs export` e as rules com `{"$dep": ...}` no eval passam a ver `[redigido]` nas chaves
+  mascaradas.
+- Com o Langfuse ligado, o cliente dele recebe o mesmo mascaramento (`mask` para a entrada e a saída
+  que o Kuro envia; `mask_otel_spans` para os spans do instrumentor do Agno: atributo cujo nome
+  termina na chave e atributo JSON). O texto das mensagens enviadas ao modelo, que o instrumentor
+  também exporta, **não** é mascarado — e as `dependencies` vão no contexto do modelo. Se isso
+  importa, deixe o Langfuse desligado ou configure a retenção dele.
+- As sessões do Agno, as memórias e o `procedure_runs` não passam por aqui.
 
 ## Rotacionar as chaves
 
