@@ -659,7 +659,8 @@ export interface CollectionVersion {
 
 export interface Collection {
   name: string;
-  search: CollectionSearchConfig;
+  /** Ausente em serviços anteriores à busca por collection: leia com `collectionSearch()`. */
+  search?: CollectionSearchConfig | null;
   /** Versão atual da configuração — a que os runs gravam em `collection_version`. */
   version?: number | null;
   config_hash?: string | null;
@@ -672,8 +673,8 @@ export interface Collection {
   label: string;
   description: string | null;
   is_seed: boolean;
-  /** Agentes com `knowledge_collection` apontando para cá. */
-  agents_using: string[];
+  /** Agentes com `knowledge_collection` apontando para cá (pode faltar num serviço antigo). */
+  agents_using?: string[] | null;
   created_at: string;
   updated_at: string;
 }

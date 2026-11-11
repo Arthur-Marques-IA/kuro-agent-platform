@@ -15,6 +15,10 @@ COPY . .
 # padrão (dev local, serve na raiz "/").
 ARG NEXT_BASE_PATH=""
 ENV NEXT_BASE_PATH=$NEXT_BASE_PATH
+# Hash do commit, só para exibir no rodapé do console (ao lado da versão do serviço). O contexto
+# do build é ./frontend, sem .git, então ele chega como ARG (o compose passa KURO_BUILD_SHA).
+ARG NEXT_PUBLIC_BUILD_SHA=dev
+ENV NEXT_PUBLIC_BUILD_SHA=$NEXT_PUBLIC_BUILD_SHA
 RUN npm run build
 
 # Runner: só o output "standalone" do Next.js, sem node_modules completo nem

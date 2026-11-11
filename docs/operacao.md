@@ -46,6 +46,30 @@ As portas são publicadas **só em `127.0.0.1`**. Para expor numa rede, não mud
 > respostas 4x mais lentas. O padrão já é sem ele: `docker compose up -d`
 > (mais `--profile ui` para o console) — as execuções continuam registradas.
 
+## Atualizando
+
+O serviço e o console são duas imagens, e o console depende dos campos que o serviço devolve:
+um console novo contra um serviço antigo quebra telas (ex.: a base de conhecimento). Por isso
+reconstrua **as duas juntas**, no mesmo `up`, com todos os profiles que você usa:
+
+```bash
+git pull
+KURO_BUILD_SHA=$(git rev-parse --short HEAD) \
+  docker compose --profile ui up -d --build        # + --profile tls / ip / observability, se usar
+uv run kuro health                                 # `version` do serviço
+```
+
+Leia antes a seção **Como atualizar** das [notas de versão](notas-de-versao.md). `docker compose
+build agent-service` sozinho (ou `up -d` sem `--profile ui`) deixa a imagem do console para trás.
+
+**Conferir:** o rodapé da barra lateral do console mostra `console <hash> · serviço <versão>`. O
+hash deve ser o do `git rev-parse --short HEAD` (sem `KURO_BUILD_SHA` aparece `dev`), e, se o
+serviço for mais antigo que o mínimo que o console exige, ou não informar a versão, aparece
+**Versões incompatíveis** (o motivo fica no tooltip). A versão mínima é a constante
+`MIN_SERVICE_VERSION` em `frontend/src/lib/service-compat.ts`. Ela compara o número de versão do
+serviço (`pyproject.toml`), que só sobe num lançamento: entre duas versões lançadas, o hash do
+console é o que diz se as imagens saíram do mesmo commit.
+
 ## HTTPS (profile `tls`)
 
 A chave de API viaja num header. Em HTTP puro ela vai em texto claro no fio,
