@@ -13,6 +13,30 @@
 
 **O Kuro no canto** (telas a partir de 1280 px, ao lado da sidebar): o corvo do [`kuro dash`](tui.md) consulta as execuções a cada 5 s (com backoff em erro; para com a aba oculta ou minimizado) e reage como lá — bate as asas com execução nova (testes do Playground contam), grasna de olho vermelho com erro, interrupção ou tool falhando, fica de cabeça para baixo com a API fora do ar e dorme com a observabilidade desligada; o balão diz o que chegou e o clique abre o run ou os Logs. Nas telas do formulário de agente (criar e a aba Configuração), cuja barra de salvar fica no rodapé, ele sai da tela.
 
+## Busca global (`Ctrl+K`) e a barra lateral
+
+A busca (`Ctrl+K`, `⌘K` no Mac, ou **Buscar** na sidebar) acha ações, páginas, agentes, **tools**
+e **bases de conhecimento** (pelo nome ou pelo identificador; essas duas só aparecem com algo
+digitado, até 6 de cada) e as conversas deste navegador. As tools e as collections são recarregadas
+ao abrir a busca; se a chamada falhar, valem as que a página já tinha, sem aviso. Escolher uma tool
+abre `/tools?q=<nome>` com a lista já filtrada; uma base abre `/knowledge?collection=<nome>`.
+
+**Colar um id** leva direto a ele, pelo formato que o serviço gera:
+
+| Colado | Opções |
+|---|---|
+| UUID (`3f2b8c1e-9a4d-4e7f-b2c6-0d1e2f3a4b5c`) | **Abrir execução** (`/runs/<id>`) e **Abrir sessão** (`/logs/sessions/<id>`): o `run_id` é um UUID, e o Playground também cria a sessão com um |
+| `analyze-…`, `cli-…`, `mcp-…` seguidos de hex | **Abrir sessão** — os `session_id` que o `/analyze`, a CLI e o MCP criam |
+| qualquer outra coisa | nenhuma: um `session_id` livre, mandado por quem integra, se acha pela busca das **Sessões** nos Logs |
+
+Com a observabilidade ligada, a busca confere o id em segundo plano (uma chamada às execuções) e
+diz "encontrada nos Logs" ou "não encontrada nos Logs"; se só a sessão existe, ela vem primeiro.
+Enter abre na hora, sem esperar a conferência.
+
+A barra lateral **Conversas deste navegador** lista só as conversas do Playground feitas com o
+`user_id` deste navegador. As de integrações, da CLI e de outras pessoas estão nos Logs: o atalho
+**Todas** ao lado do título abre `/logs/sessions`.
+
 ## Formulário de `dependencies`
 
 O painel **Contexto** do Playground, o campo **Dependencies** da Análise e o **Testar** de uma tool
