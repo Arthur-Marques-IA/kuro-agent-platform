@@ -66,3 +66,11 @@ def test_database_from_before_alembic_gets_missing_columns_and_keeps_data(tmp_pa
         versions = conn.execute(sa.text("SELECT version FROM agent_feedback_versions WHERE agent_type = 'antigo'")).all()
         assert [v[0] for v in versions] == [1]
     assert _head(engine) == HEAD
+
+
+def test_uma_cabeca_so():
+    """Duas branches criando a revisão seguinte ao mesmo tempo dão duas cabeças, e o
+    `upgrade head` do startup para. O teste das migrações em Postgres (`test_postgres.py`)
+    vai e volta por elas; este roda sempre."""
+    heads = ScriptDirectory.from_config(_config()).get_heads()
+    assert len(heads) == 1, f"mais de uma cabeça nas migrações: {heads}"
