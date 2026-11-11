@@ -111,7 +111,7 @@ def describe_error(exc: Exception) -> str:
         if exc.status == 403:
             return "sem permissão (HTTP 403): a chave não é de escopo admin — use a ADMIN_API_KEY em KURO_API_KEY"
         if exc.status == 501:
-            return "o panorama só existe no trace store local (TRACE_STORE_BACKEND=langfuse responde 501)"
+            return "isto só existe no trace store local (TRACE_STORE_BACKEND=langfuse responde 501)"
         detail = exc.detail if isinstance(exc.detail, str) else json.dumps(exc.detail, ensure_ascii=False)
         return f"{detail} (HTTP {exc.status})"
     return str(exc)
@@ -354,6 +354,7 @@ class RunScreen(Screen):
         self.client = client
         self.run_id = run_id
         self.trace: dict[str, Any] | None = None
+        self.load_error: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Masthead()
@@ -388,9 +389,20 @@ class RunScreen(Screen):
         try:
             trace = self.client.run_trace(self.run_id)
         except (ApiError, ServiceUnavailable) as exc:
-            self.app.call_from_thread(self.query_one("#run-head", Static).update, Text(describe_error(exc), style=BAD))
+            self.load_error = describe_error(exc)
+            self.app.call_from_thread(self.query_one("#run-head", Static).update, Text(self.load_error, style=BAD))
             return
         self.app.call_from_thread(self.show, trace)
+
+    def trace_ready(self) -> bool:
+        """`c` e `s` precisam do trace; sem ele, avisa por quê em vez de quebrar."""
+        if self.trace is not None:
+            return True
+        if self.load_error:
+            self.notify(f"o trace não carregou: {self.load_error}", severity="error")
+        else:
+            self.notify("o trace ainda está carregando", severity="warning")
+        return False
 
     def show(self, trace: dict[str, Any]) -> None:
         self.trace = trace
@@ -500,14 +512,12 @@ class RunScreen(Screen):
         _copy_run_id(self, self.run_id)
 
     def action_context(self) -> None:
-        if self.trace is None:
-            self.notify("o trace ainda está carregando", severity="warning")
+        if not self.trace_ready():
             return
         self.app.push_screen(ContextScreen(self.trace))
 
     def action_session(self) -> None:
-        if self.trace is None:
-            self.notify("o trace ainda está carregando", severity="warning")
+        if not self.trace_ready():
             return
         session_id = self.trace["run"].get("session_id")
         if not session_id:

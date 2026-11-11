@@ -246,6 +246,9 @@ async def capture(name: str) -> str:
             elif name == "contexto":
                 await pilot.press("c")
         await settle(pilot, app)
+        app.updated_at = "12:44:28"  # hora fixa: gerar de novo não muda a imagem à toa
+        app.sync_masthead()
+        await pilot.pause()
         return app.export_screenshot(title="kuro dash")
 
 

@@ -584,6 +584,25 @@ async def test_s_opens_the_session_timeline_and_warns_without_session():
         assert "sem session_id" in list(app._notifications)[-1].message
 
 
+async def test_c_and_s_explain_when_the_trace_failed_to_load():
+    class Failing(FakeClient):
+        def run_trace(self, run_id):
+            raise ApiError(501, "langfuse")
+
+    app = KuroDash(Failing(), interval=60)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await app.workers.wait_for_complete()
+        app.push_screen(RunScreen(app.client, "r1"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert isinstance(app.screen, RunScreen)
+        message = list(app._notifications)[-1].message
+        assert "não carregou" in message and "trace store local" in message and "panorama" not in message
+
+
 async def test_enter_on_span_toggles_full_content():
     app = KuroDash(FakeClient(traces={"r-est": STRUCTURED_TRACE}), interval=60)
     async with app.run_test(size=(140, 40)) as pilot:
