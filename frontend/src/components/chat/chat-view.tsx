@@ -87,7 +87,7 @@ function ExistingConversation({ sessionId }: { sessionId: string }) {
     // Turno estruturado: o `run_input` do AgentOS é o texto montado pelo servidor. A linha do
     // tempo devolve a fala e os eventos separados; sem ela (404, 501) o histórico fica como vem.
     const timeline = requestJson<SessionTimeline>(
-      `/api/sessions/${encodeURIComponent(sessionId)}/timeline?${query}`,
+      `/api/sessions/${encodeURIComponent(sessionId)}/timeline?${new URLSearchParams({ user_id: userId, limit: "200" })}`,
       { fallbackError: "Falha ao ler a linha do tempo" }
     ).catch(() => null);
     Promise.all([

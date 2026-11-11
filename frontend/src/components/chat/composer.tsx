@@ -44,9 +44,10 @@ export function Composer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const asHuman = humanMode && Boolean(onAddHumanAgent);
   // Só anexo já é uma mensagem válida ("o que tem nessa foto?" pode vir depois).
-  // O evento do atendente é só texto, e pode ser registrado com a resposta ainda saindo.
+  // O evento do atendente é só texto. Nada é aceito com a resposta saindo: numa conversa nova,
+  // o fim da 1ª troca troca de rota e uma fala registrada nesse meio-tempo se perderia.
   const canSend = asHuman
-    ? Boolean(value.trim()) && !disabled
+    ? Boolean(value.trim()) && !isStreaming && !disabled
     : (Boolean(value.trim()) || anexos.length > 0) && !isStreaming && !disabled;
 
   async function anexar(files: FileList | null) {
