@@ -24,6 +24,15 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Ação necessária
 
+- **O profile `tls` só sobe com login no console.** O console chama a API com a chave admin e era
+  publicado no `KURO_CONSOLE_DOMAIN` sem barreira nenhuma. Agora o Caddy pede usuário e senha
+  (basic_auth) no domínio do console e se recusa a subir sem `CONSOLE_BASIC_AUTH_USER` e
+  `CONSOLE_BASIC_AUTH_HASH` no `.env` — **inclusive para quem usa o profile `tls` só para a API**:
+  sem as variáveis, a API também fica sem HTTPS até você defini-las. A API (`/chat`, `/analyze`,
+  `/mcp`, `/health`) não ganha basic_auth; continua com a chave. **O que fazer:** antes do
+  `up`, gere o hash com `docker run --rm caddy:2-alpine caddy hash-password --plaintext 'senha'` e
+  ponha no `.env` com o hash entre aspas simples (`CONSOLE_BASIC_AUTH_HASH='$2a$14$...'`). Ver
+  [Login do console](operacao.md#login-do-console-basic_auth).
 - **`kuro connect --json` e `kuro mcp-config --json` mudaram de formato.** No `kuro connect`,
   `registered` e `replaced` deixam de ser `true`/`false` e passam a ser listas com os clientes
   (`["claude-code", "vscode"]`; vazia quando nada foi registrado), e entram `wrapper`, `codex` e
@@ -427,6 +436,12 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Como atualizar
 
+- **Profile `tls`: defina o login do console antes de subir.** Variáveis novas, obrigatórias com o
+  profile: `CONSOLE_BASIC_AUTH_USER` e `CONSOLE_BASIC_AUTH_HASH` (bcrypt, entre aspas simples no
+  `.env`). Depois, `docker compose --profile tls up -d` (o container do Caddy é recriado com o
+  script `docker/caddy-tls.sh`). Confira: o console pede usuário e senha, e
+  `curl https://<KURO_API_DOMAIN>/health` responde sem eles. Se o Caddy não subir,
+  `docker compose --profile tls logs caddy` diz o que falta.
 - **O repositório agora se chama `kuro-agent-platform`**
   (`https://github.com/Arthur-Marques-IA/kuro-agent-platform`). O `kuro connect` e o `uvx --from`
   da documentação já apontam para o nome novo. O GitHub redireciona o endereço antigo, mas atualize

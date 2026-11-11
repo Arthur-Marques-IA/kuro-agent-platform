@@ -74,6 +74,50 @@ entra pelo 443.
 Com o domínio, o MCP também fica acessível pela URL: o serviço o atende em `/mcp`, com a chave
 admin (ver [MCP](mcp.md#pela-url-mcp)). O serviço precisa rodar com um worker só, o padrão.
 
+### Login do console (basic_auth)
+
+O console não tem login próprio, e o servidor dele chama a API com a chave admin. Publicado sem
+barreira, quem achasse o domínio do console teria acesso total: agentes, traces, conversas e
+credenciais. Por isso o Caddy do profile `tls` pede usuário e senha (HTTP basic auth) no bloco do
+console (`KURO_CONSOLE_DOMAIN`), e **só sobe com as duas variáveis definidas**, mesmo que você não
+suba o profile `ui`.
+
+1. Gere o hash da senha (bcrypt) com o próprio Caddy:
+
+   ```bash
+   docker run --rm caddy:2-alpine caddy hash-password --plaintext 'uma-senha-forte'
+   ```
+
+2. Ponha usuário e hash no `.env`, **com o hash entre aspas simples**:
+
+   ```bash
+   CONSOLE_BASIC_AUTH_USER=admin
+   CONSOLE_BASIC_AUTH_HASH='$2a$14$...'   # o que o hash-password imprimiu, inteiro
+   ```
+
+3. `docker compose --profile tls up -d` (de novo, se já estava no ar). O navegador pede usuário e
+   senha ao abrir o console; a senha é a do passo 1, não o hash.
+
+**O `$` do hash.** O Compose interpola o `.env`: sem aspas, ou com aspas duplas, cada `$palavra`
+do bcrypt vira uma variável vazia, o hash chega cortado e o `docker compose` avisa
+`The "..." variable is not set`. Aspas simples desligam a interpolação. O escape `$$` só vale para
+um valor escrito direto no `docker-compose.yml`, não no `.env`. Não ponha a senha em texto claro
+na variável: ela precisa ser o hash.
+
+**Sem as variáveis**, o `up` termina, mas o container do Caddy não sobe o proxy: ele sai com erro e
+o `restart` tenta de novo a cada ~30 s, sem publicar nem a API nem o console. O motivo e o comando
+para gerar o hash aparecem em `docker compose --profile tls logs caddy`. O mesmo acontece se o hash
+não tiver cara de bcrypt (60 caracteres começando com `$2a$`), que é o sintoma das aspas
+esquecidas. A checagem fica no container (`docker/caddy-tls.sh`), e não num `${VAR:?}` do compose,
+porque o Compose interpola o arquivo inteiro antes de olhar os profiles: um `:?` ali faria até o
+`docker compose up -d` sem profile falhar.
+
+**A API não passa pelo basic_auth.** `/chat`, `/analyze`, `/mcp`, `/health` e o resto, no
+`KURO_API_DOMAIN`, continuam só com a autenticação por chave (`ADMIN_API_KEY`/`RUNTIME_API_KEY`).
+Também não passa o `127.0.0.1:3000` (`FRONTEND_BIND`), que só a própria máquina alcança. Para trocar
+a senha, gere outro hash, troque no `.env` e rode `docker compose --profile tls up -d caddy`.
+É uma barreira de curto prazo: um usuário e uma senha para todo mundo que usa o console.
+
 ### Sem domínio próprio: sslip.io
 
 Para ter "URL + chave" com certificado válido sem comprar domínio, use um DNS curinga público
