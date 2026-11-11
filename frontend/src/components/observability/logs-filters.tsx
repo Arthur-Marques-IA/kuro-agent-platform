@@ -44,6 +44,7 @@ export function PeriodPicker({
           }
         }}
         wrapperClassName="w-48"
+        className="h-10 md:h-9"
       >
         {PERIODS.map((period) => (
           <option key={period.value} value={period.value}>
@@ -114,7 +115,7 @@ function DateField({
           setDraft(next);
           if (next === "" || isoDay(next)) onCommit(next);
         }}
-        className={cn(fieldControlClasses, "h-9 w-[9.5rem] px-2 tabular-nums")}
+        className={cn(fieldControlClasses, "h-10 w-[9.5rem] px-2 tabular-nums md:h-9")}
         aria-label={ariaLabel}
       />
     </label>
@@ -207,7 +208,7 @@ function MultiSelect({
         }}
         className={cn(
           fieldControlClasses,
-          "inline-flex h-9 items-center gap-2 pl-3 pr-2.5 text-left",
+          "inline-flex h-10 items-center gap-2 pl-3 pr-2.5 text-left md:h-9",
           selected.length > 0 && "border-primary/60"
         )}
       >
@@ -334,12 +335,13 @@ export function StatusMultiSelect({
 /** Um filtro que veio de um link (usuário, sessão, versão, ordenação), removível. */
 export function FixedFilter({ label, value, onRemove }: { label: string; value: string; onRemove: () => void }) {
   return (
-    <span className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-sm">
+    <span className="inline-flex h-10 max-w-full items-center gap-1.5 rounded-lg border border-border bg-surface pl-3 text-sm md:h-9">
       {label}: <span className="max-w-40 truncate font-mono text-xs">{value}</span>
+      {/* A área de toque é a altura do chip inteira (40 px no celular), não só o ícone. */}
       <button
         type="button"
         onClick={onRemove}
-        className="text-muted-foreground hover:text-foreground"
+        className="inline-flex h-full w-10 shrink-0 items-center justify-center rounded-r-lg text-muted-foreground hover:text-foreground md:w-8"
         aria-label={`Remover filtro de ${label.toLowerCase()}`}
       >
         <X className="size-3.5" />

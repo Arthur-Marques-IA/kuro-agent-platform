@@ -73,6 +73,39 @@ a lista mostra também os números deles. Mudar os agentes tira o filtro de vers
 Links antigos: `/logs?user_id=…` vai para as sessões do usuário e `/logs?session_id=…` para as
 execuções da sessão.
 
+Os filtros mudam a URL no lugar (sem criar uma entrada no histórico a cada tecla): o **Voltar** do
+navegador, depois de abrir uma execução ou uma sessão, volta à lista com o mesmo recorte.
+
+**Vazio só por causa dos testes.** Quando o Panorama ou a lista de Execuções vem vazia com os testes
+de fora, uma consulta de uma linha (`GET /observability/runs?limit=1&include_dry_run=true`, com o
+mesmo recorte) diz se há execuções de teste ali; havendo, o vazio explica isso e traz o botão
+**Incluir testes**. A consulta só acontece no vazio: telas com dados não pagam nada.
+
+**Exportar CSV** (Sessões, Execuções e RAG) baixa o recorte atual, com todos os filtros ativos,
+buscado no servidor — não só o que está na tela:
+
+- **Execuções**: página a página (100 por chamada) até **5.000 linhas**, as mais recentes (ou na
+  ordem escolhida); com a amostra aleatória, exporta a amostra. O botão mostra quantas já vieram, e o
+  aviso no fim diz se o teto cortou o resto (aí, estreite o período ou os filtros).
+- **Sessões**: uma chamada só, até **200 sessões** de atividade mais recente (a API não pagina
+  sessões; a tela mostra 100).
+
+O arquivo é UTF-8 com BOM (o Excel lê os acentos), separado por vírgula, com CRLF entre linhas e as
+colunas com os nomes da API (`started_at`, `run_id`, `agent_type`, `status`, `message`, `output`,
+`cost_usd`…). Um texto que começa com `=`, `+`, `-`, `@`, tab ou CR ganha um `'` na frente, para a
+planilha não o executar como fórmula. No Excel em português (que separa por ponto e vírgula), abra
+por **Dados › De Texto/CSV** se as colunas vierem juntas.
+
+**Atualização automática**: ao lado de **Atualizar**, o seletor **Auto** (desligada, 10 s, 30 s ou
+60 s) busca de novo sozinho, como o `kuro dash`. Ele não remonta a lista: o que chegou entra no topo,
+o que mudou troca no lugar, o que veio de "Carregar mais" continua, e a rolagem fica onde estava (numa
+amostra aleatória a lista não muda). Com a aba oculta, para; ao voltar, atualiza na hora. A escolha
+fica guardada no navegador. **Atualizar** continua recarregando tudo do zero.
+
+**No celular** (abaixo de 768 px), as listas de Sessões e Execuções viram cartões: a fala (ou o
+contato e a última fala), o agente, o status e o horário, sem rolagem lateral; os controles de filtro
+têm 40 px de altura para o toque.
+
 ## A tela da execução
 
 `/runs/{run_id}` abre de qualquer lista (Logs, sessão, aba Execuções do agente). Além dos spans,

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useId, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, ChevronDown, ChevronRight, Table2, Wrench } from "lucide-react";
 import { errorMessage, requestJson } from "@/lib/http";
@@ -34,13 +34,19 @@ export function useOverview(params: Record<string, string | string[]>, enabled =
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const key = JSON.stringify(params);
+  // A atualização automática é silenciosa: nem a opacidade de "carregando" muda, e um erro dela não
+  // apaga o que está na tela (a próxima volta tenta de novo).
+  const silent = useRef(false);
+  const busy = useRef(false);
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
+    const quiet = silent.current;
+    silent.current = false;
+    busy.current = true;
     // Recarregar mantém o desenho anterior (com opacidade menor): sem esqueleto piscando.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setState("loading");
+    if (!quiet) setState("loading");
     requestJson<Overview>(`/api/observability/overview?${apiSearchParams({ tz: TIMEZONE, ...params })}`, {
       fallbackError: "Falha ao carregar o panorama",
     })
@@ -51,23 +57,46 @@ export function useOverview(params: Record<string, string | string[]>, enabled =
         setState("ready");
       })
       .catch((err) => {
-        if (cancelled) return;
+        if (cancelled || quiet) return;
         setError(errorMessage(err));
         setState("error");
+      })
+      .finally(() => {
+        if (!cancelled) busy.current = false;
       });
     return () => {
       cancelled = true;
+      busy.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, nonce, enabled]);
 
-  return { data, state, error, reload: () => setNonce((n) => n + 1) };
+  return {
+    data,
+    state,
+    error,
+    reload: () => setNonce((n) => n + 1),
+    refresh: () => {
+      if (busy.current) return;
+      silent.current = true;
+      setNonce((n) => n + 1);
+    },
+  };
 }
 
 /** O link para a lista de execuções com um recorte a mais (agente, versão, tool falhando). */
 type RunsHref = (drill: Partial<LogsQuery>) => string;
 
-export function OverviewPanel({ overview, runsHref }: { overview: ReturnType<typeof useOverview>; runsHref: RunsHref }) {
+export function OverviewPanel({
+  overview,
+  runsHref,
+  emptyAction,
+}: {
+  overview: ReturnType<typeof useOverview>;
+  runsHref: RunsHref;
+  /** Ação no estado vazio (o "Incluir testes" quando só há testes no período). */
+  emptyAction?: ReactNode;
+}) {
   const { data, state, error } = overview;
 
   if (!data) {
@@ -90,7 +119,14 @@ export function OverviewPanel({ overview, runsHref }: { overview: ReturnType<typ
           <EmptyState
             icon={Table2}
             title="Nenhuma execução no período"
-            description={data.include_dry_run ? undefined : "Os testes do Playground (dry_run) estão de fora — marque “Incluir testes” para vê-los."}
+            description={
+              data.include_dry_run
+                ? undefined
+                : emptyAction
+                  ? "Só há execuções de teste (Playground, dry_run) neste recorte, e elas ficam fora das métricas por padrão."
+                  : "Os testes do Playground (dry_run) ficam de fora das métricas por padrão."
+            }
+            action={data.include_dry_run ? undefined : emptyAction}
           />
         </Card>
       ) : (

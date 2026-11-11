@@ -57,6 +57,15 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Novo
 
+- **Console, listas de Logs: exportar CSV, atualização automática e cartões no celular.** Sessões,
+  Execuções e RAG ganham **Exportar CSV** com os filtros ativos, buscado no servidor (execuções até
+  5.000 linhas, paginadas; sessões até 200), em UTF-8 com BOM e com as células que começam com `=`,
+  `+`, `-` ou `@` neutralizadas contra fórmula. Ao lado de **Atualizar**, o seletor **Auto**
+  (desligada, 10, 30 ou 60 s) atualiza sem perder a rolagem nem o que veio de "Carregar mais", pausa
+  com a aba oculta e fica lembrado no navegador. O Panorama e as Execuções vazios por terem só testes
+  (`dry_run`) dizem isso e trazem o botão **Incluir testes**. Abaixo de 768 px, as listas viram
+  cartões (fala, agente, status, horário) e os filtros têm 40 px para o toque. Ver
+  [Console web](console.md#logs-panorama-sessões-e-execuções).
 - **Linha do tempo da sessão: `GET /observability/sessions/{id}/timeline`.** Um turno por run, em
   ordem cronológica, já separado: `events` (como gravados, com `kind`, `attachments` e `speech`),
   `message` (a fala pura), `context` (cada bloco com `changed` contra o turno estruturado anterior e,
