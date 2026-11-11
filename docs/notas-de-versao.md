@@ -57,6 +57,14 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Novo
 
+- **`kuro dash`: fala pura, contexto, sessão e conteúdo completo no trace.** A coluna mensagem do
+  Ao vivo e a caixa do trace mostram a fala (`input_message`); num run antigo, a mensagem inteira,
+  como antes. A caixa tem altura máxima e rolagem própria, e não empurra mais os spans. No trace,
+  `c` abre os blocos de contexto (título, chave, marca de volátil e conteúdo), `s` abre a sessão do
+  run (a linha do tempo, um turno por bloco, com as tools), Enter num span alterna entre a prévia e
+  a entrada e a saída completas (espaço passa a abrir e fechar o span) e `y` copia o `run_id`.
+  Ver [tui.md](tui.md). As capturas de `docs/telas/` agora saem de `docs/telas/gerar.py`.
+
 - **Linha do tempo da sessão: `GET /observability/sessions/{id}/timeline`.** Um turno por run, em
   ordem cronológica, já separado: `events` (como gravados, com `kind`, `attachments` e `speech`),
   `message` (a fala pura), `context` (cada bloco com `changed` contra o turno estruturado anterior e,

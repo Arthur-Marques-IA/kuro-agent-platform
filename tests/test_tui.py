@@ -48,6 +48,50 @@ TRACE = {
     "scores": [{"name": "eval", "value": 1, "comment": "ok"}],
 }
 
+LONG_CONTEXT = "[SISTEMA] histórico do cliente: " + "pedido 10432 em trânsito; " * 400
+
+# Run com entrada estruturada: a fala pura em `input_message`, a mensagem montada (enorme) em `message`.
+STRUCTURED_RUN = dict(
+    RUN,
+    run_id="r-est",
+    message=LONG_CONTEXT + "\ncontato: cadê meu pedido?",
+    input_message="cadê meu pedido?",
+)
+LONG_INPUT = "começo da entrada " + "x" * 2000 + " FIM-DA-ENTRADA"
+STRUCTURED_TRACE = {
+    "run": STRUCTURED_RUN,
+    "input_events": [{"role": "contact", "content": "cadê meu pedido?", "speech": True}],
+    "input_context": [
+        {"key": "cliente", "title": "Ficha do cliente", "content": "Ana, plano fibra 500", "volatile": False,
+         "hash": "a" * 64},
+        {"key": "status_rede", "title": "Status da rede", "content": "[ALERTA] instabilidade no bairro",
+         "volatile": True, "hash": "b" * 64},
+    ],
+    "spans": [
+        {"id": "a", "parent_id": None, "type": "GENERATION", "name": "gemini", "started_at": "1", "level": "DEFAULT",
+         "latency_ms": 900, "input": LONG_INPUT, "output": {"texto": "ok"}},
+    ],
+    "scores": [],
+}
+
+TIMELINE = {
+    "session_id": "s1",
+    "agent_types": ["suporte"],
+    "turns": 2,
+    "total_tokens": 240,
+    "items": [
+        {"run_id": "r0", "at": "2026-10-03T12:20:00Z", "agent_type": "suporte", "structured": False,
+         "raw_input": "oi, tudo bem?", "steps": [], "output": "Olá!", "usage": {"input_tokens": 10}},
+        {"run_id": "r1", "at": "2026-10-03T12:30:00Z", "agent_type": "suporte", "structured": True,
+         "events": [{"role": "human_agent", "content": "transferindo para o bot"},
+                    {"role": "contact", "content": "meu wifi caiu", "speech": True}],
+         "message": "meu wifi caiu",
+         "context": [{"key": "cliente", "title": "Ficha do cliente", "changed": True}],
+         "steps": [{"tool": "ficha", "args": {"cpf": "1"}, "ok": False, "failure": "http_5xx", "error": "HTTP 500"}],
+         "output": "Vamos ver.", "usage": {"input_tokens": 100, "output_tokens": 20}},
+    ],
+}
+
 OVERVIEW = {
     "totals": {"runs": 10, "errors": 1, "tool_failure_runs": 2, "sessions": 4, "total_tokens": 5000,
                "cost_usd": 0.5, "feedback_up": 3, "feedback_down": 1},
@@ -63,11 +107,13 @@ OVERVIEW = {
 class FakeClient:
     base_url = "http://kuro.test"
 
-    def __init__(self, *, runs=None, overview=None, health=None):
+    def __init__(self, *, runs=None, overview=None, health=None, traces=None):
         self.runs = runs
         self.health_result = health
         self.overview_result = overview
+        self.traces = traces or {}
         self.run_queries: list[dict] = []
+        self.timeline_queries: list[tuple] = []
 
     def health(self):
         if isinstance(self.health_result, Exception):
@@ -81,7 +127,11 @@ class FakeClient:
         return {"items": self.runs if self.runs is not None else [RUN]}
 
     def run_trace(self, run_id):
-        return TRACE
+        return self.traces.get(run_id, TRACE)
+
+    def session_timeline(self, session_id, user_id=None, *, limit=None, cursor=None):
+        self.timeline_queries.append((session_id, user_id, limit))
+        return TIMELINE
 
     def overview(self, **params):
         if isinstance(self.overview_result, Exception):
@@ -440,6 +490,141 @@ async def test_j_k_move_and_trace_keys_hidden():
         await pilot.pause()
         assert isinstance(app.screen, RunScreen)
         assert not app.check_action("switch_tab", ())  # no trace, as teclas das abas somem do rodapé
+
+
+async def _open_trace(pilot, app, run_id: str = "r1") -> RunScreen:
+    app.push_screen(RunScreen(app.client, run_id))
+    await pilot.pause()
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+    screen = app.screen
+    assert isinstance(screen, RunScreen) and screen.trace is not None
+    return screen
+
+
+async def test_live_column_shows_pure_speech_and_falls_back_to_message():
+    old = dict(RUN, run_id="r-old")  # sem input_message: run antigo, vale a mensagem
+    app = KuroDash(FakeClient(runs=[STRUCTURED_RUN, old]), interval=60)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        table = app.query_one("#runs", DataTable)
+        assert str(table.get_row_at(0)[-1]) == "cadê meu pedido?"
+        assert str(table.get_row_at(1)[-1]) == "meu wifi caiu"
+
+
+async def test_trace_message_box_shows_speech_and_keeps_spans_in_view():
+    client = FakeClient(traces={"r-est": STRUCTURED_TRACE, "r-old": dict(TRACE, run=dict(RUN, message=LONG_CONTEXT))})
+    app = KuroDash(client, interval=60)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await app.workers.wait_for_complete()
+        screen = await _open_trace(pilot, app, "r-est")
+        assert _text(screen.query_one("#run-msg-text", Static)) == "cadê meu pedido?"
+        assert screen.query_one("#run-msg").border_title == "fala"
+        await pilot.press("escape")
+        screen = await _open_trace(pilot, app, "r-old")
+        box = screen.query_one("#run-msg")
+        assert "pedido 10432" in _text(screen.query_one("#run-msg-text", Static))
+        assert box.outer_size.height <= 12  # altura máxima: a entrada longa rola dentro da caixa
+        assert box.max_scroll_y > 0
+        spans = screen.query_one("#spans")
+        assert spans.region.y < 40  # a árvore continua na tela
+
+
+async def test_c_opens_context_blocks_or_says_there_are_none():
+    client = FakeClient(traces={"r-est": STRUCTURED_TRACE})
+    app = KuroDash(client, interval=60)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await app.workers.wait_for_complete()
+        await _open_trace(pilot, app, "r-est")
+        await pilot.press("c")
+        await pilot.pause()
+        blocks = list(app.screen.query(".context-block"))
+        assert [b.border_title for b in blocks] == ["Ficha do cliente", "Status da rede"]
+        assert "volátil" in blocks[1].border_subtitle and "volátil" not in blocks[0].border_subtitle
+        assert "[ALERTA] instabilidade" in _text(blocks[1])  # Text, não markup
+        await pilot.press("escape")
+        await pilot.press("escape")
+        await _open_trace(pilot, app, "r1")  # run antigo, sem entrada estruturada
+        await pilot.press("c")
+        await pilot.pause()
+        assert not app.screen.query(".context-block")
+        assert "não tem contexto estruturado" in _text(app.screen.query_one("#context-empty", Static))
+
+
+async def test_s_opens_the_session_timeline_and_warns_without_session():
+    client = FakeClient(traces={"r-nosess": dict(TRACE, run=dict(RUN, run_id="r-nosess", session_id=None))})
+    app = KuroDash(client, interval=60)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await app.workers.wait_for_complete()
+        await _open_trace(pilot, app, "r1")
+        await pilot.press("s")  # no trace, `s` é a sessão, não o filtro de status do Ao vivo
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert client.timeline_queries == [("s1", None, 200)]  # sem filtro de usuário
+        assert client.run_queries[-1]["status"] is None
+        turns = list(app.screen.query(".turn"))
+        assert len(turns) == 2
+        assert turns[1].has_class("current") and "este run" in turns[1].border_title
+        body = _text(turns[1])
+        assert "atendente> transferindo para o bot" in body
+        assert "contato> meu wifi caiu" in body
+        assert "✗ ficha(cpf=1)" in body and "HTTP 500" in body
+        assert "agente> Vamos ver." in body
+        assert "entrada> oi, tudo bem?" in _text(turns[0])
+        await pilot.press("escape")
+        await pilot.press("escape")
+        await _open_trace(pilot, app, "r-nosess")
+        notified = len(app._notifications)
+        await pilot.press("s")
+        await pilot.pause()
+        assert isinstance(app.screen, RunScreen)
+        assert len(app._notifications) == notified + 1
+        assert "sem session_id" in list(app._notifications)[-1].message
+
+
+async def test_enter_on_span_toggles_full_content():
+    app = KuroDash(FakeClient(traces={"r-est": STRUCTURED_TRACE}), interval=60)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await app.workers.wait_for_complete()
+        screen = await _open_trace(pilot, app, "r-est")
+        tree = screen.query_one(Tree)
+        assert app.focused is tree
+        span = tree.root.children[0]
+        entrada = span.data["io"]["input"]
+        assert "… (+" in str(entrada.label) and not entrada.children
+        tree.move_cursor(span)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert span.data["full"] and span.is_expanded
+        assert "completa" in str(entrada.label)
+        lines = "".join(str(n.label) for n in entrada.children)
+        assert lines.endswith("FIM-DA-ENTRADA") and "… (+" not in lines
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not span.data["full"] and not entrada.children
+        assert "… (+" in str(entrada.label)
+
+
+async def test_y_copies_run_id_or_warns():
+    app = KuroDash(FakeClient(), interval=60)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await app.workers.wait_for_complete()
+        await _open_trace(pilot, app, "r1")
+        await pilot.press("y")
+        await pilot.pause()
+        assert app.clipboard == "r1"
+        assert "r1" in list(app._notifications)[-1].message
+
+        def broken(_text):
+            raise OSError("sem terminal")
+
+        app.copy_to_clipboard = broken
+        await pilot.press("y")
+        await pilot.pause()
+        last = list(app._notifications)[-1]
+        assert "não deu para copiar" in last.message and "r1" in last.message
 
 
 async def test_slash_from_overview_goes_to_the_filter():
