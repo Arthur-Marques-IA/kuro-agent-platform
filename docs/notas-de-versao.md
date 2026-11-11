@@ -54,8 +54,25 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   `fala`, `contexto`, `contexto_igual_ao_anterior` e `temporal` (que saíam de marcadores de texto
   como `[FALA DO CONTATO]`) e traz a entrada inteira em `entrada`. O resumo da sessão e as memórias
   do contato não mudam. A conversa separada em campos é a linha do tempo, abaixo.
+- **Segredos de tools `api` passam a ser cifrados com a `CREDENTIALS_ENCRYPTION_KEY`.** Sem a chave
+  configurada nada quebra: a tool é gravada em texto plano, como antes, com um aviso no log e
+  `secrets_at_rest: "plaintext"` na leitura. Mas defina a chave (ver "Como atualizar") — e
+  **guarde-a**: perder ou trocar a chave depois de cifrar faz as tools com segredo responderem
+  "Erro de configuração da tool: o segredo em auth.token está cifrado e não pôde ser decifrado..."
+  (`failure: "config"`, sem chamar o destino) até o segredo ser cadastrado de novo. A mesma chave
+  já cifra as credenciais de modelo.
 
 ### Novo
+
+- **Segredos de tools `kind="api"` cifrados em repouso.** `auth.token`, `auth.value`,
+  `auth.password` e o valor dos headers com nome de credencial (os mesmos que a leitura mascara:
+  `Authorization`, `X-Api-Key`, `X-...-Token`...) ficam no banco como `enc:v1:<token Fernet>`,
+  valor a valor; o resto da config (URL, parâmetros, `auth.type`, `auth.username`, `Accept`)
+  continua legível. A API continua mascarando, e ecoar a máscara num update preserva o valor
+  guardado. Segredo antigo em texto plano continua funcionando e passa a ser cifrado na próxima
+  gravação da config. `GET /tools` e `GET /tools/{nome}` trazem `secrets_at_rest` (`encrypted`,
+  `plaintext` ou `null` quando a tool não tem segredo). Cifrar não muda a versão da configuração
+  dos agentes: o hash continua sendo do texto plano.
 
 - **Linha do tempo da sessão: `GET /observability/sessions/{id}/timeline`.** Um turno por run, em
   ordem cronológica, já separado: `events` (como gravados, com `kind`, `attachments` e `speech`),
@@ -496,6 +513,14 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   já indexados ganham a revisão 1 na primeira vez que alguém a consulta, sem reindexar nada.
 - A migração `0016` também roda sozinha: acrescenta `input_message`, `input_events` e
   `input_context` em `runs`. Os runs existentes ficam com as três nulas (entrada não estruturada).
+- A migração `0017` também roda sozinha: cifra os segredos das tools `api` já gravados. **Defina a
+  `CREDENTIALS_ENCRYPTION_KEY` no `.env` antes do `up`** (gere com
+  `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`). Sem
+  ela, a migração não falha nem impede a subida: deixa os segredos em texto plano e loga um aviso.
+  Para cifrar depois de configurar a chave, regrave cada tool com `secrets_at_rest: "plaintext"`:
+  `kuro --json tools get <tool> --editable > t.json && kuro --json tools apply -f t.json` (a
+  máscara ecoada é trocada pelo valor guardado e gravada cifrada). O downgrade da `0017` (Alembic,
+  à mão) decifra e exige a mesma chave; voltar só a imagem não sobe com o banco na `0017`.
 - `AGENT_SERVICE_PUBLIC_URL` do console deixou de ter `http://localhost:58000` fixo no compose:
   vazia, a aba Integração mostra a URL que o agent-service conhece. Para forçar outra, defina-a no
   `.env`.

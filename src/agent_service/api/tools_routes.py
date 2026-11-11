@@ -28,6 +28,7 @@ from agent_service.agents.store import list_definitions as list_agent_definition
 from agent_service.config import get_settings
 from agent_service.tools import registry, store
 from agent_service.tools.api_tool import ApiToolConfigError, required_dependencies, validate_api_config
+from agent_service.tools.crypto import SECRET_AUTH_FIELDS, SECRET_HEADER_RE, is_encrypted, secrets_at_rest
 from agent_service.tools.catalog import BuiltinConfigError, list_builtin_catalog, validate_builtin_config
 from agent_service.tools.invoke import ToolUnavailableError
 from agent_service.tools.invoke import invoke_tool as run_tool
@@ -38,9 +39,9 @@ router = APIRouter(prefix="/tools", tags=["tools"])
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _SECRET_MASK = "••••••••"
-# O lugar do segredo é `auth` (`api_key` aceita header próprio), mas há tools com o
-# token direto em `headers`: o valor desses sai mascarado como o de `auth`.
-_SECRET_HEADER_RE = re.compile(r"auth|token|key|secret|passw|cookie|session|signature|credential", re.IGNORECASE)
+# O que é segredo numa tool de API (e é cifrado em repouso) mora em `tools/crypto.py`:
+# `auth.token/value/password` e os headers com nome de credencial saem mascarados.
+_SECRET_HEADER_RE = SECRET_HEADER_RE
 ToolKind = Literal["builtin", "api", "python"]
 
 
@@ -64,12 +65,12 @@ def _mask_config(kind: str, config: dict[str, Any]) -> dict[str, Any]:
     masked = copy.deepcopy(config)
     if kind == "api":
         auth = masked.get("auth") or {}
-        for field_name in ("token", "value", "password"):
+        for field_name in SECRET_AUTH_FIELDS:
             if auth.get(field_name):
                 auth[field_name] = _SECRET_MASK
         headers = masked.get("headers") or {}
         for name, value in headers.items():
-            if value and _SECRET_HEADER_RE.search(name):
+            if value and (_SECRET_HEADER_RE.search(name) or is_encrypted(value)):
                 headers[name] = _SECRET_MASK
     elif kind == "builtin":
         from agent_service.tools.catalog import get_builtin_spec
@@ -90,7 +91,7 @@ def _unmask_config(kind: str, incoming: dict[str, Any], existing: dict[str, Any]
     if kind == "api":
         auth = merged.get("auth") or {}
         existing_auth = existing.get("auth") or {}
-        for field_name in ("token", "value", "password"):
+        for field_name in SECRET_AUTH_FIELDS:
             if auth.get(field_name) == _SECRET_MASK:
                 auth[field_name] = existing_auth.get(field_name)
         headers = merged.get("headers") or {}
@@ -112,7 +113,10 @@ def _unmask_config(kind: str, incoming: dict[str, Any], existing: dict[str, Any]
 
 
 def _row_out(row: dict[str, Any]) -> dict[str, Any]:
-    return {**row, "config": _mask_config(row["kind"], row["config"])}
+    out = {**row, "config": _mask_config(row["kind"], row["config"])}
+    if row["kind"] == "api":
+        out["secrets_at_rest"] = secrets_at_rest(row["config"])
+    return out
 
 
 # -- schemas -----------------------------------------------------------
@@ -158,6 +162,10 @@ class ToolOut(BaseModel):
     is_seed: bool
     side_effect: bool | None = None
     """`None` = ainda não classificada."""
+    secrets_at_rest: Literal["encrypted", "plaintext"] | None = None
+    """Só `kind="api"`: como os segredos (`auth`, headers de credencial) estão no banco.
+    `plaintext` = algum ainda em claro (sem `CREDENTIALS_ENCRYPTION_KEY`, ou legado
+    não regravado); `None` = a tool não tem segredo."""
     created_at: datetime
     updated_at: datetime
 

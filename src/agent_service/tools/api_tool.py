@@ -52,6 +52,7 @@ from agent_service.tools.context import (
     get_idempotency_key,
     is_dry_run,
 )
+from agent_service.tools.crypto import ToolSecretError, decrypt_config
 from agent_service.tools.egress import EgressBlockedError, acheck_url, check_url_template
 
 Method = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
@@ -316,6 +317,14 @@ async def _call_api(config: dict[str, Any], model_arguments: dict[str, Any], too
         # para marcar a span como falha (ver `tools/failures.py`).
         failures.record_failure(tool_name, output, kind, http_status)
         return output
+
+    # Os segredos ficam cifrados na config guardada (`tools/crypto.py`); decifra numa
+    # cópia, só para esta chamada. Sem conseguir, não chama o destino: mandar o
+    # cifrado como token só trocaria o erro por um 401 confuso.
+    try:
+        config = decrypt_config(config)
+    except ToolSecretError as exc:
+        return failed(f"Erro de configuração da tool: {exc}", "config")
 
     # O flag do servidor vence um `dry_run` que viesse nas dependencies; a chave também.
     dependencies = {**get_dependencies(), DRY_RUN_DEPENDENCY: is_dry_run()}

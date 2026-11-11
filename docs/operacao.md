@@ -166,7 +166,7 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `MEMORY_CONTEXT_LIMIT` | `10` | quantas memórias de longo prazo (as mais recentes) entram no prompt |
 | `MODEL_PRICES` | tabela embutida | JSON `{"modelo": [USD/1M entrada, USD/1M saída]}` para o custo estimado sem Langfuse |
 | `GOOGLE_API_KEY` | — | chave do Gemini (provedor padrão) |
-| `CREDENTIALS_ENCRYPTION_KEY` | — | chave Fernet que cifra as credenciais de modelo; **obrigatória** para cadastrar chaves |
+| `CREDENTIALS_ENCRYPTION_KEY` | — | chave Fernet que cifra as credenciais de modelo e os segredos das tools `api`; **obrigatória** para cadastrar chaves de modelo. Sem ela, os segredos de tools ficam em texto plano. Ver [segurança](#segurança-e-limitações-atuais) |
 | `DEFAULT_MODEL_PROVIDER` / `DEFAULT_MODEL_ID` | `google` / `gemini-2.5-flash` | modelo de quem não define um |
 | `DATABASE_URL` | localhost | sobrescrito dentro do compose |
 | `MAX_ATTACHMENT_MB` | `20` | limite por anexo |
@@ -265,6 +265,21 @@ Leia antes de expor o serviço fora de uma rede confiável:
   seria entregar o mapa antes da fechadura; para ler o OpenAPI, mande o header.
   `GET /health` e `GET /ready` ficam sempre abertas: são o healthcheck do
   container e a readiness de quem chama.
+- **Segredos em repouso: `CREDENTIALS_ENCRYPTION_KEY`.** A mesma chave Fernet cifra as
+  credenciais de modelo e os segredos das tools `kind="api"`: `auth.token`, `auth.value`,
+  `auth.password` e o valor dos headers com nome de credencial (`Authorization`, `X-Api-Key`,
+  `X-...-Token`, `Cookie`...), valor a valor, guardados como `enc:v1:<token Fernet>`. O resto da
+  config fica legível. A leitura pela API mascara esses campos; quem decifra é a chamada da tool,
+  na hora de montar a requisição.
+  - **Sem a chave**, credencial de modelo é recusada (503 `encryption_not_configured`), mas tool
+    com segredo é gravada em texto plano, como antes desta versão, com um aviso no log: o
+    `.env.example` traz a chave vazia e recusar quebraria quem já cadastra tools assim. `GET
+    /tools/{nome}` mostra `secrets_at_rest: "plaintext"`; depois de configurar a chave, regrave a
+    tool (`kuro tools get <tool> --editable > t.json && kuro tools apply -f t.json`) para cifrar.
+  - **Guarde a chave** junto com o backup do banco: um backup sem ela não decifra nada. Trocar ou
+    perder a chave deixa cada tool com segredo cifrado respondendo "Erro de configuração da tool: o
+    segredo em ... não pôde ser decifrado" (`failure: "config"`), sem chamar o destino, até o
+    segredo ser cadastrado de novo. Não há rotação com duas chaves ao mesmo tempo.
 - **CORS (`CORS_ORIGINS`): quem precisa é só uma página no navegador, em outro domínio,
   chamando a API direto.** O console, a CLI, o MCP e os sistemas integrados não passam por
   isso (o console chama a API pelo próprio servidor). O padrão, com a variável vazia, é a lista
