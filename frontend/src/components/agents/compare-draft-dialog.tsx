@@ -2,10 +2,9 @@
 
 import { ArrowUpRight } from "lucide-react";
 import { draftChanges } from "@/lib/agent-list";
-import { cn } from "@/lib/cn";
-import { diffLines } from "@/lib/diff";
 import type { AgentDefinition } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { PromptDiff } from "@/components/agents/prompt-diff";
 import {
   Dialog,
   DialogBody,
@@ -41,7 +40,6 @@ export function CompareDraftDialog({
   const changes = draftChanges(prod, draft);
   const promptChanged = changes.some((c) => c.field === "instructions");
   const others = changes.filter((c) => c.field !== "instructions");
-  const diff = promptChanged ? diffLines(prod.instructions, draft.instructions) : [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} size="lg">
@@ -61,31 +59,13 @@ export function CompareDraftDialog({
         {promptChanged && (
           <section className="flex flex-col gap-1.5">
             <h3 className="text-[13px] font-medium">Prompt</h3>
-            <div className="scrollbar-thin max-h-72 overflow-auto rounded-lg border border-border py-1.5 font-mono text-[12px] leading-5">
-              {diff.map((line, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    "grid grid-cols-[1.75rem_minmax(0,1fr)] px-1",
-                    line.type === "added" && "bg-success/10",
-                    line.type === "removed" && "bg-destructive/10"
-                  )}
-                >
-                  <span
-                    aria-label={line.type === "added" ? "no draft" : line.type === "removed" ? "só na produção" : undefined}
-                    className={cn(
-                      "select-none text-center",
-                      line.type === "added" && "text-success",
-                      line.type === "removed" && "text-destructive",
-                      line.type === "same" && "text-muted-foreground/50"
-                    )}
-                  >
-                    {line.type === "added" ? "+" : line.type === "removed" ? "−" : " "}
-                  </span>
-                  <span className="whitespace-pre-wrap break-words pr-2">{line.text}</span>
-                </div>
-              ))}
-            </div>
+            <PromptDiff
+              from={prod.instructions}
+              to={draft.instructions}
+              addedLabel="no draft"
+              removedLabel="só na produção"
+              className="max-h-72"
+            />
           </section>
         )}
         {others.length > 0 && (

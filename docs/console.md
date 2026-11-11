@@ -4,7 +4,7 @@
 |---|---|
 | **Playground** `/chat` | conversa em streaming com qualquer agente conversacional; URL por conversa, histórico reidratado; edição de `dependencies`; anexos; 👍/👎 — e o 👎 pergunta o que mudar e ensina o agente |
 | **Análise** `/analyze` | roda um agente analista: documento (ou anexo) entra, o objeto do `response_schema` sai |
-| **Agentes** `/agents` | configuração (só os campos alterados vão no `PUT`), tipo do agente, parâmetros de geração e tempo limite, editor da saída estruturada com valores permitidos (`enum`); **Versões** (configuração inteira e prompt com diff) e **Promover**; **Aprendizado** (as regras vindas de feedback, editáveis, com histórico e rollback); execuções, com a concordância do shadow nos analistas; conversas e a aba Integração com o contrato vindo do backend |
+| **Agentes** `/agents` | configuração (só os campos alterados vão no `PUT`; [o formulário](#o-formulário-do-agente)), tipo do agente, parâmetros de geração e tempo limite, editor da saída estruturada com valores permitidos (`enum`); **Versões** (configuração inteira e prompt com diff) e **Promover**; **Aprendizado** (as regras vindas de feedback, editáveis, com histórico e rollback); execuções, com a concordância do shadow nos analistas; conversas e a aba Integração com o contrato vindo do backend |
 | **Tools** `/tools` | lista agrupada por integração (prefixo do nome ou host da API; as de sistema recolhidas no fim), filtros em chip (tipo, efeito colateral, não classificada, desligada, sem agente), por linha a 1ª frase da descrição, método e host e os agentes que usam, e um detalhe com descrição inteira, URL e parâmetros; ligar/desligar pelo menu; criação e edição dos três tipos, com formulário próprio por tipo, campos de dentro de parâmetros `object`/`array`, botão **Testar** (com `dependencies`) e origem de cada parâmetro |
 | **Conhecimento** `/knowledge` | documentos com status, escolha do embedder na criação, texto, arquivo ou site em qualquer coleção (sites com progresso, páginas e ressincronização), teste de busca semântica com score e origem |
 | **Modelos** `/models` | credenciais por provedor, teste de chave |
@@ -12,6 +12,26 @@
 | **Trace** `/runs/[id]` | cascata de spans (agente → modelo → tools), versão da configuração, tokens, custo, avaliações, metadata de quem chamou e a referência do shadow |
 
 **O Kuro no canto** (telas a partir de 1280 px, ao lado da sidebar): o corvo do [`kuro dash`](tui.md) consulta as execuções a cada 5 s (com backoff em erro; para com a aba oculta ou minimizado) e reage como lá — bate as asas com execução nova (testes do Playground contam), grasna de olho vermelho com erro, interrupção ou tool falhando, fica de cabeça para baixo com a API fora do ar e dorme com a observabilidade desligada; o balão diz o que chegou e o clique abre o run ou os Logs.
+
+## O formulário do agente
+
+A aba Configuração de um agente (e a tela Novo agente) é uma página só, com um índice das seções —
+Identidade, Tipo, Prompt, Etapas (procedural), Modelo, Memória, Saída (analista), Contexto e Tools.
+Em tela larga o índice fica fixo ao lado; em tela estreita vira uma barra no topo que rola de lado.
+Um ponto amarelo marca a seção com alteração não salva; um vermelho, a seção com erro (depois da
+primeira tentativa de salvar).
+
+- **O que vai no `PUT`:** só os campos que você mexeu, comparados com o que o formulário mostrou
+  ao abrir. Abrir e sair sem editar nunca fica "Alterações não salvas", nem com um serviço antigo
+  que não devolve os campos opcionais (`model_params`, `timeout_seconds`, `session_summary`...).
+- **Prompt:** uma instrução por linha; linhas em branco e espaços nas pontas não contam. **Tela
+  cheia** abre um editor com a numeração das linhas, busca (Ctrl+F, Enter vai para a próxima) e a
+  aba **Diferenças** contra a versão salva. Salvar um prompt alterado mostra antes o diff contra as
+  instruções salvas e pede a confirmação da versão nova. Uma instrução salva com quebras de linha
+  dentro (vinda da CLI ou da API) vira várias instruções se o prompt for editado aqui — o diff da
+  revisão mostra isso antes de gravar.
+- **Modelo:** o modelo salvo aparece na hora; a lista dos provedores chega depois. Se um provedor não
+  responder em 10 s, fica a lista fixa dele, com o motivo na dica — salvar nunca espera a lista.
 
 ## Formulário de `dependencies`
 

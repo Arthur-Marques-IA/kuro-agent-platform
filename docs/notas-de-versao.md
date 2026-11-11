@@ -46,6 +46,12 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Novo
 
+- **Console: formulário do agente mais fácil de percorrer.** Índice das seções (fixo ao lado; barra
+  compacta em tela estreita) com a marca de alteração ou erro em cada uma; editor de prompt em tela
+  cheia com numeração, busca e diff contra a versão salva; revisão do diff antes de salvar um prompt
+  alterado; o modelo salvo aparece sem esperar a lista dos provedores, que cai na lista fixa depois de
+  10 s. "Chaves de API" vira "Credenciais de modelos" nos textos do formulário.
+  Ver [console](console.md#o-formulário-do-agente).
 - **Conectar o MCP sem instalar o Kuro, em qualquer cliente.** Na sua máquina, só com o uv:
   `uv run https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py root@servidor`.
   O `kuro connect` virou um arquivo só, que usa apenas a biblioteca padrão do Python: começa em
@@ -370,6 +376,11 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Corrigido
 
+- **Console: agente aberto já aparecia com "Alterações não salvas".** O formulário comparava o que
+  mostrava com a resposta crua da API: uma instrução salva com quebra de linha dentro ou espaço
+  sobrando (o editor normaliza uma por linha) já contava como prompt alterado ("será salvo como v2"),
+  e um campo que um serviço mais antigo não devolve contava como mudado. Agora a comparação é contra
+  os valores que o formulário montou ao abrir, e o `PUT` leva só os campos editados.
 - **Conectar o MCP no Windows.** O comando antigo (`uvx --from "agent-service[mcp] @ git+..." kuro
   connect`) clona o repositório, e no Windows o clone falhava num caminho longo do `frontend/` se o
   git não tivesse `core.longpaths` ligado. O comando novo baixa um arquivo só, sem clonar nada.
