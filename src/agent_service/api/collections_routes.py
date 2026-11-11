@@ -50,8 +50,8 @@ from agent_service.documents import revisions, versions
 from agent_service.documents.embedder import (
     DEFAULT_EMBEDDER_PROVIDER,
     EMBEDDERS,
+    EmbedderError,
     EmbedderNotConfiguredError,
-    UnknownEmbedderProviderError,
     check_configured,
     resolve_spec,
 )
@@ -266,7 +266,7 @@ def create_collection(body: CollectionIn) -> dict[str, Any]:
                 "— informe também embedder_dimensions (o tamanho do vetor que esse modelo devolve).",
             )
         check_configured(body.embedder_provider, body.embedder_model)
-    except (UnknownEmbedderProviderError, EmbedderNotConfiguredError) as exc:
+    except EmbedderError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     search = {
         "search_mode": body.search_mode,

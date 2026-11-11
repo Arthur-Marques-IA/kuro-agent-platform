@@ -1,7 +1,7 @@
 [project]
 name = "agent-service"
 version = "0.2.0"
-description = "Add your description here"
+description = "Kuro Agent Platform: serviço para construir, avaliar e operar agentes de IA em produção, por API, CLI, console web e MCP."
 readme = "README.md"
 authors = [
     { name = "Arthur Marques", email = "joao_arthur@discente.ufg.br" }

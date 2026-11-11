@@ -291,3 +291,52 @@ def test_agente_com_collection_sem_credencial_nao_derruba_o_boot():
 
     with patch.object(registry, "_build_from_definition", side_effect=EmbedderNotConfiguredError("openai: sem chave")):
         assert registry.all_agents() == []
+
+
+def test_erros_de_embedder_tem_uma_base_so():
+    """`EmbedderError` é uma classe: quem captura a base pega as duas falhas, e
+    `ValueError` continua pegando (quem já capturava assim não muda)."""
+    from agent_service.documents import collections
+    from agent_service.documents.embedder import (
+        EmbedderError,
+        EmbedderNotConfiguredError,
+        UnknownEmbedderProviderError,
+    )
+
+    assert issubclass(EmbedderNotConfiguredError, EmbedderError)
+    assert issubclass(UnknownEmbedderProviderError, EmbedderError)
+    assert issubclass(EmbedderError, ValueError)
+    assert collections.EmbedderError is EmbedderError
+
+
+@pytest.mark.parametrize("erro", ["EmbedderNotConfiguredError", "UnknownEmbedderProviderError"])
+def test_analyze_com_embedder_quebrado_responde_502(monkeypatch, erro):
+    import asyncio
+
+    from agent_service.api import routes
+    from agent_service.documents import embedder
+
+    def falha(agent_type):
+        raise getattr(embedder, erro)("openai: sem chave")
+
+    monkeypatch.setattr(routes, "get_agent_with_definition", falha)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(routes.analyze(routes.AnalyzeRequest(agent_type="extrator", document="x")))
+    assert exc.value.status_code == 502
+    assert exc.value.detail == "openai: sem chave"
+
+
+def test_sonda_do_ollama_vira_embedder_error_com_a_causa(monkeypatch):
+    from agent_service.documents import embedder
+    from agent_service.models import catalog
+
+    class Sonda:
+        def probe(self, **kwargs):
+            raise catalog.ProviderProbeError("conexão recusada")
+
+    monkeypatch.setattr(embedder, "_credential", lambda provider: (None, None))
+    monkeypatch.setitem(catalog.PROVIDERS, "ollama", Sonda())
+    with pytest.raises(embedder.EmbedderError) as exc:
+        embedder.check_configured("ollama")
+    assert "conexão recusada" in str(exc.value)
+    assert isinstance(exc.value.__cause__, catalog.ProviderProbeError)

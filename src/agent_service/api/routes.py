@@ -16,17 +16,15 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing, asynccontextmanager
 from typing import Annotated, Any
 
-from agno.agent import Agent
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sse_starlette.sse import EventSourceResponse
 
-from agno.run.agent import RunEvent
-
 from agent_service.api import idempotency
 from agent_service.agents import structured_input
+from agent_service.agents.runtime import RunnableAgent, read_event
 from agent_service.agents.attachments import AttachmentError, AttachmentIn, build_media, describe_attachments
 from agent_service.agents.structured_input import MAX_CONTEXT_BLOCKS, MAX_EVENTS, ContextBlock, InputEvent
 from agent_service.agents.dependency_fields import DependencyValidationError, validate_dependencies
@@ -38,7 +36,7 @@ from agent_service.agents.procedure_runner import (
 )
 from agent_service.agents.registry import UnknownAgentTypeError, get_agent_with_definition, list_agent_types
 from agent_service.config import get_settings
-from agent_service.documents.collections import EmbedderError
+from agent_service.documents.embedder import EmbedderError
 from agent_service.documents.retrieval import sources_from
 from agent_service.observability.tracing import (
     RUN_FAILED,
@@ -270,7 +268,7 @@ class ChatResponse(BaseModel):
     interpretar o texto (ver `agents/procedural.py::state_view`)."""
 
 
-def _resolve(request: ChatRequest, endpoint: str) -> tuple[Agent, RunContext]:
+def _resolve(request: ChatRequest, endpoint: str) -> tuple[RunnableAgent, RunContext]:
     """Monta o agente e o contexto do run. Faz I/O síncrono no Postgres (definição,
     nota de feedback, uma consulta por tool): chame via `run_in_threadpool`, nunca
     direto numa rota `async` — travaria o event loop do worker inteiro."""
@@ -462,12 +460,13 @@ async def _chat(request: ChatRequest, idempotency_key: str | None) -> ChatRespon
     async with _run_slot(), aclosing(traced_run_events(agent, run)) as events:
         try:
             async for event in events:
-                if event.event == RunEvent.run_content.value and isinstance(event.content, str):
-                    chunks.append(event.content)
-                elif event.event == RunEvent.run_completed.value and isinstance(event.content, str):
-                    final_content = event.content
-                elif event.event == RunEvent.run_error.value:
-                    raise HTTPException(status_code=502, detail=event.content or RUN_FAILED)
+                step = read_event(event)
+                if step.kind == "content" and isinstance(step.content, str):
+                    chunks.append(step.content)
+                elif step.kind == "completed" and isinstance(step.content, str):
+                    final_content = step.content
+                elif step.kind == "error":
+                    raise HTTPException(status_code=502, detail=step.content or RUN_FAILED)
         except RunTimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
 
@@ -483,7 +482,7 @@ async def _chat(request: ChatRequest, idempotency_key: str | None) -> ChatRespon
     )
 
 
-async def _chat_procedural(request: ChatRequest, agent: Agent, run: RunContext) -> ChatResponse:
+async def _chat_procedural(request: ChatRequest, agent: RunnableAgent, run: RunContext) -> ChatResponse:
     chunks: list[str] = []
     state: dict[str, Any] | None = None
     async with _run_slot():
@@ -566,7 +565,7 @@ async def _analyze(request: AnalyzeRequest, idempotency_key: str | None) -> Anal
         agent, definition = await run_in_threadpool(get_agent_with_definition, request.agent_type)
     except UnknownAgentTypeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (ToolBuildError, UnknownToolError, *EmbedderError) as exc:
+    except (ToolBuildError, UnknownToolError, EmbedderError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     if (definition.get("kind") or "conversational") != "analysis":
@@ -608,10 +607,11 @@ async def _analyze(request: AnalyzeRequest, idempotency_key: str | None) -> Anal
     async with _run_slot(), aclosing(traced_run_events(agent, run)) as events:
         try:
             async for event in events:
-                if event.event == RunEvent.run_completed.value:
-                    final_content = event.content
-                elif event.event == RunEvent.run_error.value:
-                    raise HTTPException(status_code=502, detail=event.content or RUN_FAILED)
+                step = read_event(event)
+                if step.kind == "completed":
+                    final_content = step.content
+                elif step.kind == "error":
+                    raise HTTPException(status_code=502, detail=step.content or RUN_FAILED)
         except RunTimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
 
@@ -689,13 +689,14 @@ async def chat_stream(request: ChatRequest, idempotency_key: IdempotencyKey = No
             failed = False
             async with _run_slot(), aclosing(traced_run_events(agent, run)) as events:
                 async for event in events:
-                    if event.event == RunEvent.run_content.value and event.content:
-                        yield {"event": "message", "data": json.dumps({"content": event.content})}
-                    elif event.event == RunEvent.run_completed.value and event.metrics:
-                        yield {"event": "usage", "data": json.dumps(event.metrics.to_dict())}
-                    elif event.event == RunEvent.run_error.value:
+                    step = read_event(event)
+                    if step.kind == "content" and step.content:
+                        yield {"event": "message", "data": json.dumps({"content": step.content})}
+                    elif step.kind == "completed" and (usage := step.usage()) is not None:
+                        yield {"event": "usage", "data": json.dumps(usage)}
+                    elif step.kind == "error":
                         failed = True
-                        yield {"event": "error", "data": json.dumps({"message": event.content or RUN_FAILED})}
+                        yield {"event": "error", "data": json.dumps({"message": step.content or RUN_FAILED})}
             if not failed:
                 sources = sources_from(run.knowledge_searches)
                 yield {"event": "sources", "data": json.dumps({"sources": sources}, default=str)}

@@ -19,7 +19,7 @@ from agent_service.agents.procedural import PROCEDURAL_INSTRUCTIONS
 from agent_service.agents.response_model import build_response_model
 from agent_service.agents.store import get_definition, get_feedback_note, list_definitions
 from agent_service.agents.versions import effective_config, ensure_version
-from agent_service.documents.collections import EmbedderError
+from agent_service.documents.embedder import EmbedderError
 from agent_service.models.provider import ProviderNotConfiguredError
 from agent_service.tools.store import get_tool as get_tool_row
 from agent_service.tools.registry import resolve_tools_with_stamp
