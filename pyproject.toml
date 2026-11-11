@@ -83,6 +83,7 @@ dev = [
     "agent-service[mcp,tui]",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "ruff==0.17.4",
 ]
 
 [tool.pytest.ini_options]
@@ -93,3 +94,12 @@ markers = [
 
 [tool.ruff]
 target-version = "py312"
+# O código nunca foi quebrado em 88 colunas: 120 é o comprimento que ele já segue
+# (é o valor com que o `ruff format` mexe em menos arquivos).
+line-length = 120
+
+[tool.ruff.lint]
+# Regras explícitas, as que o código já cumpre (o conjunto padrão clássico do ruff).
+# Explícitas porque o padrão muda entre versões do ruff; ampliar é uma decisão à parte,
+# com as correções num commit próprio.
+select = ["E4", "E7", "E9", "F"]

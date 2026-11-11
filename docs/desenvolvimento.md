@@ -27,6 +27,22 @@ uv run pytest
 npm --prefix frontend test   # a conta dos gráficos do console (frontend/src/lib/*.test.ts)
 ```
 
+### Lint e formatação
+
+O backend usa o [ruff](https://docs.astral.sh/ruff/) para lint e formatação, com a versão
+fixada no grupo dev (`uv sync` já instala) e a configuração em `[tool.ruff]` do
+`pyproject.toml`: linhas de até 120 colunas e as regras `E4`, `E7`, `E9` e `F`. O CI (job
+`lint`) roda os dois comandos de verificação e falha se algum acusar.
+
+```bash
+uv run ruff check .            # lint; `--fix` corrige o que for seguro
+uv run ruff format --check .   # só confere a formatação
+uv run ruff format             # formata
+```
+
+Use sempre o `uv run ruff`, não um ruff global ou o `uvx ruff`: outra versão formata
+diferente e acusa regras que o projeto não seleciona.
+
 ### Testes contra Postgres
 
 `uv run pytest` roda em SQLite (um arquivo descartável por sessão), sem banco nenhum no ar.
