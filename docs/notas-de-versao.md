@@ -43,8 +43,31 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   (`QUEUE_MAX_WAIT_SECONDS + timeout_seconds + 5`); um cliente com `timeout_seconds + 5`, como o
   [guia de integração](integracao.md#4-erros-e-fallback) recomendava, pode desistir com o run ainda na fila.
   Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
+- **`kuro sessions show` e a tool MCP `session_show` passam a ler a linha do tempo da sessão.**
+  O `--json` de `kuro sessions show` deixa de ser a lista de runs do Agno (`run_input`, `content`,
+  `metrics`) e passa a ser o envelope de `GET /observability/sessions/{id}/timeline` (`items` com
+  um turno por run). O `session_show` do MCP deixa de devolver `resumo_da_sessao` e
+  `memorias_do_contato` (continuam em `GET /observability/sessions/{id}/transcript`); `raw=true`
+  segue devolvendo os runs crus do Agno. `kuro sessions show` filtra pelo `user_id` como antes
+  (`cli` ou `KURO_USER_ID`), agora pelo `user_id` gravado no run; `--all-users` tira o filtro.
+- **`GET /observability/sessions/{id}/transcript` não recorta mais a entrada.** Cada item perde
+  `fala`, `contexto`, `contexto_igual_ao_anterior` e `temporal` (que saíam de marcadores de texto
+  como `[FALA DO CONTATO]`) e traz a entrada inteira em `entrada`. O resumo da sessão e as memórias
+  do contato não mudam. A conversa separada em campos é a linha do tempo, abaixo.
 
 ### Novo
+
+- **Linha do tempo da sessão: `GET /observability/sessions/{id}/timeline`.** Um turno por run, em
+  ordem cronológica, já separado: `events` (como gravados, com `kind`, `attachments` e `speech`),
+  `message` (a fala pura), `context` (cada bloco com `changed` contra o turno estruturado anterior e,
+  quando mudou, `previous_content`; bloco `volatile` nunca conta como mudado; no primeiro turno
+  estruturado nenhum conta), `steps` (cada tool: argumentos, `ok`, `failure`, `error`, prévia do
+  resultado e `side_effect`), `sources`, `output` e `usage`. No envelope, os totais da sessão
+  inteira: agentes, início, fim, duração, turnos, erros, tokens e custo. Run sem entrada
+  estruturada vem com `structured: false` e o texto inteiro em `raw_input`, sem recorte. Até 200
+  turnos por página (`limit`, padrão 100; `next_cursor` → `cursor`), filtro por `user_id`, escopo
+  admin como o resto de `/observability`; 404 para sessão sem runs e 501 com
+  `TRACE_STORE_BACKEND=langfuse`. Formato em [integracao.md](integracao.md#linha-do-tempo-da-sessão).
 
 - **Entrada estruturada no `/chat` e no `/chat/stream`.** Campos opcionais `events` (o que aconteceu
   desde a última resposta do agente: `role` `contact` | `human_agent` | `agent_sent` | `system`,

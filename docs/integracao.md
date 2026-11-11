@@ -255,6 +255,56 @@ Numa chamada só com `message`, as três ficam nulas. Os runs e as sessões de a
 ficam como **entrada não estruturada**: não há retrocarga, porque separar o texto antigo seria
 adivinhar.
 
+#### Linha do tempo da sessão
+
+`GET /observability/sessions/{session_id}/timeline` devolve a conversa pronta para ler, um turno
+por run, do mais antigo ao mais novo — é o que o console, o `kuro sessions show` e a tool MCP
+`session_show` mostram. Parâmetros: `user_id` (só os runs dele), `limit` (turnos por página, padrão
+100, máximo 200) e `cursor` (o `next_cursor` da página anterior). Escopo admin, como o resto de
+`/observability`; 404 se a sessão não tem runs; 501 com `TRACE_STORE_BACKEND=langfuse`.
+
+```json
+{
+  "session_id": "conv-98231", "user_id": "aluno-4412", "agent_types": ["r6"],
+  "started_at": "2026-11-11T12:00:00Z", "ended_at": "2026-11-11T12:05:02Z", "duration_ms": 302000.0,
+  "turns": 2, "error_count": 0, "input_tokens": 200, "output_tokens": 40, "total_tokens": 240,
+  "cost_usd": 0.002, "next_cursor": null,
+  "items": [
+    {
+      "run_id": "...", "at": "2026-11-11T12:05:00Z", "agent_type": "r6", "agent_version": 10,
+      "status": "success", "status_message": null, "dry_run": false, "structured": true,
+      "events": [{"role": "contact", "content": "quero parcelar", "at": "2026-11-11T12:05:00Z",
+                  "kind": "text", "attachments": [], "speech": true}],
+      "message": "quero parcelar", "raw_input": null,
+      "context": [{"key": "divida", "title": "Contexto da dívida", "content": "1 parcela vencida",
+                   "volatile": false, "hash": "<sha256>", "changed": true,
+                   "previous_content": "SEM parcela vencida"}],
+      "steps": [{"tool": "regente_r6_decidir", "args": {"acao": "transferir", "departamento": "Secretaria"},
+                 "ok": true, "failure": null, "http_status": null, "error": null,
+                 "result_preview": "HTTP 200: {\"ok\": true}", "side_effect": false, "latency_ms": 150.0}],
+      "sources": [], "output": "resposta do agente",
+      "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120, "cost_usd": 0.001,
+                "latency_ms": 2000.0}
+    }
+  ]
+}
+```
+
+- **`changed`** compara o `hash` de cada bloco com o do bloco de mesma `key` no turno estruturado
+  anterior da sessão (turnos não estruturados no meio são pulados, e a comparação atravessa as
+  páginas). No primeiro turno estruturado nenhum bloco conta como mudado. Bloco que aparece
+  depois disso é `changed: true` com `previous_content: null`; bloco que mudou traz o texto anterior
+  em `previous_content`, para mostrar a diferença sem outra chamada. Bloco `volatile` nunca é
+  `changed`.
+- **`steps`**: cada chamada de tool, na ordem. `ok: false` segue o critério de `tool_failures`
+  (argumento inválido, auth, indisponível, configuração, exceção); um 404 é `ok: true` com
+  `failure: "not_found"`. `side_effect` vem da classificação atual da tool (não classificada =
+  `false`). `result_preview` é o começo do resultado; o inteiro está no trace do run.
+- **Run não estruturado** (só `message`, ou anterior a esta entrada): `structured: false`, `events` e
+  `context` vazios, `message: null` e o texto inteiro em `raw_input`. Nada é recortado.
+- Os totais do envelope (`turns`, tokens, custo, `agent_types`, início e fim) são da sessão inteira,
+  não só da página.
+
 ## 4. Erros e fallback
 
 | Status | Significa | O que fazer |

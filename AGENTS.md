@@ -183,7 +183,8 @@ kuro --json runs export -a r8 -o casos.jsonl    # runs com referência viram dat
 # Conversas guardadas (a transcrição em si)
 # O user_id é o mesmo do chat: `cli` por padrão, ou KURO_USER_ID.
 kuro --json sessions list --agent suporte
-kuro --json sessions show <session_id>          # transcrição: cada mensagem, a resposta e os tokens
+kuro --json sessions show <session_id>          # linha do tempo: por turno events, message, context (changed), steps, output, usage
+kuro --json sessions show <session_id> --all-users   # sem filtrar por user_id (conversa de uma integração); pagina com --cursor
 kuro --json sessions rename <session_id> "Cliente X"
 kuro --json sessions delete <session_id> --yes  # apaga a conversa (não tem volta); o registro em `kuro runs` continua
 

@@ -898,6 +898,107 @@ def referenced_runs(query: RunQuery, *, limit: int = 5000) -> list[dict[str, Any
     return items
 
 
+def session_timeline(
+    session_id: str, *, user_id: str | None = None, limit: int = 100, cursor: str | None = None
+) -> dict[str, Any] | None:
+    """O material da linha do tempo de uma sessão (`transcript.build_timeline`), em
+    poucas consultas: o agregado da sessão inteira, uma página de runs em ordem
+    cronológica (`limit`, a partir de `cursor`), os spans de tool desses runs, a
+    classificação `side_effect` das tools chamadas, quais runs são teste (`dry_run`) e o
+    `input_context` do último turno estruturado antes da página — sem ele, o primeiro
+    turno da página 2 seria comparado com nada. `None` se a sessão não tem runs."""
+    from agent_service.tools.store import tool_definitions
+
+    conditions = [runs.c.session_id == session_id]
+    if user_id:
+        conditions.append(runs.c.user_id == user_id)
+    is_error = case((runs.c.status == "error", 1), else_=0)
+    page_stmt = select(runs).where(*conditions)
+    if cursor and (position := _decode_cursor(cursor)):
+        started_at, run_id = position
+        page_stmt = page_stmt.where(
+            or_(runs.c.started_at > started_at, and_(runs.c.started_at == started_at, runs.c.run_id > run_id))
+        )
+    page_stmt = page_stmt.order_by(runs.c.started_at, runs.c.run_id).limit(limit + 1)
+    with get_db().db_engine.connect() as conn:
+        total = conn.execute(
+            select(
+                func.count().label("turns"),
+                func.min(runs.c.user_id).label("user_id"),
+                func.min(runs.c.started_at).label("started_at"),
+                func.max(func.coalesce(runs.c.ended_at, runs.c.started_at)).label("ended_at"),
+                func.coalesce(func.sum(runs.c.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(runs.c.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(runs.c.total_tokens), 0).label("total_tokens"),
+                func.sum(runs.c.cost_usd).label("cost_usd"),
+                func.coalesce(func.sum(is_error), 0).label("error_count"),
+            ).where(*conditions)
+        ).one()
+        if not total.turns:
+            return None
+        agent_types = sorted(
+            a for (a,) in conn.execute(select(runs.c.agent_type).where(*conditions).distinct())
+        )
+        rows = list(conn.execute(page_stmt))
+        page, more = rows[:limit], len(rows) > limit
+        run_ids = [r.run_id for r in page]
+        spans: dict[str, list[Any]] = {r: [] for r in run_ids}
+        seed_context = None
+        dry_run: set[str] = set()
+        if run_ids:
+            for span in conn.execute(
+                select(run_spans)
+                .where(run_spans.c.run_id.in_(run_ids), run_spans.c.type == "TOOL")
+                .order_by(run_spans.c.started_at, run_spans.c.id)
+            ):
+                spans[span.run_id].append(span)
+            first = page[0]
+            seed_context = conn.execute(
+                select(runs.c.input_context)
+                .where(
+                    *conditions,
+                    or_(runs.c.input_context.is_not(None), runs.c.input_events.is_not(None)),
+                    or_(
+                        runs.c.started_at < first.started_at,
+                        and_(runs.c.started_at == first.started_at, runs.c.run_id < first.run_id),
+                    ),
+                )
+                .order_by(runs.c.started_at.desc(), runs.c.run_id.desc())
+                .limit(1)
+            ).first()
+            dry_run = {
+                r
+                for (r,) in conn.execute(
+                    select(run_metadata.c.run_id).where(
+                        run_metadata.c.run_id.in_(run_ids), run_metadata.c.key == "dry_run", run_metadata.c.value == "true"
+                    )
+                )
+            }
+        tool_names = {s.name for items in spans.values() for s in items}
+        side_effects = (
+            {
+                name: bool(flag)
+                for name, flag in conn.execute(
+                    select(tool_definitions.c.tool_name, tool_definitions.c.side_effect).where(
+                        tool_definitions.c.tool_name.in_(tool_names)
+                    )
+                )
+            }
+            if tool_names
+            else {}
+        )
+    return {
+        "total": total._mapping,
+        "agent_types": agent_types,
+        "rows": page,
+        "spans": spans,
+        "seed": None if seed_context is None else (seed_context.input_context or []),
+        "side_effects": side_effects,
+        "dry_run": dry_run,
+        "next_cursor": _encode_cursor(page[-1].started_at, page[-1].run_id) if more else None,
+    }
+
+
 def session_turns(session_id: str, agent_type: str) -> list[dict[str, Any]]:
     """As trocas de uma sessão com um agente, em ordem: `{run_id, message,
     output, status, status_message}`. É a conversa como ela chegou ao agente,
