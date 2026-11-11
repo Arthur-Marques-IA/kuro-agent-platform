@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { requestJson } from "@/lib/http";
 import { Skeleton } from "@/components/ui/primitives";
 import type { IntegrationContract } from "@/lib/types";
+import type { ChatEventPayload, ContextBlockPayload } from "@/lib/chat-request";
 
 /**
  * Exemplo de chamada ao contrato estável, montado a partir de
@@ -33,12 +34,18 @@ export function IntegrationPanel({
   userId = "user-123",
   sessionId = "session-abc",
   dependencies,
+  context,
+  events,
   showReference = false,
 }: {
   agentType: string;
   userId?: string;
   sessionId?: string;
   dependencies?: Record<string, unknown> | null;
+  /** Blocos de `context` em uso na tela (Playground); vazio fica fora do exemplo. */
+  context?: ContextBlockPayload[];
+  /** Eventos (`human_agent`) que vão junto da fala; vazio fica fora do exemplo. */
+  events?: ChatEventPayload[];
   showReference?: boolean;
 }) {
   const hasRealDependencies = Boolean(dependencies && Object.keys(dependencies).length > 0);
@@ -77,8 +84,13 @@ export function IntegrationPanel({
     }
     if (hasRealDependencies) body.dependencies = dependencies;
     if (!includeDependencies) delete body.dependencies;
+    // Entrada estruturada só quando a tela usa: chamada sem ela continua igual à de sempre.
+    if (contract.kind !== "analysis" && contract.kind !== "procedural") {
+      if (events?.length) body.events = events;
+      if (context?.length) body.context = context;
+    }
     return body;
-  }, [contract, dependencies, hasRealDependencies, includeDependencies, sessionId, userId]);
+  }, [contract, context, dependencies, events, hasRealDependencies, includeDependencies, sessionId, userId]);
 
   const temDependencies = (contract?.dependencies.length ?? 0) > 0 || hasRealDependencies;
   const requiresAuth = contract?.curl.includes("Authorization") ?? false;

@@ -133,7 +133,8 @@ export interface ChatResponse {
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant";
+  /** `human_agent`: evento de atendente humano simulado no Playground (vai em `events` junto da fala seguinte). */
+  role: "user" | "assistant" | "human_agent";
   content: string;
   usage?: UsageMetrics;
   createdAt?: number;

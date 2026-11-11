@@ -85,6 +85,15 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   ganha o selo "enviado diferente". Run legado aparece como "entrada não estruturada", com o texto
   original. As tabelas de execuções e de sessões mostram a fala pura (`input_message`), e a tela da
   execução mostra a entrada em blocos, com a migalha em Logs. Detalhes em [console.md](console.md#a-tela-da-sessão).
+- **Console: o Playground com a mesma entrada estruturada.** O painel **Contexto** ganha a aba
+  **Blocos de contexto** (`key`, `title`, `content` e `volatile`, guardados por agente no navegador
+  como as `dependencies`, com key única e título obrigatório conferidos antes do envio) e o botão
+  **Atendente** do campo de mensagem registra falas de um atendente humano, que vão em `events`
+  (`human_agent`, com `at`) junto da próxima mensagem do contato e aparecem como bolha de atendente.
+  A conversa reaberta mostra a fala e o atendente separados (lidos da linha do tempo), e o
+  **Código** mostra a chamada com `context` e `events` quando usados. Sem blocos nem atendente o
+  corpo enviado é o de antes. Agente procedural não oferece os dois controles (o servidor os recusa
+  com 422). Detalhes em [console.md](console.md#entrada-estruturada-no-playground).
 
 - **Entrada estruturada no `/chat` e no `/chat/stream`.** Campos opcionais `events` (o que aconteceu
   desde a última resposta do agente: `role` `contact` | `human_agent` | `agent_sent` | `system`,

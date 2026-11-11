@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { parseSseStream } from "@/lib/sse";
 import { apiUrl, readErrorMessage } from "@/lib/http";
 import { createId } from "@/lib/id";
+import { buildChatBody, type ChatEventPayload, type ContextBlockPayload } from "@/lib/chat-request";
 import type { Attachment, ChatMessage, ChatSource, ProcedureState, UsageMetrics } from "@/lib/types";
 
 interface SendOptions {
@@ -14,6 +15,10 @@ interface SendOptions {
   attachments?: Attachment[];
   /** Execução de teste: as tools recebem `X-Kuro-Dry-Run: true` e decidem o que simular. */
   dryRun?: boolean;
+  /** Blocos de `context` (texto para o modelo ler); vazio fica fora do corpo. */
+  context?: ContextBlockPayload[];
+  /** Eventos antes da fala (atendente humano simulado); vazio fica fora do corpo. */
+  events?: ChatEventPayload[];
 }
 
 /**
@@ -45,7 +50,7 @@ export function useChat({
   }, []);
 
   const send = useCallback(
-    async ({ text, sessionId, dependencies, attachments, dryRun }: SendOptions): Promise<boolean> => {
+    async ({ text, sessionId, dependencies, attachments, dryRun, context, events }: SendOptions): Promise<boolean> => {
       const message = text.trim();
       if ((!message && !attachments?.length) || streamingRef.current) return false;
 
@@ -58,6 +63,12 @@ export function useChat({
       const now = Date.now();
       setMessages((prev) => [
         ...prev,
+        ...(events ?? []).map((event) => ({
+          id: createId(),
+          role: event.role === "human_agent" ? ("human_agent" as const) : ("user" as const),
+          content: event.content,
+          createdAt: event.at ? Date.parse(event.at) : now,
+        })),
         {
           id: createId(),
           role: "user",
@@ -77,15 +88,19 @@ export function useChat({
         const response = await fetch(apiUrl("/api/chat/stream"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            agent_type: agentType,
-            user_id: userId,
-            session_id: sessionId,
-            message,
-            dependencies: dependencies ?? undefined,
-            attachments: attachments?.length ? attachments : undefined,
-            dry_run: dryRun || undefined,
-          }),
+          body: JSON.stringify(
+            buildChatBody({
+              agentType,
+              userId,
+              sessionId,
+              message,
+              dependencies,
+              attachments,
+              dryRun,
+              context,
+              events,
+            })
+          ),
           signal: controller.signal,
         });
 

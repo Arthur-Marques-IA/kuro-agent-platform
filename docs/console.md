@@ -2,7 +2,7 @@
 
 | Página | O que tem |
 |---|---|
-| **Playground** `/chat` | conversa em streaming com qualquer agente conversacional; URL por conversa, histórico reidratado; edição de `dependencies`; anexos; 👍/👎 — e o 👎 pergunta o que mudar e ensina o agente |
+| **Playground** `/chat` | conversa em streaming com qualquer agente conversacional; URL por conversa, histórico reidratado; edição de `dependencies` e de blocos de `context`; simular atendente humano (`events`); anexos; 👍/👎 — e o 👎 pergunta o que mudar e ensina o agente |
 | **Análise** `/analyze` | roda um agente analista: documento (ou anexo) entra, o objeto do `response_schema` sai |
 | **Agentes** `/agents` | configuração (só os campos alterados vão no `PUT`), tipo do agente, parâmetros de geração e tempo limite, editor da saída estruturada com valores permitidos (`enum`); **Versões** (configuração inteira e prompt com diff) e **Promover**; **Aprendizado** (as regras vindas de feedback, editáveis, com histórico e rollback); execuções, com a concordância do shadow nos analistas; conversas e a aba Integração com o contrato vindo do backend |
 | **Tools** `/tools` | lista agrupada por integração (prefixo do nome ou host da API; as de sistema recolhidas no fim), filtros em chip (tipo, efeito colateral, não classificada, desligada, sem agente), por linha a 1ª frase da descrição, método e host e os agentes que usam, e um detalhe com descrição inteira, URL e parâmetros; ligar/desligar pelo menu; criação e edição dos três tipos, com formulário próprio por tipo, campos de dentro de parâmetros `object`/`array`, botão **Testar** (com `dependencies`) e origem de cada parâmetro |
@@ -26,6 +26,39 @@ objeto como texto, para colar um inteiro; os dois modos ficam sincronizados. Cha
 declaradas aparecem em **Outros campos** (chave/valor, valor lido como JSON quando dá) e nunca são
 descartadas; agente sem campos declarados fica só com esse editor. No Playground o objeto continua
 pré-preenchido com valores fictícios e guardado por agente no navegador.
+
+## Entrada estruturada no Playground
+
+O Playground manda a mesma [entrada estruturada](integracao.md#entrada-estruturada) que uma
+integração, para testar um agente com o contexto e o histórico separados em campos:
+
+- **Blocos de contexto.** O painel **Contexto** tem duas abas: **dependencies** (o formulário acima,
+  valores tipados para as tools) e **Blocos de contexto** (texto para o modelo ler, enviado em
+  `context`). Cada bloco tem `key`, título, conteúdo e a marca `volatile` (o bloco que muda todo
+  turno, como o contexto temporal, e não conta como "o contexto mudou" na tela da sessão). Os blocos
+  ficam guardados por agente no navegador, como as `dependencies`, e vão em toda mensagem. Antes do
+  envio o console confere o que o servidor recusaria com 422: `key` e título preenchidos, `key`
+  única (até 64 caracteres), título até 200, no máximo 30 blocos. Um bloco inválido aparece em
+  vermelho no próprio campo, o botão **Contexto** fica "inválido" e a mensagem não sai. **Exemplo**
+  preenche dois blocos (dados do contato e contexto temporal).
+- **Simular atendente.** O botão **Atendente** do campo de mensagem troca o modo: o texto digitado
+  vira uma fala do atendente humano, mostrada como bolha de atendente (tracejada, "vai junto da
+  próxima mensagem", com × para descartar). Na próxima mensagem do contato essas falas vão em
+  `events` (`role: "human_agent"`, com `at` do momento em que foram registradas) e a mensagem
+  continua em `message`. "Tentar novamente" reenvia as falas que foram com aquela mensagem.
+- **A conversa reaberta** relê a linha do tempo da sessão: a bolha do contato mostra só a fala (o
+  `run_input` do AgentOS é o texto montado pelo servidor) e as falas do atendente voltam antes
+  dela. Uma conversa cujo primeiro turno foi estruturado é nomeada pela fala, não pelo texto
+  montado.
+- **Código** mostra a chamada com `context` e `events` quando a tela os usa (as falas pendentes ou,
+  sem elas, as que foram com a última mensagem), em cURL, JavaScript, Python e PHP.
+- Sem blocos nem falas de atendente o corpo é exatamente o de antes: nada de `events: []` ou
+  `context: []`.
+- **Agente procedural** recusa `events` e `context` (422): o painel mostra só as `dependencies`,
+  com o aviso, e o botão **Atendente** não aparece.
+
+Na tela da sessão em Logs, uma conversa do Playground com blocos e atendente aparece igual a uma
+vinda de integração.
 
 ## Logs: Panorama, Sessões e Execuções
 

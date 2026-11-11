@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useId, useRef, useState } from "react";
-import { ArrowUp, Braces, Paperclip, Square, X } from "lucide-react";
+import { ArrowUp, Braces, Headset, Paperclip, Square, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,7 @@ export function Composer({
   contextCount,
   contextInvalid,
   onOpenContext,
+  onAddHumanAgent,
 }: {
   /** Retorna `false` se a mensagem não foi aceita (o texto fica no campo). */
   onSend: (text: string, attachments: Attachment[]) => boolean;
@@ -30,13 +31,23 @@ export function Composer({
   contextCount: number;
   contextInvalid: boolean;
   onOpenContext: () => void;
+  /**
+   * Modo "simular atendente": o texto vira um evento `human_agent`, que vai em `events`
+   * junto da próxima fala do contato. Ausente (ex.: agente procedural), o botão some.
+   */
+  onAddHumanAgent?: (text: string) => void;
 }) {
   const id = useId();
   const [value, setValue] = useState("");
   const [anexos, setAnexos] = useState<{ attachment: Attachment; name: string }[]>([]);
+  const [humanMode, setHumanMode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const asHuman = humanMode && Boolean(onAddHumanAgent);
   // Só anexo já é uma mensagem válida ("o que tem nessa foto?" pode vir depois).
-  const canSend = (Boolean(value.trim()) || anexos.length > 0) && !isStreaming && !disabled;
+  // O evento do atendente é só texto, e pode ser registrado com a resposta ainda saindo.
+  const canSend = asHuman
+    ? Boolean(value.trim()) && !disabled
+    : (Boolean(value.trim()) || anexos.length > 0) && !isStreaming && !disabled;
 
   async function anexar(files: FileList | null) {
     if (!files) return;
@@ -58,6 +69,12 @@ export function Composer({
   function submit(e?: FormEvent) {
     e?.preventDefault();
     if (!canSend) return;
+    if (asHuman) {
+      onAddHumanAgent?.(value);
+      setValue("");
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
+      return;
+    }
     if (onSend(value, anexos.map((a) => a.attachment))) {
       setValue("");
       setAnexos([]);
@@ -71,12 +88,19 @@ export function Composer({
       className={cn(
         "rounded-2xl border border-input bg-card shadow-sm transition-[border-color,box-shadow]",
         "focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/15",
+        asHuman && "border-violet-500/50 bg-violet-500/5 focus-within:border-violet-500/70 focus-within:ring-violet-500/15",
         disabled && "opacity-70"
       )}
     >
       <label htmlFor={id} className="sr-only">
-        Mensagem
+        {asHuman ? "Fala do atendente humano" : "Mensagem"}
       </label>
+      {asHuman && (
+        <p className="px-4 pt-2.5 text-[11px] font-medium text-violet-700 dark:text-violet-300">
+          Simulando atendente humano: o texto vai em <code className="font-mono">events</code> junto da próxima
+          mensagem do contato.
+        </p>
+      )}
       <textarea
         ref={textareaRef}
         id={id}
@@ -84,7 +108,7 @@ export function Composer({
         rows={1}
         autoFocus
         disabled={disabled}
-        placeholder={placeholder}
+        placeholder={asHuman ? "O que o atendente humano disse ao contato…" : placeholder}
         onChange={(e) => {
           setValue(e.target.value);
           autoResize(e.target);
@@ -125,7 +149,7 @@ export function Composer({
         <button
           type="button"
           onClick={onOpenContext}
-          title="Contexto (dependencies) enviado com cada mensagem"
+          title="Contexto (dependencies e blocos de contexto) enviado com cada mensagem"
           className={cn(
             "inline-flex h-7 items-center gap-1.5 rounded-lg border px-2 text-xs transition-colors",
             contextInvalid
@@ -138,16 +162,42 @@ export function Composer({
           <Braces className="size-3.5" />
           {contextInvalid ? "Contexto inválido" : contextCount > 0 ? `Contexto · ${contextCount}` : "Contexto"}
         </button>
+        {onAddHumanAgent && (
+          <button
+            type="button"
+            onClick={() => {
+              setHumanMode((on) => !on);
+              textareaRef.current?.focus();
+            }}
+            aria-pressed={asHuman}
+            title="Simular atendente: registrar uma fala do atendente humano antes da próxima mensagem do contato"
+            className={cn(
+              "inline-flex h-7 items-center gap-1.5 rounded-lg border px-2 text-xs transition-colors",
+              asHuman
+                ? "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300"
+                : "border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+            )}
+          >
+            <Headset className="size-3.5" />
+            <span className="hidden sm:inline">Atendente</span>
+          </button>
+        )}
         <div className="ml-auto flex items-center gap-3">
           <span className="hidden text-[11px] text-muted-foreground md:inline">
             Enter envia · Shift+Enter quebra linha
           </span>
-          {isStreaming ? (
+          {isStreaming && !asHuman ? (
             <Button size="icon-sm" variant="secondary" onClick={onStop} aria-label="Parar resposta" title="Parar resposta">
               <Square className="fill-current" />
             </Button>
           ) : (
-            <Button type="submit" size="icon-sm" disabled={!canSend} aria-label="Enviar mensagem" title="Enviar">
+            <Button
+              type="submit"
+              size="icon-sm"
+              disabled={!canSend}
+              aria-label={asHuman ? "Registrar fala do atendente" : "Enviar mensagem"}
+              title={asHuman ? "Registrar fala do atendente" : "Enviar"}
+            >
               <ArrowUp />
             </Button>
           )}
