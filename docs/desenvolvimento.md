@@ -17,7 +17,8 @@ uv run uvicorn agent_service.main:app --app-dir src --reload
 npm --prefix frontend install
 npm --prefix frontend run dev
 
-# schema: as migrações (Alembic) rodam sozinhas no startup; para aplicar à mão
+# schema: as migrações (Alembic) rodam sozinhas na subida (o lifespan de main.py, não o
+# import; ver "A subida" em operacao.md); a suíte migra e semeia no conftest. Para aplicar à mão
 uv run kuro-migrate
 # mudança de schema nova = um arquivo em src/agent_service/migrations/versions/
 

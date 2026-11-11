@@ -200,6 +200,34 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `AGENT_SERVICE_PUBLIC_URL` (frontend) | — | endereço exibido nos exemplos de integração; vazio, vale o que o agent-service conhece (`KURO_PUBLIC_URL`, `KURO_API_DOMAIN`, profile `ip`) |
 | `KURO_API_URL` / `KURO_JSON` / `KURO_NO_INPUT` (CLI) | `http://127.0.0.1:58000` | endereço, saída JSON e modo não interativo |
 
+## A subida: migração, seeds e várias réplicas
+
+Importar `agent_service.main` não toca no banco: tudo acontece na subida (o lifespan do app),
+nesta ordem:
+
+1. **Configuração:** as origens de CORS e a autenticação (sem chave de API, só com
+   `ALLOW_OPEN=1`). Errada, a subida para aqui, antes de qualquer acesso ao banco.
+2. **Sob um lock** — `pg_advisory_lock(7743220957235996530)` (a chave é fixa,
+   `MIGRATION_LOCK_KEY` em `migrations/__init__.py`), numa conexão só dele:
+   1. **migração e seeds**;
+   2. **o app:** o AgentOS lê os agentes e as collections do banco já migrado (e o Agno cria a
+      extensão `vector`, as tabelas de vetores e as `agno_*` dele);
+   3. **o que roda em background:** o MCP em `/mcp`, o acerto das fontes de site e o worker da
+      [fila de jobs](#fila-de-jobs).
+
+   O lock é solto quando a subida termina. Duas réplicas (ou `--workers N`) subindo juntas fazem
+   isso uma de cada vez: a segunda loga `Esperando outra instância terminar de migrar o banco`
+   e, quando pega o lock, acha o banco já migrado e segue. Sem isso, além da migração em dobro, o
+   `CREATE EXTENSION/TABLE IF NOT EXISTS` do Agno em paralelo derrubava uma delas com
+   `duplicate key`. O `uv run kuro-migrate` usa o mesmo lock.
+
+Uma falha em qualquer passo aparece no log como o motivo seguido de
+`Application startup failed. Exiting.`, e o processo sai (código 3). O uvicorn só abre a porta
+depois da subida, então até lá uma conexão é recusada, como antes. Quem roda o uvicorn com
+`--lifespan off` pula a subida inteira: toda requisição recebe 503 `O serviço ainda está subindo.` Um container que trava esperando o lock
+é outra réplica migrando (ou uma sessão que segurou o lock): `SELECT * FROM pg_locks WHERE
+locktype = 'advisory'` mostra quem.
+
 ## Fila de jobs
 
 O trabalho em background (hoje, a sincronização de sites) passa por uma fila no próprio Postgres,

@@ -381,8 +381,21 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 - **URL sem domínio próprio, documentada:** `KURO_API_DOMAIN=<ip-com-hífens>.sslip.io` com o profile
   `tls` dá HTTPS com certificado válido, inclusive para o MCP por `/mcp`. Precisa das portas 80 e
   443 livres. Ver [operação](operacao.md#sem-domínio-próprio-sslipio).
+- **Réplicas subindo juntas, uma de cada vez.** A migração, os seeds e a montagem do app saíram
+  do import do módulo para a subida (o lifespan), sob um `pg_advisory_lock`: com várias réplicas
+  (ou `--workers N`) subindo juntas, uma sobe por vez, e as outras logam `Esperando outra
+  instância terminar de migrar o banco` até a vez delas, quando acham o banco já migrado e seguem.
+  O `kuro-migrate` usa o mesmo lock. Uma subida recusada (sem chave de API, CORS inválido, banco
+  fora do ar) mostra o mesmo motivo de antes, agora seguido de `Application startup failed.
+  Exiting.` do uvicorn, e o processo sai com código 3 (antes falhava no import, com o traceback).
+  Quem roda o uvicorn com `--lifespan off` passa a receber 503 `O serviço ainda está subindo.` em
+  toda requisição. Ver [a subida](operacao.md#a-subida-migração-seeds-e-várias-réplicas).
 
 ### Corrigido
+
+- **Duas réplicas subindo juntas podiam derrubar uma delas.** As duas migravam ao mesmo tempo, e o
+  `CREATE EXTENSION IF NOT EXISTS vector` do Agno em paralelo cai com `duplicate key value
+  violates unique constraint "pg_extension_name_index"`. Agora a subida é serializada pelo lock.
 
 - **Conectar o MCP no Windows.** O comando antigo (`uvx --from "agent-service[mcp] @ git+..." kuro
   connect`) clona o repositório, e no Windows o clone falhava num caminho longo do `frontend/` se o
