@@ -167,7 +167,11 @@ function MultiSelect({
   useEffect(() => {
     if (!open) return;
     // Popover passageiro: sai quando outro menu ou a paleta do Ctrl+K abre por cima.
-    const releaseLayer = overlayLayers.open("menu", () => setOpen(false));
+    // O foco volta ao gatilho, que é para onde ele retorna quando a paleta fechar.
+    const releaseLayer = overlayLayers.open("menu", () => {
+      setOpen(false);
+      triggerRef.current?.focus();
+    });
     function onPointerDown(e: PointerEvent) {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     }

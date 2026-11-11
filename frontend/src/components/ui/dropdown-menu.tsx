@@ -72,8 +72,12 @@ export function DropdownMenu({
   useEffect(() => {
     if (!open) return;
     // Camada passageira: fecha os outros menus e sai sozinha quando um diálogo (ou a paleta
-    // do Ctrl+K) abre por cima — sem devolver o foco ao gatilho, que roubaria o da paleta.
-    const releaseLayer = overlayLayers.open("menu", close);
+    // do Ctrl+K) abre por cima. O foco volta ao gatilho antes de o diálogo guardar o "foco
+    // anterior" e mover o seu para dentro: fechado o diálogo, o foco cai no gatilho, não no body.
+    const releaseLayer = overlayLayers.open("menu", () => {
+      close();
+      triggerRef.current?.focus();
+    });
     menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])')?.focus();
 
     function onPointerDown(e: PointerEvent) {
