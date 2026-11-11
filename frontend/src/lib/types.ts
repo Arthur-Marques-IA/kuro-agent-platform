@@ -811,6 +811,12 @@ export interface ModelProviderSummary {
   docs_url: string;
   credential_count: number;
   configured_count: number;
+  /**
+   * Fallback lido do ambiente do serviço (hoje só `google`: `GOOGLE_API_KEY`
+   * ou o Vertex). Só o nome da variável — o valor nunca vem. `in_use`: nenhuma
+   * credencial cadastrada resolve a padrão, então é ela que responde agora.
+   */
+  env_credential?: { variable: string; in_use: boolean } | null;
 }
 
 /**

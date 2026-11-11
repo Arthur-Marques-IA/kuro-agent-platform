@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatDateTime, groupByRecency } from "@/lib/format";
+import { MODEL_CREDENTIALS_TITLE } from "@/lib/model-credentials";
 import { apiUrl, errorMessage } from "@/lib/http";
 import { sessionTitle } from "@/lib/sessions";
 import { useTheme } from "@/lib/theme";
@@ -52,7 +53,7 @@ const NAV_ITEMS = [
   { href: "/analyze", label: "Análise", icon: FileSearch },
   { href: "/agents", label: "Agentes", icon: Bot },
   { href: "/tools", label: "Tools", icon: Wrench },
-  { href: "/models", label: "Chaves de API", icon: Cpu },
+  { href: "/models", label: MODEL_CREDENTIALS_TITLE, icon: Cpu },
   { href: "/knowledge", label: "Conhecimento", icon: Library },
 ];
 const LOGS_ITEM = { href: "/logs", label: "Logs", icon: Activity };
