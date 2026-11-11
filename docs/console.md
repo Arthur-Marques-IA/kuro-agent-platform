@@ -11,7 +11,7 @@
 | **Logs** `/logs` | o **Panorama** do período (KPIs contra o período anterior, a série no tempo, tools falhando, custo e versões por agente) e, para investigar, as listas de **Sessões** `/logs/sessions` e **Execuções** `/logs/runs`; cada sessão e cada run abrem em detalhe ([abaixo](#logs-panorama-sessões-e-execuções)) |
 | **Trace** `/runs/[id]` | cascata de spans (agente → modelo → tools), versão da configuração, tokens, custo, avaliações, metadata de quem chamou e a referência do shadow |
 
-**O Kuro no canto** (telas a partir de 1280 px, ao lado da sidebar): o corvo do [`kuro dash`](tui.md) consulta as execuções a cada 5 s (com backoff em erro; para com a aba oculta ou minimizado) e reage como lá — bate as asas com execução nova (testes do Playground contam), grasna de olho vermelho com erro, interrupção ou tool falhando, fica de cabeça para baixo com a API fora do ar e dorme com a observabilidade desligada; o balão diz o que chegou e o clique abre o run ou os Logs.
+**O Kuro no canto** (telas a partir de 1280 px, ao lado da sidebar): o corvo do [`kuro dash`](tui.md) consulta as execuções a cada 5 s (com backoff em erro; para com a aba oculta ou minimizado) e reage como lá — bate as asas com execução nova (testes do Playground contam), grasna de olho vermelho com erro, interrupção ou tool falhando, fica de cabeça para baixo com a API fora do ar e dorme com a observabilidade desligada; o balão diz o que chegou e o clique abre o run ou os Logs. Nas telas do formulário de agente (criar e a aba Configuração), cuja barra de salvar fica no rodapé, ele sai da tela.
 
 ## Formulário de `dependencies`
 

@@ -424,6 +424,10 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   ar? (docker compose up -d)", que manda olhar o lugar errado. Agora a CLI, o MCP e o painel dizem
   que a porta parece bloqueada por um firewall no caminho (o do painel do provedor, por exemplo) e
   sugerem o `kuro connect`; e não tentam de novo, o que dobrava a espera.
+- Console: camadas sobrepostas. O Kuro do canto não cobre mais a barra "Alterações não salvas" do
+  agente (sai da tela enquanto o formulário está aberto) nem o anexo do Playground com os detalhes
+  abertos (o composer recua). Abrir a busca (`Ctrl+K`) ou um diálogo fecha o menu que estava aberto
+  (Preferências, filtros de Logs), e cada `Esc` fecha uma camada só.
 
 ### Como atualizar
 

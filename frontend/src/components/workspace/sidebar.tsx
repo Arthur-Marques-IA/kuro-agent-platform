@@ -289,7 +289,11 @@ function SessionItem({
         onBlur={commitRename}
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
-          if (e.key === "Escape") setEditing(false);
+          if (e.key === "Escape") {
+            // Um Esc, uma camada: cancela a renomeação sem fechar a gaveta (mobile) em volta.
+            e.stopPropagation();
+            setEditing(false);
+          }
         }}
         className="h-8 w-full rounded-lg border border-ring bg-card px-2.5 text-[13px] outline-none ring-3 ring-ring/20"
       />
