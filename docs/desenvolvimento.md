@@ -43,6 +43,34 @@ uv run ruff format             # formata
 Use sempre o `uv run ruff`, não um ruff global ou o `uvx ruff`: outra versão formata
 diferente e acusa regras que o projeto não seleciona.
 
+A formatação de todo o código entrou num commit só, listado em `.git-blame-ignore-revs`.
+Para o `git blame` pular esse commit e mostrar quem escreveu cada linha de fato, rode uma vez
+no clone:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+### Tipos (mypy, modo gradual)
+
+A checagem de tipos é gradual: o [mypy](https://mypy.readthedocs.io/) (fixado no grupo dev)
+é permissivo por padrão e estrito só numa lista pequena de módulos, os que já passam. O
+`[tool.mypy]` do `pyproject.toml` lista esses módulos em `files`, então um `uv run mypy` sem
+argumentos checa só eles, e o job `lint` do CI falha se algum acusar. Os módulos que eles
+importam são lidos para entender os tipos, mas os erros deles não aparecem
+(`follow_imports = "silent"`).
+
+```bash
+uv run mypy                                          # o que o CI roda: só a lista, em modo estrito
+uv run mypy src/agent_service/agents/registry.py     # experimentar outro módulo (permissivo)
+```
+
+Para ampliar a lista, escolha um módulo com poucas dependências, rode
+`uv run mypy --strict src/agent_service/<modulo>.py`, corrija o que aparecer e acrescente o
+módulo nos dois lugares do `pyproject.toml`: o caminho em `[tool.mypy] files` e o nome
+pontuado em `[[tool.mypy.overrides]] module`. Não vale anotar o código todo de uma vez — a lista
+cresce módulo a módulo, cada um num commit próprio.
+
 ### Testes contra Postgres
 
 `uv run pytest` roda em SQLite (um arquivo descartável por sessão), sem banco nenhum no ar.

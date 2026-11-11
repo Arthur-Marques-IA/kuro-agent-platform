@@ -28,6 +28,7 @@ no próprio ambiente (egress firewall), não aqui.
 import asyncio
 import ipaddress
 import socket
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -102,7 +103,7 @@ def _literal(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
         return None
 
 
-def _from_getaddrinfo(host: str, infos: list) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+def _from_getaddrinfo(host: str, infos: list[Any]) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
     return [ipaddress.ip_address(info[4][0]) for info in infos]
 
 

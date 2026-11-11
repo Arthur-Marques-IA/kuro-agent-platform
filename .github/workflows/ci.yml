@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   lint:
-    # Lint e formatação do Python, com o ruff fixado no grupo dev (o formatador muda
+    # Lint, formatação e tipos do Python, com o ruff e o mypy fixados no grupo dev (o formatador muda
     # de saída entre versões). Num job próprio para o erro de estilo não esconder o de teste.
     runs-on: ubuntu-latest
     steps:
@@ -28,6 +28,9 @@ jobs:
         run: uv run ruff check --output-format=github .
       - name: ruff format --check
         run: uv run ruff format --check .
+      - name: mypy
+        # Modo gradual: só os módulos de [tool.mypy] files, em modo estrito.
+        run: uv run mypy
 
   backend:
     runs-on: ubuntu-latest
