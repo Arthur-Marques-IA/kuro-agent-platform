@@ -248,7 +248,7 @@ function MultiSelect({
               const checked = value.includes(option.value);
               return (
                 <li key={option.value}>
-                  <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] hover:bg-accent has-[:focus-visible]:bg-accent">
+                  <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-[13px] hover:bg-accent md:py-1.5 has-[:focus-visible]:bg-accent">
                     <input
                       type="checkbox"
                       checked={checked}
