@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     `timeout_seconds` do run, que só começa quando ele ganha a vaga. 0 desliga a
     fila (503 imediato, o comportamento antigo). Mantenha abaixo do timeout de
     quem chama."""
+    trace_write_queue_max: int = 1000
+    """Gravações de trace (`runs`/`run_spans`) esperando o banco, por processo. Fila
+    cheia: a gravação é descartada e contada (`trace_writes.dropped` no `/health`) —
+    nunca atrasa nem derruba a resposta."""
+    trace_write_shutdown_seconds: float = 5.0
+    """No encerramento, quanto esperar as gravações de trace pendentes. Fique bem
+    abaixo do prazo do `docker stop` (10 s antes do SIGKILL)."""
     idempotency_ttl_hours: int = 24
     """Por quanto tempo um `Idempotency-Key` de `/chat`/`/analyze` devolve a resposta
     guardada (`api/idempotency.py`). Passou disso, a mesma chave roda de novo."""

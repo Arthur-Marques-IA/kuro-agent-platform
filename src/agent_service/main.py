@@ -61,6 +61,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # O MCP, a fila de jobs (`jobs/worker.py`) e o acerto das fontes de site com ela.
     async with mcp_lifespan(app), scheduler_lifespan(app), jobs_worker.lifespan(app):
         yield
+    # Esvazia a fila de gravação de trace (com prazo) antes de o processo sair.
+    import asyncio
+
+    from agent_service.observability import run_store
+
+    await asyncio.to_thread(run_store.shutdown)
 
 
 base_app = FastAPI(title=settings.app_name, lifespan=lifespan)

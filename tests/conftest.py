@@ -81,6 +81,7 @@ def env_da_pasta_atual(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def gravacao_sincrona(monkeypatch):
-    """O trace store local grava numa thread sem esperar, para não atrasar a
-    resposta. Nos testes grava na hora, para o teste poder ler logo em seguida."""
-    monkeypatch.setattr(run_store, "_submit", lambda fn: fn())
+    """O trace store local grava numa fila própria sem esperar, para não atrasar a
+    resposta. Nos testes grava na hora (`write_now`, com a mesma contagem e captura
+    de falha da fila), para o teste poder ler logo em seguida."""
+    monkeypatch.setattr(run_store, "_submit", run_store.write_now)

@@ -159,6 +159,8 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `RUN_TIMEOUT_SECONDS` | `90` | tempo limite padrão de uma execução (o agente pode ter `timeout_seconds`); estourou, 504 |
 | `MAX_CONCURRENT_RUNS` | `16` | execuções simultâneas por processo; acima disso, a chamada espera na fila |
 | `QUEUE_MAX_SIZE` | `64` | chamadas esperando vaga, por processo; fila cheia = 503 com `Retry-After` |
+| `TRACE_WRITE_QUEUE_MAX` | `1000` | gravações de trace (`runs`/`run_spans`) esperando o banco, por processo; fila cheia = a gravação é descartada e contada, a resposta não espera. Ver [gravação de trace](#gravação-de-trace) |
+| `TRACE_WRITE_SHUTDOWN_SECONDS` | `5` | no encerramento, quanto esperar as gravações de trace pendentes; fique bem abaixo dos 10 s do `docker stop` antes do SIGKILL |
 | `QUEUE_MAX_WAIT_SECONDS` | `30` | espera máxima na fila antes do 503; `0` desliga a fila. Deixe abaixo do timeout de quem chama |
 | `CORS_ORIGINS` | — (a lista do AgentOS) | páginas, em outro domínio, que podem ler as respostas da API no navegador; `none` fecha. Ver [segurança](#segurança-e-limitações-atuais) |
 | `IDEMPOTENCY_TTL_HOURS` | `24` | por quanto tempo um `Idempotency-Key` no `/chat`/`/analyze` devolve a resposta guardada ([integração](integracao.md#repetir-sem-duplicar-idempotency-key)) |
@@ -194,6 +196,28 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `AGENT_SERVICE_URL` (frontend) | — | endereço interno da API, só no servidor Next.js |
 | `AGENT_SERVICE_PUBLIC_URL` (frontend) | — | endereço exibido nos exemplos de integração; vazio, vale o que o agent-service conhece (`KURO_PUBLIC_URL`, `KURO_API_DOMAIN`, profile `ip`) |
 | `KURO_API_URL` / `KURO_JSON` / `KURO_NO_INPUT` (CLI) | `http://127.0.0.1:58000` | endereço, saída JSON e modo não interativo |
+
+## Gravação de trace
+
+Cada execução é gravada no trace store local (`runs`, `run_spans`, `run_metadata`) depois da
+resposta, por uma fila própria do processo: uma thread de escrita (`kuro-trace-writer`), separada
+do executor que o resto do serviço usa, com até `TRACE_WRITE_QUEUE_MAX` gravações pendentes. Com o
+banco lento a fila cresce; cheia, a gravação daquele run é **descartada** (a resposta do `/chat`
+nunca espera nem falha por isso) e sai um aviso no log, no máximo um a cada 10 s. Ao desligar, o
+serviço para de aceitar, espera até `TRACE_WRITE_SHUTDOWN_SECONDS` e loga quantas ficaram para trás.
+
+Os contadores estão em `GET /health`, em `trace_writes`:
+
+| Campo | O que conta |
+|---|---|
+| `pending` | na fila mais a que está sendo gravada agora |
+| `max_pending` | o teto (`TRACE_WRITE_QUEUE_MAX`) |
+| `written` | gravadas desde que o processo subiu |
+| `dropped` | descartadas por fila cheia (ou chegadas durante o encerramento) |
+| `failed` | erro do banco ao gravar (logado com o `run_id`; o run some do `kuro runs`) |
+
+`dropped` ou `failed` subindo = runs faltando em `kuro runs` e nos dashboards: olhe o banco antes
+de subir o teto. `pending` perto de `max_pending` é o aviso antes do descarte.
 
 ## Fila de jobs
 

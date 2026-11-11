@@ -57,6 +57,14 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Novo
 
+- **Gravação de trace com fila própria.** O registro de cada execução sai do executor padrão do
+  processo e vai para uma fila só dele (uma thread, `kuro-trace-writer`), limitada por
+  `TRACE_WRITE_QUEUE_MAX` (1000): com o banco lento, a fila cheia descarta a gravação e conta, sem
+  atrasar o `/chat`. `GET /health` ganha `trace_writes` (`pending`, `max_pending`, `written`,
+  `dropped`, `failed`). No encerramento, o serviço espera até `TRACE_WRITE_SHUTDOWN_SECONDS` (5 s)
+  pelas gravações pendentes e loga as que ficaram para trás. Ver
+  [operação](operacao.md#gravação-de-trace).
+
 - **Linha do tempo da sessão: `GET /observability/sessions/{id}/timeline`.** Um turno por run, em
   ordem cronológica, já separado: `events` (como gravados, com `kind`, `attachments` e `speech`),
   `message` (a fala pura), `context` (cada bloco com `changed` contra o turno estruturado anterior e,
