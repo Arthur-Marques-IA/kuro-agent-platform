@@ -101,6 +101,13 @@ apresentação (agregar o stream do chat, rodar o eval) fica em funções sem
 `typer`, para os três reaproveitarem. Os testes do MCP (`tests/test_mcp_server.py`)
 e da TUI (`tests/test_tui.py`) rodam contra uma API falsa, sem serviço no ar.
 
+**O contrato estável não importa o Agno.** `src/agent_service/api/routes.py` recebe o agente como
+valor opaco e lê os eventos do run por `agents/runtime.py` (`read_event` devolve o tipo do evento,
+o conteúdo e o uso), o ponto entre essas rotas e os tipos do Agno; os anexos passam por
+`agents/attachments.py`. Os erros de embedder que o projeto levanta são subclasses de
+`EmbedderError` (`documents/embedder.py`): capture a base, e converta para ela, com
+`raise ... from`, a falha de um provedor que você capturar.
+
 **Diagramas:** as fontes ficam em `docs/diagramas/*.mmd` e o README e os documentos exibem os
 SVGs gerados a partir delas (uma versão clara e uma escura), porque o
 renderizador de Mermaid do GitHub falha de forma intermitente. Depois de editar

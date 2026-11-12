@@ -32,18 +32,12 @@ from sqlalchemy import select
 
 from agent_service.config import get_settings
 from agent_service.db import get_db
-from agent_service.documents.embedder import (
-    EmbedderNotConfiguredError,
-    UnknownEmbedderProviderError,
-    build_embedder,
-)
+from agent_service.documents.embedder import EmbedderError, build_embedder
 from agent_service.documents.search import SearchConfig, build_reranker
 from agent_service.documents.store import SEED_COLLECTION, get_collection_row, list_collection_names
 
 
 logger = logging.getLogger(__name__)
-
-EmbedderError = (EmbedderNotConfiguredError, UnknownEmbedderProviderError)
 
 
 def collection_exists(name: str) -> bool:
