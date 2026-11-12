@@ -46,6 +46,69 @@ jobs:
         # O build do Next é o que pega erro de tipo e de import que o lint deixa passar.
         run: npm run build
 
+  api-types:
+    # `frontend/src/lib/api-types.gen.ts` sai do OpenAPI do serviço (`npm run gen:types`).
+    # Mudou um modelo de resposta e ninguém regenerou: o console estaria tipado contra
+    # um contrato que não existe mais. Regenera e falha se o arquivo mudar.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run gen:types
+        working-directory: frontend
+      - name: tipos gerados em dia
+        run: |
+          git diff --exit-code -- frontend/src/lib/api-types.gen.ts || {
+            echo "::error::frontend/src/lib/api-types.gen.ts está desatualizado: rode 'npm run gen:types' em frontend/ e faça commit."
+            exit 1
+          }
+
+  e2e:
+    # Smoke do console com Playwright: criar agente → conversar → sessão → trace,
+    # contra o serviço real com SQLite e um modelo determinístico
+    # (scripts/servico_de_teste.py). Sem Postgres e sem provedor de LLM.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+        working-directory: .
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: navegador do Playwright
+        run: npx playwright install --with-deps chromium
+      - name: smoke
+        # O playwright.config.ts faz o build e sobe backend e console nas portas 58100 e 3100.
+        run: npm run e2e
+      - name: relatório e traces do Playwright
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 14
+
   images:
     # Build das duas imagens: um Dockerfile quebrado só apareceria no deploy.
     runs-on: ubuntu-latest

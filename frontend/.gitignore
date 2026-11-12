@@ -12,6 +12,12 @@
 
 # testing
 /coverage
+# Playwright (npm run e2e)
+/test-results/
+/playwright-report/
+/blob-report/
+# OpenAPI intermediário do npm run gen:types
+/.cache/
 
 # next.js
 /.next/

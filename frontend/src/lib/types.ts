@@ -1,3 +1,13 @@
+/*
+ * Os tipos daqui foram escritos à mão; os que já vêm do OpenAPI do serviço
+ * (`api-types.gen.ts`, `npm run gen:types`) são re-exportados de lá com o mesmo
+ * nome. Migrar um tipo: troque a interface por `Schemas["<NomeNoOpenAPI>"]` e
+ * rode `npm run build` — ver docs/desenvolvimento.md.
+ */
+import type { components } from "./api-types.gen";
+
+type Schemas = components["schemas"];
+
 /** Anexo de `/chat` e `/analyze`: imagem, áudio, vídeo ou arquivo. */
 export interface Attachment {
   content_base64?: string;
@@ -32,30 +42,17 @@ export interface AnalyzeResponse {
   trace_id?: string | null;
 }
 
-/** Uma regra da nota de comportamento (`GET /agents/{tipo}/feedback`). */
-export interface FeedbackRule {
-  id: string;
-  texto: string;
-}
+/** Uma regra da nota de comportamento (`GET /agents/{tipo}/feedback`). Gerado do OpenAPI. */
+export type FeedbackRule = Schemas["FeedbackRule"];
 
-export interface FeedbackNote {
-  agent_type: string;
-  /** Markdown derivado das regras — é o que entra nas instructions. */
-  content: string;
-  rules: FeedbackRule[];
-  version: number;
-  updated_at: string;
-  /** Só na resposta do POST: o que o merge mudou. */
-  diff?: Record<string, string[]> | null;
-}
+/**
+ * `GET /agents/{tipo}/feedback`. `content` é o markdown derivado das regras (o que entra
+ * nas instructions); `diff` só vem na resposta do POST (o que o merge mudou). Gerado do OpenAPI.
+ */
+export type FeedbackNote = Schemas["FeedbackOut"];
 
-export interface FeedbackVersion {
-  version: number;
-  rules: FeedbackRule[];
-  content: string;
-  origin: string;
-  created_at: string;
-}
+/** `GET /agents/{tipo}/feedback/versions`. Gerado do OpenAPI. */
+export type FeedbackVersion = Schemas["FeedbackVersionOut"];
 
 /** `GET /agents/{tipo}/integration` — o contrato que quem integra precisa. */
 export interface DependencyContract {
@@ -585,11 +582,8 @@ export interface AgentDefinitionInput {
   plain_text?: boolean;
 }
 
-export interface PromptVersion {
-  version: number;
-  instructions: string[];
-  created_at: string;
-}
+/** `GET /agents/{tipo}/versions` — as versões do prompt. Gerado do OpenAPI. */
+export type PromptVersion = Schemas["PromptVersionOut"];
 
 /** Versão da configuração inteira (`GET /agents/{t}/revisions`) — o `agent_version` de cada run. */
 export interface AgentRevision {
