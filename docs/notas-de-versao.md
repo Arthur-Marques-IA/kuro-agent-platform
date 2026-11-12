@@ -152,6 +152,29 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   (`dry_run`) dizem isso e trazem o botão **Incluir testes**. Abaixo de 768 px, as listas viram
   cartões (fala, agente, status, horário) e os filtros têm 40 px para o toque. Ver
   [Console web](console.md#logs-panorama-sessões-e-execuções).
+- **Retenção do trace store e redação por chave.** Três variáveis novas, todas opcionais e
+  desligadas por padrão (nada muda sem configurá-las):
+  `RUN_RETENTION_DAYS` (vazio ou `0` = sem prazo) liga um job recorrente na fila de jobs
+  (`trace_retention`, a cada 6 h, um só entre as réplicas) que trata os runs mais antigos que o
+  prazo conforme `RUN_RETENTION_MODE`: `delete` (padrão) apaga o run com spans, metadata, scores,
+  referência do shadow e marcações de trecho; `anonymize` mantém as linhas para as estatísticas
+  (tokens, custo, status, datas, agente, versão) e apaga o conteúdo (mensagem, entrada estruturada,
+  saída, entrada/saída dos spans, `dependencies`, anexos), marcando o run com a metadata
+  `retention=anonymized`. `TRACE_REDACT_KEYS` (ex.: `cpf,telefone`) mascara como `[redigido]`, na
+  gravação do trace, o valor dessas chaves em `dependencies`, argumentos e resultados JSON das
+  tools, spans e `metadata` — por chave, não em texto livre; o modelo e as tools continuam
+  recebendo o valor real. Com o Langfuse ligado, o mesmo mascaramento vale para o que é enviado a
+  ele. A retenção não alcança as sessões do Agno, memórias, estado de procedurais nem o Langfuse:
+  ver [operação](operacao.md#retenção-e-dados-pessoais).
+
+- **Gravação de trace com fila própria.** O registro de cada execução sai do executor padrão do
+  processo e vai para uma fila só dele (uma thread, `kuro-trace-writer`), limitada por
+  `TRACE_WRITE_QUEUE_MAX` (1000): com o banco lento, a fila cheia descarta a gravação e conta, sem
+  atrasar o `/chat`. `GET /health` ganha `trace_writes` (`pending`, `max_pending`, `written`,
+  `dropped`, `failed`). No encerramento, o serviço espera até `TRACE_WRITE_SHUTDOWN_SECONDS` (5 s)
+  pelas gravações pendentes e loga as que ficaram para trás. Ver
+  [operação](operacao.md#gravação-de-trace).
+
 - **Linha do tempo da sessão: `GET /observability/sessions/{id}/timeline`.** Um turno por run, em
   ordem cronológica, já separado: `events` (como gravados, com `kind`, `attachments` e `speech`),
   `message` (a fala pura), `context` (cada bloco com `changed` contra o turno estruturado anterior e,

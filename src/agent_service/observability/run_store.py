@@ -11,12 +11,16 @@ profunda (ver `tracing.py`). Três tabelas, fora do namespace `agno_*`:
 - `run_scores`: feedback e notas de avaliação (um voto por run/nome/usuário).
 
 A gravação sai do caminho da resposta: `record_run` manda o INSERT para uma
-thread (`_submit`) e não espera — um banco lento atrasa o registro, não o
-usuário. Sessões e estatísticas são `GROUP BY` sobre o histórico inteiro,
+fila própria (`TraceWriter`, uma thread de escrita, até `TRACE_WRITE_QUEUE_MAX`
+pendentes) e não espera — um banco lento atrasa o registro, não o usuário; fila
+cheia descarta e conta (`trace_writes` no `/health`). Sessões e estatísticas são `GROUP BY` sobre o histórico inteiro,
 sem a varredura em memória que a API do Langfuse obrigava.
 """
 
 import logging
+import queue
+import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -233,7 +237,44 @@ class RunRecord:
     input_context: list[dict[str, Any]] | None = None
 
 
+def _redacted(record: RunRecord) -> RunRecord:
+    """Cópia do registro com `TRACE_REDACT_KEYS` aplicado (`redaction.py`): entrada da
+    raiz (`dependencies`, anexos), entrada/saída e metadata de cada span e a `metadata`
+    do run. O `record` original — cujos dicts são os mesmos que o modelo e as tools
+    usaram — não muda. Sem chaves configuradas, devolve o próprio `record`."""
+    from dataclasses import replace
+
+    from agent_service.observability.redaction import REDACTED, redact, redact_keys
+
+    keys = redact_keys()
+    if not keys:
+        return record
+    spans = []
+    for span in record.spans:
+        output = redact(span.output, keys)
+        status_message = span.status_message
+        # A falha de uma tool repete no `status_message` o começo do resultado (`tracing._tool_span`).
+        if status_message and output != span.output and status_message == str(span.output or "")[:500]:
+            status_message = str(output or "")[:500]
+        spans.append(
+            replace(
+                span,
+                input=redact(span.input, keys),
+                output=output,
+                status_message=status_message,
+                metadata=redact(span.metadata, keys),
+            )
+        )
+    return replace(
+        record,
+        input=redact(record.input, keys),
+        spans=spans,
+        metadata={k: (REDACTED if k.lower() in keys else v) for k, v in record.metadata.items()},
+    )
+
+
 def _write_run(record: RunRecord) -> None:
+    record = _redacted(record)
     ended_at = record.ended_at or datetime.now(timezone.utc)
     latency = round((ended_at - record.started_at).total_seconds() * 1000, 1)
     root_id = f"{record.run_id}:root"
@@ -332,27 +373,226 @@ def _tool_summary(spans: list[SpanRecord]) -> dict[str, int]:
     }
 
 
+class TraceWriter:
+    """Fila própria da gravação de trace: uma thread de escrita e um teto de pendentes.
+
+    Antes a gravação ia para o executor padrão do event loop, o mesmo de todo
+    `run_in_executor`/`to_thread` do processo: um banco lento enchia esse executor e
+    atrasava o resto. Aqui a fila é limitada (`TRACE_WRITE_QUEUE_MAX`); cheia, a
+    gravação é **descartada** e contada — nunca bloqueia nem derruba o `/chat`.
+
+    Ordem: cada run é gravado inteiro numa transação só (`runs`, depois `run_spans`,
+    depois `run_metadata`), então nenhuma gravação depende de outra. Mesmo assim a
+    thread é uma só: a fila sai na ordem em que entrou e ocupa uma conexão do pool,
+    não várias.
+
+    "Pendentes" é `unfinished_tasks`: o que espera na fila mais o que está sendo
+    gravado agora — a mesma conta em `stats()`, no `flush()` e no encerramento.
+    """
+
+    _DROP_LOG_INTERVAL = 10.0
+
+    def __init__(self, max_pending: int, *, name: str = "kuro-trace-writer") -> None:
+        self.max_pending = max(1, int(max_pending))  # maxsize=0 seria fila sem limite
+        self._queue: queue.Queue[Callable[[], None] | None] = queue.Queue(maxsize=self.max_pending)
+        self._name = name
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._accepting = True
+        self.written = 0
+        self.dropped = 0
+        self.failed = 0
+        self._dropped_unlogged = 0
+        self._last_drop_log = float("-inf")
+
+    # -- entrada -----------------------------------------------------------------
+
+    def submit(self, fn: Callable[[], None]) -> bool:
+        """Enfileira `fn` sem esperar. `False` quando descartou (fila cheia ou encerrada)."""
+        if not self._accepting:
+            self._drop("encerrada")
+            return False
+        self._ensure_thread()
+        try:
+            self._queue.put_nowait(fn)
+        except queue.Full:
+            self._drop("cheia")
+            return False
+        return True
+
+    def run_now(self, fn: Callable[[], None]) -> None:
+        """Grava na hora, na thread de quem chamou, com a mesma contagem do worker."""
+        try:
+            fn()
+        except Exception:
+            with self._lock:
+                self.failed += 1
+            label = getattr(fn, "trace_label", None) or "uma gravação"
+            logger.exception("Falha ao gravar %s no trace store local", label)
+        else:
+            with self._lock:
+                self.written += 1
+
+    def _drop(self, reason: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            self.dropped += 1
+            self._dropped_unlogged += 1
+            if now - self._last_drop_log < self._DROP_LOG_INTERVAL:
+                return
+            count, self._dropped_unlogged = self._dropped_unlogged, 0
+            self._last_drop_log = now
+            total = self.dropped
+        logger.warning(
+            "Fila de gravação de trace %s: %d gravação(ões) descartada(s) desde o último aviso "
+            "(%d no total; TRACE_WRITE_QUEUE_MAX=%d)",
+            reason,
+            count,
+            total,
+            self.max_pending,
+        )
+
+    # -- worker ------------------------------------------------------------------
+
+    def _ensure_thread(self) -> None:
+        if self._thread is not None:
+            return
+        with self._lock:
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._loop, name=self._name, daemon=True)
+                self._thread.start()
+
+    def _loop(self) -> None:
+        while True:
+            fn = self._queue.get()
+            try:
+                if fn is None:
+                    return
+                self.run_now(fn)
+            finally:
+                self._queue.task_done()
+
+    # -- saída -------------------------------------------------------------------
+
+    def pending(self) -> int:
+        return self._queue.unfinished_tasks
+
+    def flush(self, timeout: float | None = None) -> bool:
+        """Espera a fila esvaziar (com prazo). `True` se não sobrou nada pendente."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._queue.all_tasks_done:
+            while self._queue.unfinished_tasks:
+                if deadline is None:
+                    self._queue.all_tasks_done.wait()
+                    continue
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._queue.all_tasks_done.wait(remaining)
+        return True
+
+    def shutdown(self, timeout: float) -> int:
+        """Para de aceitar, espera esvaziar até `timeout` e devolve quantas ficaram para trás."""
+        self._accepting = False
+        self.flush(timeout)
+        left = self.pending()
+        if left:
+            logger.warning(
+                "Encerramento: %d gravação(ões) de trace ficaram para trás após %.1fs "
+                "(TRACE_WRITE_SHUTDOWN_SECONDS)",
+                left,
+                timeout,
+            )
+        try:
+            self._queue.put_nowait(None)  # acorda e encerra a thread, se ela já esvaziou
+        except queue.Full:
+            pass  # thread presa num banco lento: é daemon, morre com o processo
+        return left
+
+    def stats(self) -> dict[str, int]:
+        with self._lock:
+            written, dropped, failed = self.written, self.dropped, self.failed
+        return {
+            "pending": self.pending(),
+            "max_pending": self.max_pending,
+            "written": written,
+            "dropped": dropped,
+            "failed": failed,
+        }
+
+
+_writer: TraceWriter | None = None
+_writer_lock = threading.Lock()
+
+
+def _get_writer() -> TraceWriter:
+    global _writer
+    with _writer_lock:
+        if _writer is None:
+            from agent_service.config import get_settings
+
+            _writer = TraceWriter(get_settings().trace_write_queue_max)
+        return _writer
+
+
+def write_stats() -> dict[str, int]:
+    """Contadores da fila de gravação (o `trace_writes` do `/health`). Não cria o writer."""
+    writer = _writer
+    if writer is None:
+        from agent_service.config import get_settings
+
+        return {"pending": 0, "max_pending": max(1, get_settings().trace_write_queue_max), "written": 0, "dropped": 0, "failed": 0}
+    return writer.stats()
+
+
+def write_now(fn: Callable[[], None]) -> None:
+    """Grava na thread de quem chamou, contando sucesso e falha. É o caminho dos testes."""
+    _get_writer().run_now(fn)
+
+
+def flush(timeout: float | None = None) -> bool:
+    """Espera as gravações pendentes. `True` se esvaziou dentro do prazo."""
+    writer = _writer
+    return True if writer is None else writer.flush(timeout)
+
+
+def shutdown(timeout: float | None = None) -> int:
+    """Encerramento do app: para de aceitar, esvazia com prazo e solta o writer.
+
+    O próximo `record_run` (outro app no mesmo processo, como nos testes) cria um
+    writer novo — o encerrado não fica descartando tudo em silêncio."""
+    global _writer
+    with _writer_lock:
+        writer, _writer = _writer, None
+    if writer is None:
+        return 0
+    if timeout is None:
+        from agent_service.config import get_settings
+
+        timeout = get_settings().trace_write_shutdown_seconds
+    return writer.shutdown(timeout)
+
+
 def _submit(fn: Callable[[], None]) -> None:
-    """Roda `fn` fora do event loop, sem esperar. Os testes trocam por uma chamada direta."""
+    """Manda `fn` para a fila de gravação, sem esperar. Fora de um event loop (script,
+    CLI) grava na hora. Os testes trocam por `write_now` (`tests/conftest.py`)."""
     import asyncio
 
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
-        fn()
+        write_now(fn)
         return
-    loop.run_in_executor(None, fn)
+    _get_writer().submit(fn)
 
 
 def record_run(record: RunRecord) -> None:
     """Grava a execução em background. Uma falha aqui vira log — nunca derruba o run."""
 
     def write() -> None:
-        try:
-            _write_run(record)
-        except Exception:
-            logger.exception("Falha ao gravar o run %s no trace store local", record.run_id)
+        _write_run(record)  # o writer captura, conta e loga a falha; não propaga
 
+    write.trace_label = f"o run {record.run_id}"  # type: ignore[attr-defined]
     _submit(write)
 
 

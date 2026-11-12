@@ -180,12 +180,22 @@ def configure_tracing() -> None:
         )
         return
 
+    from agent_service.observability import redaction
+
+    # `TRACE_REDACT_KEYS`: o mesmo mascaramento do trace store local, no que sai para o
+    # Langfuse — pela API do SDK (`mask`) e pelos spans do instrumentor (`mask_otel_spans`).
+    masking = (
+        {"mask": redaction.langfuse_mask, "mask_otel_spans": redaction.langfuse_mask_otel_spans}
+        if redaction.redact_keys()
+        else {}
+    )
     _client = Langfuse(
         public_key=settings.langfuse_public_key,
         secret_key=settings.langfuse_secret_key,
         base_url=settings.langfuse_base_url,
         environment=settings.langfuse_environment,
         timeout=settings.langfuse_timeout_seconds,
+        **masking,
     )
     # O Langfuse registra o TracerProvider global; o instrumentor do Agno publica nele.
     AgnoInstrumentor().instrument(tracer_provider=otel_trace.get_tracer_provider())

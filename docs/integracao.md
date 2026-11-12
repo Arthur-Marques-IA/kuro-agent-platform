@@ -371,7 +371,8 @@ até 255 caracteres). Gere a chave antes da primeira tentativa e repita com a me
   pode pedir ao operador do Kuro `QUEUE_MAX_WAIT_SECONDS=0`. Sem fila, quem passa do limite recebe
   503 na hora, e `timeout_seconds + 5` volta a bastar.
 - `GET /health` mostra `model_credentials`: `enabled`, ou o motivo de não dar para cadastrar chaves
-  de modelo. `kuro health` mostra o mesmo.
+  de modelo. `kuro health` mostra o mesmo. `trace_writes` traz os contadores da gravação de trace
+  ([operação](operacao.md#gravação-de-trace)).
 - **Fallback** é o que o seu sistema já faz sem IA: transferir para humano, não responder, ou
   deixar para o próximo ciclo. Para o R6 a regra é firme: sem decisão válida, nada de efeito
   financeiro.

@@ -25,6 +25,7 @@ passo 2b. O uvicorn só abre a porta depois da subida; com `--lifespan off` (sem
 requisição recebe 503.
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -58,6 +59,8 @@ from agent_service.documents.web_sync import scheduler_lifespan
 from agent_service.jobs import worker as jobs_worker
 from agent_service.migrations import migration_lock, upgrade_database
 from agent_service.models.listing import warm_up as warm_up_model_listing
+from agent_service.observability import run_store
+from agent_service.observability.retention import retention_lifespan
 from agent_service.observability.tracing import configure_tracing
 from agent_service.tools.seed import seed_default_tools
 
@@ -86,9 +89,17 @@ def build_app(cors_origins: list[str] | None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # O MCP, a fila de jobs (`jobs/worker.py`) e o acerto das fontes de site com ela.
-        async with mcp_lifespan(app), scheduler_lifespan(app), jobs_worker.lifespan(app):
+        # O MCP, a fila de jobs (`jobs/worker.py`) e o acerto das fontes de site e da
+        # retenção de traces (`observability/retention.py`) com ela.
+        async with (
+            mcp_lifespan(app),
+            scheduler_lifespan(app),
+            retention_lifespan(app),
+            jobs_worker.lifespan(app),
+        ):
             yield
+        # Esvazia a fila de gravação de trace (com prazo) antes de o processo sair.
+        await asyncio.to_thread(run_store.shutdown)
 
     base_app = FastAPI(title=settings.app_name, lifespan=lifespan)
     base_app.router.routes.append(mcp_route)

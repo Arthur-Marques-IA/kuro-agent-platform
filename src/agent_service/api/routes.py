@@ -367,7 +367,7 @@ def _build_media_or_422(attachments: list[AttachmentIn]) -> dict[str, list[Any]]
 
 
 @router.get("/health")
-def health() -> dict[str, str]:
+def health() -> dict[str, Any]:
     """Aberta de propósito: é o healthcheck do container e de qualquer load
     balancer na frente. Só responde se o processo está de pé — não checa banco:
     com o Postgres fora, reiniciar o container não resolveria nada.
@@ -382,15 +382,20 @@ def health() -> dict[str, str]:
 
     `model_credentials` diz se dá para cadastrar chaves de provedor: sem
     `CREDENTIALS_ENCRYPTION_KEY`, o `/model-credentials` responde 503. O serviço
-    sobe mesmo assim — o google ainda funciona pela `GOOGLE_API_KEY` do ambiente."""
+    sobe mesmo assim — o google ainda funciona pela `GOOGLE_API_KEY` do ambiente.
+
+    `trace_writes` é a fila de gravação do trace store local (`run_store.TraceWriter`):
+    `pending`, `max_pending`, `written`, `dropped` (fila cheia) e `failed`."""
     from agent_service.api.auth import auth_enabled
     from agent_service.models.crypto import encryption_status
+    from agent_service.observability import run_store
 
     return {
         "status": "ok",
         "version": service_version(),
         "auth": "enabled" if auth_enabled() else "disabled",
         "model_credentials": encryption_status(),
+        "trace_writes": run_store.write_stats(),
     }
 
 
