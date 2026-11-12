@@ -64,7 +64,9 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/kuro_test
+      # 127.0.0.1, não localhost: no runner, localhost resolve primeiro para ::1, onde a porta
+      # do container não está mapeada, e a conexão estoura o tempo em vez de ser recusada.
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/kuro_test
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
