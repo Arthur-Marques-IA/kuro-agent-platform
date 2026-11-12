@@ -7,7 +7,8 @@ Um cabeçalho e duas abas, cada uma respondendo a uma pergunta:
 - **Ao vivo** — "o que está acontecendo agora?": as últimas execuções, atualizadas
   sozinhas (consulta repetida, como `kuro runs tail`), com um resumo do que está na tela
   e filtro por agente e status. Enter abre o trace: mensagem, resposta, spans de modelo e
-  tools com entrada e saída, e as notas.
+  tools com entrada e saída, e as notas. Do trace, `c` abre o contexto em blocos e `s`, a
+  sessão inteira (a mesma linha do tempo de `kuro sessions show`).
 - **Panorama** — "como foi o período?": os números do dashboard dos Logs
   (`/observability/overview`) em cartões contra o período anterior, uma linha por agente
   e as tools falhando.
@@ -48,9 +49,11 @@ from textual.widgets import (
 
 from agent_service.cli.client import ApiError, Client, ServiceUnavailable
 from agent_service.cli.connection import AUTH_HINT
+from agent_service.cli.sessions import RAW_INPUT_MAX, ROLE_LABELS
 from agent_service.tui.crow import Crow
 
-PREVIEW = 600  # caracteres da entrada/saída de um span mostrados no trace
+PREVIEW = 600  # caracteres da entrada/saída de um span mostrados no trace (enter mostra tudo)
+SESSION_TURNS = 200  # turnos lidos de uma vez na tela da sessão (o máximo da rota)
 
 PERIODS = [("últimas 24 h", 1), ("últimos 7 dias", 7), ("últimos 30 dias", 30)]
 
@@ -108,7 +111,7 @@ def describe_error(exc: Exception) -> str:
         if exc.status == 403:
             return "sem permissão (HTTP 403): a chave não é de escopo admin — use a ADMIN_API_KEY em KURO_API_KEY"
         if exc.status == 501:
-            return "o panorama só existe no trace store local (TRACE_STORE_BACKEND=langfuse responde 501)"
+            return "isto só existe no trace store local (TRACE_STORE_BACKEND=langfuse responde 501)"
         detail = exc.detail if isinstance(exc.detail, str) else json.dumps(exc.detail, ensure_ascii=False)
         return f"{detail} (HTTP {exc.status})"
     return str(exc)
@@ -169,9 +172,30 @@ def _one_line(text: str | None, limit: int = 70) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
+def _speech(run: dict[str, Any]) -> str:
+    """A fala do contato. `input_message` é a fala pura; num run antigo (ou de quem não manda
+    entrada estruturada) ela é nula e vale a mensagem inteira, como chegou."""
+    if run.get("input_message") is not None:
+        return run["input_message"]
+    return run.get("message") or ""
+
+
 def _preview(value: Any) -> str:
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
     return text if len(text) <= PREVIEW else text[:PREVIEW] + f"… (+{len(text) - PREVIEW})"
+
+
+def _full_lines(value: Any, width: int) -> list[str]:
+    """O conteúdo inteiro de um span em linhas de até `width` caracteres (JSON indentado)."""
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, indent=2, default=str)
+    width = max(width, 20)
+    lines: list[str] = []
+    for line in text.splitlines() or [""]:
+        lines.extend(line[i: i + width] for i in range(0, max(len(line), 1), width))
+    return lines
 
 
 def _p95(values: list[float]) -> float | None:
@@ -288,23 +312,62 @@ class Masthead(Horizontal):
 
 SPAN_ICON = {"GENERATION": ("◆", BRAND), "TOOL": ("■", WARN)}
 
+BACK = Binding("escape,q", "app.pop_screen", "voltar")
+
+
+class SpanTree(Tree):
+    """A árvore de spans. Enter não abre e fecha o nó (isso é o espaço): alterna o span entre
+    a prévia e o conteúdo completo da entrada e da saída."""
+
+    BINDINGS = [
+        Binding("enter", "select_cursor", "prévia ↔ completo", show=False),
+        Binding("space", "toggle_node", "abre ou fecha o span", show=False),
+        Binding("shift+space", "toggle_expand_all", "abre ou fecha todos", show=False),
+        Binding("up", "cursor_up", "sobe", show=False),
+        Binding("down", "cursor_down", "desce", show=False),
+        Binding("shift+left", "cursor_parent", "vai ao span de cima", show=False),
+    ]
+
+
+def _copy_run_id(screen: Screen, run_id: str) -> None:
+    """`y`: copia o run_id. O Textual copia pelo OSC 52, que o terminal não confirma — por
+    isso o aviso sempre traz o id, para copiar à mão onde o OSC 52 não funciona."""
+    try:
+        screen.app.copy_to_clipboard(run_id)
+    except Exception:  # noqa: BLE001 — sem clipboard, o aviso basta
+        screen.notify(f"não deu para copiar; o run_id é {run_id}", severity="warning", timeout=10)
+        return
+    screen.notify(f"run_id copiado: {run_id}\n(se o terminal não aceitar OSC 52, copie daqui)", timeout=6)
+
 
 class RunScreen(Screen):
-    BINDINGS = [Binding("escape,q", "app.pop_screen", "voltar"), *PANEL_BINDINGS]
+    BINDINGS = [
+        BACK,
+        Binding("c", "context", "contexto"),
+        Binding("s", "session", "sessão"),
+        Binding("y", "copy_run_id", "copia o run_id"),
+        *PANEL_BINDINGS,
+    ]
 
     def __init__(self, client: Client, run_id: str) -> None:
         super().__init__()
         self.client = client
         self.run_id = run_id
+        self.trace: dict[str, Any] | None = None
+        self.load_error: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Masthead()
         with VerticalScroll(id="trace"):
             yield Static(f"carregando {self.run_id}…", id="run-head", classes="box")
             with Horizontal(id="run-io"):
-                yield Static(id="run-msg", classes="box")
-                yield Static(id="run-out", classes="box")
-            yield Tree("spans", id="spans", classes="panel")
+                # Altura máxima e rolagem própria: uma entrada de milhares de caracteres não
+                # pode empurrar os spans para fora da tela.
+                with VerticalScroll(id="run-msg", classes="box io panel"):
+                    yield Static(id="run-msg-text")
+                with VerticalScroll(id="run-out", classes="box io"):
+                    yield Static(id="run-out-text")
+            yield SpanTree("spans", id="spans", classes="panel")
             yield Static(id="scores", classes="box")
         yield Footer()
 
@@ -314,9 +377,11 @@ class RunScreen(Screen):
         self.query_one("#run-out").border_title = "resposta"
         self.query_one("#scores").border_title = "notas"
         self.query_one("#scores").display = False
-        tree = self.query_one(Tree)
-        tree.border_title = "spans · ◆ modelo  ■ tool · a barra é a duração"
+        tree = self.query_one(SpanTree)
+        tree.border_title = "spans · ◆ modelo  ■ tool · a barra é a duração · enter mostra tudo"
         tree.show_root = False
+        tree.auto_expand = False
+        tree.focus()
         self.load()
 
     @work(thread=True, exclusive=True)
@@ -324,11 +389,23 @@ class RunScreen(Screen):
         try:
             trace = self.client.run_trace(self.run_id)
         except (ApiError, ServiceUnavailable) as exc:
-            self.app.call_from_thread(self.query_one("#run-head", Static).update, Text(describe_error(exc), style=BAD))
+            self.load_error = describe_error(exc)
+            self.app.call_from_thread(self.query_one("#run-head", Static).update, Text(self.load_error, style=BAD))
             return
         self.app.call_from_thread(self.show, trace)
 
+    def trace_ready(self) -> bool:
+        """`c` e `s` precisam do trace; sem ele, avisa por quê em vez de quebrar."""
+        if self.trace is not None:
+            return True
+        if self.load_error:
+            self.notify(f"o trace não carregou: {self.load_error}", severity="error")
+        else:
+            self.notify("o trace ainda está carregando", severity="warning")
+        return False
+
     def show(self, trace: dict[str, Any]) -> None:
+        self.trace = trace
         run = trace["run"]
         version = f" · v{run['agent_version']}" if run.get("agent_version") else ""
         head = Text.assemble(
@@ -343,11 +420,18 @@ class RunScreen(Screen):
         if run.get("status_message"):
             head.append(f"\n{run['status_message']}", style=BAD)
         self.query_one("#run-head", Static).update(head)
+        structured = run.get("input_message") is not None
+        msg_box = self.query_one("#run-msg")
+        msg_box.border_title = "fala" if structured else "mensagem"
+        msg_box.border_subtitle = "c contexto · s sessão" if structured else "s sessão"
+        speech = _speech(run)
         # Text, não str: o Static leria `[SISTEMA]` da mensagem como markup e quebraria.
-        self.query_one("#run-msg", Static).update(Text(run.get("message") or "—", style="" if run.get("message") else MUTED))
-        self.query_one("#run-out", Static).update(Text(run.get("output") or "—", style="" if run.get("output") else MUTED))
+        self.query_one("#run-msg-text", Static).update(Text(speech or "—", style="" if speech else MUTED))
+        self.query_one("#run-out-text", Static).update(
+            Text(run.get("output") or "—", style="" if run.get("output") else MUTED)
+        )
 
-        tree = self.query_one(Tree)
+        tree = self.query_one(SpanTree)
         tree.clear()
         spans = sorted(trace.get("spans") or [], key=lambda s: str(s["started_at"]))
         ids = {s["id"] for s in spans}
@@ -367,12 +451,13 @@ class RunScreen(Screen):
                 (f" {_ms(span.get('latency_ms'))}", MUTED),
             )
             node = (parent or tree.root).add(label, expand=failed)
+            data: dict[str, Any] = {"span": span, "full": False, "io": {}}
+            node.data = data
             if span.get("status_message"):
-                node.add_leaf(Text(span["status_message"], style=BAD))
-            if span.get("input") is not None:
-                node.add_leaf(Text.assemble(("entrada ", BRAND), _preview(span["input"])))
-            if span.get("output") is not None:
-                node.add_leaf(Text.assemble(("saída ", "#c084fc"), _preview(span["output"])))
+                node.add_leaf(Text(span["status_message"], style=BAD), data={"owner": node})
+            for key in ("input", "output"):
+                if span.get(key) is not None:
+                    data["io"][key] = node.add_leaf(self.io_label(key, span[key], full=False), data={"owner": node})
             nodes[span["id"]] = node
             if failed:  # a falha não pode ficar escondida dentro de um nó fechado
                 ancestor = node.parent
@@ -385,6 +470,270 @@ class RunScreen(Screen):
         box = self.query_one("#scores", Static)
         box.display = bool(scores)
         box.update(Text("\n".join(f"{s['name']} = {s['value']}  {s.get('comment') or ''}" for s in scores)))
+
+    @staticmethod
+    def io_label(key: str, value: Any, *, full: bool) -> Text:
+        name, color = ("entrada ", BRAND) if key == "input" else ("saída ", "#c084fc")
+        if not full:
+            return Text.assemble((name, color), _preview(value))
+        size = len(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str))
+        return Text.assemble((name, color), (f"completa · {_int(size)} caracteres · enter volta à prévia", MUTED))
+
+    @on(Tree.NodeSelected, "#spans")
+    def toggle_full(self, event: Tree.NodeSelected) -> None:
+        """Enter num span (ou numa linha dele) alterna entre a prévia e o conteúdo completo."""
+        node = event.node
+        while node is not None and not (isinstance(node.data, dict) and "span" in node.data):
+            owner = node.data.get("owner") if isinstance(node.data, dict) else None
+            node = owner if owner is not None else node.parent
+        if node is None:
+            return
+        data = node.data
+        data["full"] = not data["full"]
+        tree = self.query_one(SpanTree)
+        depth, ancestor = 0, node.parent
+        while ancestor is not None:
+            depth, ancestor = depth + 1, ancestor.parent
+        width = max(tree.size.width - 4 * (depth + 2) - 4, 40)
+        for key, leaf in data["io"].items():
+            value = data["span"][key]
+            leaf.set_label(self.io_label(key, value, full=data["full"]))
+            leaf.remove_children()
+            if data["full"]:
+                leaf.allow_expand = True
+                for line in _full_lines(value, width):
+                    leaf.add_leaf(Text(line), data={"owner": node})
+                leaf.expand()
+            else:
+                leaf.allow_expand = False
+        node.expand()
+
+    def action_copy_run_id(self) -> None:
+        _copy_run_id(self, self.run_id)
+
+    def action_context(self) -> None:
+        if not self.trace_ready():
+            return
+        self.app.push_screen(ContextScreen(self.trace))
+
+    def action_session(self) -> None:
+        if not self.trace_ready():
+            return
+        session_id = self.trace["run"].get("session_id")
+        if not session_id:
+            self.notify("esta execução não tem sessão (sem session_id): não há conversa para abrir",
+                        severity="warning")
+            return
+        self.app.push_screen(SessionScreen(self.client, session_id, self.run_id))
+
+
+# -- contexto e sessão -------------------------------------------------------------
+
+
+class ContextScreen(Screen):
+    """`c` no trace: os blocos de contexto que o sistema chamador mandou (`input_context`),
+    cada um com o título, a chave, a marca de volátil e o conteúdo inteiro."""
+
+    BINDINGS = [BACK, Binding("y", "copy_run_id", "copia o run_id"), *PANEL_BINDINGS]
+
+    def __init__(self, trace: dict[str, Any]) -> None:
+        super().__init__()
+        self.trace = trace
+        self.run_id = trace["run"]["run_id"]
+
+    def compose(self) -> ComposeResult:
+        yield Masthead()
+        run = self.trace["run"]
+        blocks = self.trace.get("input_context") or []
+        with VerticalScroll(id="context", classes="panel"):
+            yield Static(
+                Text.assemble(("contexto", "bold"), (f"   run {self.run_id} · {run['agent_type']}", MUTED)),
+                classes="section",
+            )
+            if run.get("input_message") is None:
+                yield Static(
+                    Text.assemble(
+                        ("Este run não tem contexto estruturado.\n", "bold"),
+                        ("A entrada chegou num texto só (run antigo, ou o sistema chamador não manda "
+                         "`events` e `context`): ela está inteira na caixa mensagem do trace.", MUTED),
+                    ),
+                    id="context-empty",
+                    classes="box",
+                )
+            elif not blocks:
+                yield Static(
+                    Text.assemble(
+                        ("Este run veio sem blocos de contexto.\n", "bold"),
+                        ("A entrada é estruturada, mas o sistema chamador não mandou `context`.", MUTED),
+                    ),
+                    id="context-empty",
+                    classes="box",
+                )
+            for block in blocks:
+                box = Static(Text(block.get("content") or "—", style="" if block.get("content") else MUTED),
+                             classes="box context-block")
+                box.border_title = block.get("title") or block.get("key") or "?"
+                marks = [block.get("key") or ""]
+                if block.get("volatile"):
+                    marks.append("volátil")
+                if block.get("hash"):
+                    marks.append(str(block["hash"])[:12])
+                box.border_subtitle = " · ".join(m for m in marks if m)
+                if block.get("volatile"):
+                    box.add_class("volatile")
+                yield box
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#context").focus()
+
+    def action_copy_run_id(self) -> None:
+        _copy_run_id(self, self.run_id)
+
+
+def _turn_body(turn: dict[str, Any]) -> Text:
+    """Um turno da linha do tempo, nas mesmas linhas de `kuro sessions show`."""
+    text = Text()
+
+    def line(*parts: Any) -> None:
+        if text:
+            text.append("\n")
+        text.append_text(Text.assemble(*parts))
+
+    if turn.get("structured"):
+        changed = [b for b in turn.get("context") or [] if b.get("changed")]
+        if changed:
+            line(("contexto mudou: ", WARN), ", ".join(b.get("title") or b.get("key") or "?" for b in changed))
+        for event in turn.get("events") or []:
+            if event.get("speech"):
+                continue  # é a fala nova, logo abaixo
+            label = ROLE_LABELS.get(event.get("role"), event.get("role") or "?")
+            line((f"{label}> ", MUTED), event.get("content") or "")
+        if turn.get("message"):
+            line(("contato> ", f"bold {BRAND}"), turn["message"])
+    else:
+        raw = turn.get("raw_input") or "—"
+        if len(raw) > RAW_INPUT_MAX:
+            raw = raw[:RAW_INPUT_MAX] + f"… (+{len(raw) - RAW_INPUT_MAX} caracteres; o trace do run traz inteira)"
+        line(("entrada> ", f"bold {BRAND}"), raw)
+    for step in turn.get("steps") or []:
+        ok = step.get("ok")
+        args = step.get("args")
+        if isinstance(args, dict):
+            shown = ", ".join(f"{k}={_one_line(str(v), 60)}" for k, v in args.items())
+        else:
+            shown = "" if args is None else _one_line(str(args), 120)
+        detail = step.get("result_preview") if ok else (step.get("error") or step.get("failure"))
+        line(
+            ("✓ " if ok else "✗ ", OK if ok else BAD),
+            (f"{step.get('tool')}({shown})", "" if ok else BAD),
+            (" (efeito colateral)" if step.get("side_effect") else "", "#c084fc"),
+            (f" → {_one_line(str(detail or '—'), 160)}", MUTED),
+        )
+    if turn.get("status_message") and turn.get("status") not in (None, "success"):
+        line((turn["status_message"], BAD))
+    line(("agente> ", "bold #c084fc"), turn.get("output") or "—")
+    usage = turn.get("usage") or {}
+    parts = [f"{_int(usage.get('input_tokens'))} in / {_int(usage.get('output_tokens'))} out"]
+    if usage.get("cost_usd") is not None:
+        parts.append(_cost(usage["cost_usd"]))
+    if usage.get("latency_ms") is not None:
+        parts.append(_ms(usage["latency_ms"]))
+    line((" · ".join(parts), MUTED))
+    return text
+
+
+class TurnBox(Static, can_focus=False):
+    """Um turno da sessão; o clique abre o trace dele."""
+
+    def __init__(self, turn: dict[str, Any], current: bool) -> None:
+        super().__init__(_turn_body(turn), classes="box turn" + (" current" if current else ""))
+        self.run_id = turn.get("run_id")
+        head = [_when(turn.get("at")), turn.get("agent_type") or "—"]
+        if turn.get("agent_version"):
+            head.append(f"v{turn['agent_version']}")
+        if turn.get("status") and turn["status"] != "success":
+            head.append(turn["status"])
+        if turn.get("dry_run"):
+            head.append("teste")
+        if current:
+            head.append("◀ este run")
+        self.border_title = " · ".join(head)
+        self.border_subtitle = f"run {self.run_id}"
+
+    def on_click(self) -> None:
+        screen = self.screen
+        if self.run_id and isinstance(screen, SessionScreen) and self.run_id != screen.run_id:
+            self.app.push_screen(RunScreen(screen.client, self.run_id))
+
+
+class SessionScreen(Screen):
+    """`s` no trace: a conversa inteira do run, um turno por bloco (a linha do tempo de
+    `GET /observability/sessions/{id}/timeline`, sem filtro de usuário: o run pode ser de
+    qualquer integração)."""
+
+    BINDINGS = [BACK, Binding("y", "copy_run_id", "copia o run_id"), *PANEL_BINDINGS]
+
+    def __init__(self, client: Client, session_id: str, run_id: str) -> None:
+        super().__init__()
+        self.client = client
+        self.session_id = session_id
+        self.run_id = run_id
+
+    def compose(self) -> ComposeResult:
+        yield Masthead()
+        with VerticalScroll(id="session", classes="panel"):
+            yield Static(f"carregando a sessão {self.session_id}…", id="session-head", classes="section")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#session").focus()
+        self.load()
+
+    @work(thread=True, exclusive=True)
+    def load(self) -> None:
+        try:
+            timeline = self.client.session_timeline(self.session_id, None, limit=SESSION_TURNS)
+        except (ApiError, ServiceUnavailable) as exc:
+            self.app.call_from_thread(
+                self.query_one("#session-head", Static).update, Text(describe_error(exc), style=BAD)
+            )
+            return
+        self.app.call_from_thread(self.show, timeline)
+
+    def show(self, timeline: dict[str, Any]) -> None:
+        turns = timeline.get("items") or []
+        parts: list[Any] = [
+            ("sessão ", MUTED), (str(timeline.get("session_id") or self.session_id), "bold"),
+            (f"   {', '.join(timeline.get('agent_types') or []) or '—'}", ""),
+            (f" · {timeline.get('turns', len(turns))} turno(s) · {_int(timeline.get('total_tokens'))} tokens", MUTED),
+        ]
+        if timeline.get("cost_usd") is not None:
+            parts.append((f" · {_cost(timeline['cost_usd'])}", MUTED))
+        if timeline.get("error_count"):
+            parts.append((f" · {timeline['error_count']} erro(s)", BAD))
+        head = Text.assemble(*parts)
+        found = any(t.get("run_id") == self.run_id for t in turns)
+        if not turns:
+            head.append("\nNenhum turno desta sessão no trace store.", style=MUTED)
+        elif not found:
+            head.append(
+                f"\nEste run não está entre os {len(turns)} turnos lidos"
+                + (" (a sessão tem mais; veja `kuro sessions show --all-users`)." if timeline.get("next_cursor") else "."),
+                style=WARN,
+            )
+        elif timeline.get("next_cursor"):
+            head.append(f"\nMostrando os {len(turns)} primeiros turnos; o resto em `kuro sessions show`.", style=MUTED)
+        self.query_one("#session-head", Static).update(head)
+        body = self.query_one("#session")
+        boxes = [TurnBox(turn, turn.get("run_id") == self.run_id) for turn in turns]
+        body.mount_all(boxes)
+        current = next((b for b in boxes if b.has_class("current")), None)
+        if current is not None:
+            self.call_after_refresh(current.scroll_visible, animate=False, top=True)
+
+    def action_copy_run_id(self) -> None:
+        _copy_run_id(self, self.run_id)
 
 
 # -- abas --------------------------------------------------------------------------
@@ -494,7 +843,7 @@ class RunsPane(TabPane):
                     Text(_int(r["total_tokens"]), justify="right"),
                     Text(_ms(r.get("latency_ms")), justify="right"),
                     Text(_cost(r.get("cost_usd")), justify="right", style=MUTED),
-                    Text(_one_line(r.get("message")), style=MUTED),
+                    Text(_one_line(_speech(r)), style=MUTED),
                     key=r["run_id"],
                 )
             if selected in ids:
@@ -752,8 +1101,15 @@ class KuroDash(App):
     .box { height: auto; margin: 0 1; padding: 0 1; border: round $primary 40%; border-title-color: $text-muted; }
     #run-io { height: auto; }
     #run-io .box { width: 1fr; }
+    #run-io .io { height: auto; max-height: 10; border-subtitle-color: $text-muted; }
+    #run-io Static { height: auto; }
+    #run-msg:focus { border: round $primary; }
     #spans { height: auto; margin: 0 1; padding: 0 1; border: round $primary 40%; border-title-color: $text-muted; }
     #spans:focus { border: round $primary; }
+    #context, #session { height: 1fr; }
+    .context-block, .turn { margin: 1 1 0 1; border-subtitle-color: $text-muted; }
+    .context-block.volatile { border: round $warning 50%; }
+    .turn.current { border: round $primary; }
     Masthead .repo { color: $text-muted; text-wrap: nowrap; text-overflow: ellipsis; }
     """
     # Tudo tem caminho pelo teclado; o mouse é opcional. Nenhum atalho é `priority`: com o
