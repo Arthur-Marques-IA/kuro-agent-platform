@@ -205,7 +205,9 @@ uv run kuro agents set suporte tools='["cep"]'          # liga ao agente
 Segredos (token, senha) voltam mascarados nas leituras, e editar sem mexer no
 campo mascarado preserva o valor salvo. Isso vale para `auth` e para os `headers`
 com nome de segredo (`X-...-Token`, `Authorization`, `X-Api-Key`...), mas o lugar
-do segredo é `auth`: `{"type": "api_key", "header": "X-...-Token", "value": "..."}`. Uma tool em uso por algum agente não
+do segredo é `auth`: `{"type": "api_key", "header": "X-...-Token", "value": "..."}`. Esses
+mesmos valores ficam cifrados no banco com a `CREDENTIALS_ENCRYPTION_KEY`
+([operação](operacao.md#segurança-e-limitações-atuais)). Uma tool em uso por algum agente não
 pode ser excluída. O seed cria `calculator`, `hackernews` e `cat_fact`.
 A builtin `web_search` precisa do extra `tools` (`uv sync --extra tools`); as
 demais do catálogo (`calculator`, `hackernews`, `reasoning`, `email`, `files`,

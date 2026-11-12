@@ -25,6 +25,39 @@ jobs:
       - name: pytest
         run: uv run pytest -q
 
+  postgres:
+    # O job de cima roda em SQLite. Este roda contra o Postgres de produção (a mesma
+    # imagem do compose): migrações de ida e volta, SKIP LOCKED e LISTEN/NOTIFY da
+    # fila de jobs, busca híbrida (pgvector + tsvector) e o trace store. Cada sessão
+    # do pytest cria um banco próprio no servidor e o apaga no fim (tests/pg.py).
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: kuro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kuro_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/kuro_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: pytest -m postgres
+        # Sem o TEST_DATABASE_URL estes testes seriam pulados; com ele, servidor fora
+        # do ar é erro (não pulo), então o job não fica verde sem ter testado nada.
+        run: uv run pytest -q -m postgres -rs
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

@@ -28,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from agent_service.agents.store import get_feedback_note
 from agent_service.config import get_settings
 from agent_service.db import get_db
+from agent_service.tools.crypto import decrypt_for_hash
 from agent_service.tools.store import get_tool
 
 metadata = MetaData()
@@ -97,7 +98,14 @@ def effective_config(definition: dict[str, Any]) -> dict[str, Any]:
                 "tool_name": name,
                 "kind": row["kind"],
                 "enabled": row["enabled"],
-                "config_hash": _digest({"config": row["config"], "description": row.get("description")})[:12],
+                # Do texto plano: o cifrado muda a cada gravação (Fernet tem IV aleatório), e
+                # cifrar um segredo que não mudou não pode virar versão nova do agente.
+                "config_hash": _digest(
+                    {
+                        "config": decrypt_for_hash(row["config"]) if row["kind"] == "api" else row["config"],
+                        "description": row.get("description"),
+                    }
+                )[:12],
             }
         )
     config["tools"] = tools

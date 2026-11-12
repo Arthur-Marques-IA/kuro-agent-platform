@@ -27,6 +27,38 @@ uv run pytest
 npm --prefix frontend test   # a conta dos gráficos do console (frontend/src/lib/*.test.ts)
 ```
 
+### Testes contra Postgres
+
+`uv run pytest` roda em SQLite (um arquivo descartável por sessão), sem banco nenhum no ar.
+O que o SQLite não tem fica nos testes marcados com `@pytest.mark.postgres`
+(`tests/test_postgres.py`): as migrações de ida e de volta num banco limpo, o `SKIP LOCKED` e o
+`LISTEN/NOTIFY` da fila de jobs, a busca híbrida (pgvector + `tsvector`, com embedder falso) e o
+cursor e as colunas JSON do trace store. Sem `TEST_DATABASE_URL` eles são pulados; com ela, a
+sessão do pytest cria um banco próprio (`kuro_test_<hex>`) no servidor indicado e o apaga no fim
+(`KURO_TEST_KEEP_DB=1` o mantém para inspecionar). Por isso o usuário precisa poder criar banco, e
+o servidor precisa da extensão `vector` — a imagem `pgvector/pgvector:pg16` do compose serve.
+Servidor fora do ar com a variável definida é erro, não pulo.
+
+```bash
+# um Postgres descartável, longe do volume do compose (a porta é só um exemplo)
+docker run -d --rm --name kuro-pg-teste -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:55999:5432 pgvector/pgvector:pg16
+
+# bash
+TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:55999/postgres uv run pytest -m postgres
+# PowerShell
+$env:TEST_DATABASE_URL = "postgresql+psycopg://postgres:postgres@127.0.0.1:55999/postgres"
+uv run pytest -m postgres
+
+docker stop kuro-pg-teste
+```
+
+Com a variável definida, `uv run pytest` sem `-m` roda a suíte inteira contra o Postgres. Isso
+ainda não está no CI: a suíte foi escrita para o SQLite em arquivo, e há testes que dependem de
+tempo (o da fila de `/analyze` em `test_integracao_regente.py` espera 0,2 s a chamada entrar na
+fila, e com o banco na rede ela ainda está no I/O), além de rodar bem mais devagar. O CI roda a
+suíte em SQLite (`backend`) e `pytest -m postgres` com um serviço `pgvector/pgvector:pg16`
+(`postgres`).
+
 Os testes do frontend usam o test runner do próprio Node (22+, que roda TypeScript direto), sem
 dependência a mais. Lógica que dá para testar sem tela (a escala e as taxas do gráfico dos Logs,
 por exemplo) fica num módulo puro em `frontend/src/lib/`, com um `*.test.ts` ao lado; o componente

@@ -18,6 +18,7 @@ from agent_service.agents.store import create_definition, delete_definition
 from agent_service.config import get_settings
 from agent_service.tools import api_tool, registry, store
 from agent_service.tools.api_tool import ApiToolConfigError, build_api_function, validate_api_config
+from agent_service.tools.crypto import decrypt_config
 from agent_service.tools.catalog import BuiltinConfigError, get_builtin_spec, list_builtin_catalog, validate_builtin_config
 from agent_service.tools.python_tool import (
     PythonToolConfigError,
@@ -538,7 +539,8 @@ def test_update_tool_masks_and_preserves_secret_when_echoed_back():
     )
 
     raw = store.get_tool("secret_api")
-    assert raw["config"]["auth"]["token"] == "real-secret"  # preservado
+    assert raw["config"]["auth"]["token"] != "real-secret"  # cifrado em repouso
+    assert decrypt_config(raw["config"])["auth"]["token"] == "real-secret"  # preservado
     assert raw["config"]["url"] == "https://x.com/b"  # o resto da edição foi aplicado
 
 
@@ -574,7 +576,8 @@ def test_secret_headers_are_masked_and_preserved_when_echoed_back():
     )
 
     raw = store.get_tool("header_secret_api")["config"]
-    assert raw["headers"] == {"x-regente-token": "real-secret", "Authorization": "Bearer novo"}
+    assert all(v.startswith("enc:v1:") for v in raw["headers"].values())  # cifrados em repouso
+    assert decrypt_config(raw)["headers"] == {"x-regente-token": "real-secret", "Authorization": "Bearer novo"}
     assert raw["url"] == "https://x.com/b"
 
 

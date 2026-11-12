@@ -4,10 +4,19 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+from tests import pg  # noqa: E402
+
 os.environ.setdefault("GOOGLE_API_KEY", "test-key")
-# Arquivo, não `:memory:`: o SQLite em memória é um banco por thread, e as rotas
-# fazem o I/O do banco numa thread do pool (`run_in_threadpool`).
-os.environ.setdefault("DATABASE_URL", f"sqlite:///{Path(tempfile.mkdtemp()) / 'agent_service.db'}")
+if pg.TEST_DATABASE_URL:
+    # Postgres de verdade (`TEST_DATABASE_URL`, ver docs/desenvolvimento.md): a suíte
+    # inteira roda num banco novo criado só para esta sessão e apagado no fim — o
+    # equivalente ao arquivo SQLite descartável de baixo. Servidor fora do ar é erro,
+    # não pulo: senão o job de Postgres do CI ficaria verde sem testar nada.
+    os.environ["DATABASE_URL"] = pg.create_session_database()
+else:
+    # Arquivo, não `:memory:`: o SQLite em memória é um banco por thread, e as rotas
+    # fazem o I/O do banco numa thread do pool (`run_in_threadpool`).
+    os.environ.setdefault("DATABASE_URL", f"sqlite:///{Path(tempfile.mkdtemp()) / 'agent_service.db'}")
 os.environ.setdefault("CREDENTIALS_ENCRYPTION_KEY", Fernet.generate_key().decode())
 # A suíte roda sem chave de API (cada teste de autenticação liga a sua): sem isto, o que
 # sobe o app (`main.py`) recusaria subir aberto (`api/auth.py`, `check_startup_auth`).
@@ -26,6 +35,7 @@ seed_default_agents()
 import socket  # noqa: E402
 
 import pytest  # noqa: E402
+import sqlalchemy as sa  # noqa: E402
 
 from agent_service.cli import connection  # noqa: E402
 from agent_service.observability import run_store  # noqa: E402
@@ -37,6 +47,36 @@ ENV_FILE_KEY = connection.env_file_key
 _IP_PUBLICO = "93.184.216.34"
 DNS_DO_SISTEMA = socket.getaddrinfo
 """Guardado antes de qualquer teste trocar o resolvedor — ver `resolvedor_real`."""
+
+
+def pytest_collection_modifyitems(config, items):
+    """`@pytest.mark.postgres` precisa de um Postgres de verdade: sem `TEST_DATABASE_URL`, pula."""
+    if pg.TEST_DATABASE_URL:
+        return
+    pular = pytest.mark.skip(reason="precisa de Postgres: defina TEST_DATABASE_URL (ver docs/desenvolvimento.md)")
+    for item in items:
+        if "postgres" in item.keywords:
+            item.add_marker(pular)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if pg.TEST_DATABASE_URL:
+        from agent_service.db import get_db
+
+        get_db().db_engine.dispose()
+        pg.drop_session_database()
+
+
+@pytest.fixture
+def banco_postgres_vazio():
+    """Um banco Postgres novo e vazio (sem migração nenhuma), apagado no fim do teste."""
+    url = pg.create_database("kuro_vazio")
+    engine = sa.create_engine(url)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+        pg.drop_database(url)
 
 
 @pytest.fixture
