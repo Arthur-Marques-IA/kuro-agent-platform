@@ -139,6 +139,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Aparece no rodapé do console. `KURO_BUILD_SHA=$(git rev-parse --short HEAD)` no build;
+        # sem ela, "dev".
+        NEXT_PUBLIC_BUILD_SHA: ${KURO_BUILD_SHA:-dev}
     environment:
       # Server-side apenas (sem prefixo NEXT_PUBLIC_) — o browser nunca
       # fala direto com o agent-service, só com o BFF do Next.js.

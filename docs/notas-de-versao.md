@@ -385,8 +385,19 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 - **URL sem domínio próprio, documentada:** `KURO_API_DOMAIN=<ip-com-hífens>.sslip.io` com o profile
   `tls` dá HTTPS com certificado válido, inclusive para o MCP por `/mcp`. Precisa das portas 80 e
   443 livres. Ver [operação](operacao.md#sem-domínio-próprio-sslipio).
+- **Versões no rodapé do console.** A barra lateral mostra `console <hash> · serviço <versão>` (o
+  hash do commit do build do console e o `version` do `GET /health`) e avisa **Versões
+  incompatíveis** quando o serviço está abaixo da versão mínima que o console exige
+  (`MIN_SERVICE_VERSION`, hoje `0.2.0`) ou não informa a versão. O `GET /api/health` do console
+  passa a devolver `version` junto do `status`.
 
 ### Corrigido
+
+- **Base de conhecimento quebrando com o console mais novo que o serviço.** Com um serviço que não
+  devolve a configuração de busca da collection, a tela caía com "Cannot read properties of
+  undefined (reading 'search_mode')". Agora ela abre e diz que o serviço parece mais antigo que o
+  console. A tela de erro do console também deixou de mostrar só a mensagem crua do JavaScript:
+  explica em português o que conferir, e o detalhe técnico fica recolhido, com botão de copiar.
 
 - **Conectar o MCP no Windows.** O comando antigo (`uvx --from "agent-service[mcp] @ git+..." kuro
   connect`) clona o repositório, e no Windows o clone falhava num caminho longo do `frontend/` se o
@@ -450,6 +461,11 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   da documentação já apontam para o nome novo. O GitHub redireciona o endereço antigo, mas atualize
   o remote dos clones existentes:
   `git remote set-url origin https://github.com/Arthur-Marques-IA/kuro-agent-platform.git`.
+- **Reconstrua o serviço e o console juntos**, com o hash do commit para o rodapé do console:
+  `KURO_BUILD_SHA=$(git rev-parse --short HEAD) docker compose --profile ui up -d --build` (mais os
+  outros profiles que você usa). Variável nova, opcional: `KURO_BUILD_SHA` (vira o build arg
+  `NEXT_PUBLIC_BUILD_SHA` da imagem do console; sem ela, `dev`). Ver
+  [operação](operacao.md#atualizando).
 - Rode o `up` com `--build` e com todos os profiles que você já usa: o `kuro mcp-config` novo, o
   `kuro-mcp` que o `kuro connect` chama e o `/mcp` moram na imagem (o pacote `mcp` passou a ser
   dependência do serviço; o extra `[mcp]` continua aceito). Para ligar o HTTPS pelo IP, acrescente `--profile ip`, por exemplo

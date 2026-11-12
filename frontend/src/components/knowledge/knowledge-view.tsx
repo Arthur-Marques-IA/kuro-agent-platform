@@ -240,7 +240,7 @@ export function KnowledgeView({
           {current && (
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <span>
-                {current.agents_using.length > 0
+                {current.agents_using?.length
                   ? `Consultada por: ${current.agents_using.join(", ")}`
                   : "Nenhum agente consulta esta coleção — ligue uma na aba Modelo do agente."}
               </span>

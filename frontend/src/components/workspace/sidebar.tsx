@@ -25,9 +25,11 @@ import {
   SquarePen,
   Sun,
   Trash,
+  TriangleAlert,
   Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { CONSOLE_BUILD, serviceCompat } from "@/lib/service-compat";
 import { formatDateTime, groupByRecency } from "@/lib/format";
 import { apiUrl, errorMessage } from "@/lib/http";
 import { sessionTitle } from "@/lib/sessions";
@@ -349,17 +351,23 @@ function SessionItem({
 
 type HealthStatus = "checking" | "online" | "offline";
 
-function useBackendHealth(): HealthStatus {
-  const [status, setStatus] = useState<HealthStatus>("checking");
+/** Status do agent-service e a versão que o `/health` dele informa (`null` se não informa). */
+function useBackendHealth(): { status: HealthStatus; version: string | null } {
+  const [status, setStatus] = useState<{ status: HealthStatus; version: string | null }>({
+    status: "checking",
+    version: null,
+  });
 
   useEffect(() => {
     let cancelled = false;
     async function check() {
       try {
         const res = await fetch(apiUrl("/api/health"), { cache: "no-store" });
-        if (!cancelled) setStatus(res.ok ? "online" : "offline");
+        const body = (await res.json().catch(() => null)) as { version?: unknown } | null;
+        const version = typeof body?.version === "string" ? body.version : null;
+        if (!cancelled) setStatus({ status: res.ok ? "online" : "offline", version });
       } catch {
-        if (!cancelled) setStatus("offline");
+        if (!cancelled) setStatus({ status: "offline", version: null });
       }
     }
     void check();
@@ -380,7 +388,9 @@ const HEALTH_LABELS: Record<HealthStatus, string> = {
 };
 
 function SidebarFooter({ collapsed }: { collapsed: boolean }) {
-  const health = useBackendHealth();
+  const { status: health, version: serviceVersion } = useBackendHealth();
+  const compat = health === "checking" ? null : serviceCompat(health === "online", serviceVersion);
+  const versions = `console ${CONSOLE_BUILD} · serviço ${serviceVersion ?? "?"}`;
   const [theme, setTheme] = useTheme();
   const { userId, publicApiUrl } = useWorkspace();
   const toast = useToast();
@@ -403,18 +413,37 @@ function SidebarFooter({ collapsed }: { collapsed: boolean }) {
           "flex min-w-0 flex-1 items-center gap-2 px-2 text-xs text-muted-foreground",
           collapsed && "justify-center px-0"
         )}
-        title={`${HEALTH_LABELS[health]} · ${publicApiUrl}`}
+        title={[
+          `${HEALTH_LABELS[health]} · ${publicApiUrl}`,
+          versions,
+          compat && !compat.ok ? compat.message : null,
+        ]
+          .filter(Boolean)
+          .join("\n")}
         role="status"
       >
         <span
           className={cn(
             "size-2 shrink-0 rounded-full",
-            health === "online" && "bg-success",
+            health === "online" && (compat?.ok === false ? "bg-warning" : "bg-success"),
             health === "offline" && "bg-destructive",
             health === "checking" && "animate-pulse bg-muted-foreground/50"
           )}
         />
-        {!collapsed && <span className="truncate">{HEALTH_LABELS[health]}</span>}
+        {!collapsed && (
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate">{HEALTH_LABELS[health]}</span>
+            <span className="truncate font-mono text-[10px] text-muted-foreground/80" data-testid="versions">
+              {versions}
+            </span>
+            {compat && !compat.ok && compat.reason !== "unreachable" && (
+              <span className="flex items-center gap-1 text-[11px] text-warning">
+                <TriangleAlert className="size-3 shrink-0" aria-hidden />
+                <span className="truncate">Versões incompatíveis</span>
+              </span>
+            )}
+          </span>
+        )}
       </div>
 
       <DropdownMenu
