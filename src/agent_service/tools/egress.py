@@ -55,8 +55,18 @@ def _allowlist() -> frozenset[str]:
     return frozenset(host.strip().lower() for host in raw.split(",") if host.strip())
 
 
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+
+
 def _blocked_reason(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:
-    """Por que este endereço não pode ser alvo de uma tool — `None` se pode."""
+    """Por que este endereço não pode ser alvo de uma tool — `None` se pode.
+
+    A regra é `is_global`: só passa o que é roteável na internet pública. Os testes
+    nomeados antes dela existem só para a mensagem dizer o motivo; o que não for
+    global e não cair em nenhum deles (CGNAT, documentação, benchmark...) é barrado
+    do mesmo jeito, com um motivo genérico. Testar só `is_private` deixava passar
+    `100.64.0.0/10`, que não é "privada" para o `ipaddress` mas também não é pública
+    — e inclui o metadata da Alibaba Cloud (`100.100.100.200`)."""
     # `::ffff:169.254.169.254` é o metadata da nuvem escrito em IPv6: desembrulha
     # antes de classificar, senão as checagens abaixo olham o endereço errado.
     mapped = getattr(ip, "ipv4_mapped", None)
@@ -74,6 +84,13 @@ def _blocked_reason(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | 
         return "faixa reservada"
     if ip.is_private:
         return "rede privada"
+    if getattr(ip, "is_site_local", False):
+        # fec0::/10: obsoleto, mas ainda uso interno — e o `ipaddress` o dá como global.
+        return "site-local (IPv6, uso interno)"
+    if ip.version == 4 and ip in _CGNAT:
+        return "CGNAT (100.64.0.0/10) — inclui o metadata da Alibaba Cloud"
+    if not ip.is_global:
+        return "faixa de uso especial, fora da internet pública"
     return None
 
 

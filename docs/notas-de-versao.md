@@ -44,6 +44,14 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   [guia de integração](integracao.md#4-erros-e-fallback) recomendava, pode desistir com o run ainda na fila.
   Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
 
+- **Tools não alcançam mais a faixa CGNAT (`100.64.0.0/10`).** A trava de egress só deixava de fora
+  o que o Python chama de "privado", e essa faixa não entra nessa conta: `100.64.0.1` e
+  `100.100.100.200` (metadata da Alibaba Cloud) passavam. Agora uma tool só alcança endereço
+  público (`is_global`); o que não for público e não tiver motivo próprio (loopback, privado,
+  link-local...) é recusado como "faixa de uso especial". O site-local do IPv6 (`fec0::/10`), que o
+  Python dá como público, também passa a ser recusado. Se uma tool sua fala com um serviço nessa
+  faixa (Tailscale usa `100.64.0.0/10`, por exemplo), libere o host em `TOOL_EGRESS_ALLOWLIST`.
+
 ### Novo
 
 - **Conectar o MCP sem instalar o Kuro, em qualquer cliente.** Na sua máquina, só com o uv:
