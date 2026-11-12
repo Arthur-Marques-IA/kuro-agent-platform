@@ -69,6 +69,22 @@ export function MemorySection({ id, variant, values, update, fieldError, anchor 
             </span>
           </label>
         </Field>
+        <Field
+          label="Chamadas de tool no histórico"
+          htmlFor={`${id}-history-tools`}
+          error={fieldError("historyToolCalls")}
+          hint="Quantas chamadas de tool dos turnos anteriores (as mais recentes) voltam com o histórico. Vazio = todas; 0 = o histórico traz só a conversa."
+        >
+          <Input
+            id={`${id}-history-tools`}
+            type="number"
+            min={0}
+            placeholder="todas"
+            value={values.historyToolCalls}
+            onChange={(e) => update("historyToolCalls", e.target.value)}
+            className="sm:max-w-40"
+          />
+        </Field>
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-1.5 text-[13px] font-medium">Memória de longo prazo</legend>
           <label className="flex items-start gap-2 text-[13px]">

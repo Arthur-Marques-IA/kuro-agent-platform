@@ -122,6 +122,53 @@ export function validateContextBlocks(drafts: ContextBlockDraft[]): BlocksValida
   return { blocks, errors, error: first };
 }
 
+function sameBlock(a: ContextBlockPayload, b: ContextBlockPayload): boolean {
+  return a.key === b.key && a.title === b.title && a.content === b.content && Boolean(a.volatile) === Boolean(b.volatile);
+}
+
+/** Mesma lista de blocos, na mesma ordem (a ordem é a do prompt). */
+export function sameContext(a: ContextBlockPayload[], b: ContextBlockPayload[]): boolean {
+  return a.length === b.length && a.every((block, i) => sameBlock(block, b[i]));
+}
+
+/**
+ * O `context` da próxima mensagem. O servidor guarda o contexto da sessão: `context`
+ * ausente herda o último enviado, uma lista substitui o contexto inteiro e `[]` limpa.
+ * Então o Playground só manda quando os blocos mudaram desde o último envio desta
+ * conversa (`lastSent`; `null` = nunca mandou):
+ *
+ * - nunca mandou: os blocos, se houver; sem blocos, nada (a sessão segue sem contexto);
+ * - igual ao último envio: nada (`undefined`), o servidor já tem;
+ * - diferente: a lista inteira — inclusive `[]`, quando a pessoa apagou todos os blocos.
+ */
+export function contextToSend(
+  current: ContextBlockPayload[],
+  lastSent: ContextBlockPayload[] | null
+): ContextBlockPayload[] | undefined {
+  if (lastSent === null) return current.length ? current : undefined;
+  return sameContext(current, lastSent) ? undefined : current;
+}
+
+/** O último `context` enviado numa conversa, como guardado no `localStorage`; `null` = nunca. */
+export function parseSentContext(text: string | null | undefined): ContextBlockPayload[] | null {
+  if (!text) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(raw)) return null;
+  return raw
+    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    .map((item) => ({
+      key: String(item.key ?? ""),
+      title: String(item.title ?? ""),
+      content: String(item.content ?? ""),
+      ...(item.volatile === true ? { volatile: true } : {}),
+    }));
+}
+
 /** Um evento de atendente humano, com o horário em que foi registrado. */
 export function humanAgentEvent(content: string, at: Date = new Date()): ChatEventPayload {
   return { role: "human_agent", content: content.trim(), at: at.toISOString() };
@@ -135,6 +182,7 @@ export interface ChatBodyOptions {
   dependencies?: Record<string, unknown> | null;
   attachments?: Attachment[];
   dryRun?: boolean;
+  /** O que `contextToSend` decidiu: `undefined` fica de fora (herda), `[]` limpa. */
   context?: ContextBlockPayload[];
   events?: ChatEventPayload[];
 }
@@ -142,7 +190,7 @@ export interface ChatBodyOptions {
 /**
  * O corpo do `/chat/stream`. Campo vazio fica de fora (`undefined` some no
  * `JSON.stringify`): uma conversa sem blocos nem eventos manda exatamente o corpo de
- * antes, sem `events: []` nem `context: []`.
+ * antes, sem `events: []`. `context` vai como veio: `[]` é "limpe o contexto da sessão".
  */
 export function buildChatBody(opts: ChatBodyOptions): Record<string, unknown> {
   return {
@@ -153,14 +201,15 @@ export function buildChatBody(opts: ChatBodyOptions): Record<string, unknown> {
     dependencies: opts.dependencies ?? undefined,
     attachments: opts.attachments?.length ? opts.attachments : undefined,
     dry_run: opts.dryRun || undefined,
-    context: opts.context?.length ? opts.context : undefined,
+    context: opts.context,
     events: opts.events?.length ? opts.events : undefined,
   };
 }
 
 /**
  * Conversa reaberta: o histórico vem dos runs do AgentOS, cujo `run_input` de um turno
- * estruturado é o texto montado pelo servidor (`# Contexto … # Mensagem nova do contato`).
+ * estruturado é a mensagem montada pelo servidor (`# Conversa desde … # Mensagem nova do
+ * contato`; nos runs da 0.3.0, com `# Contexto` na frente).
  * A linha do tempo traz os mesmos turnos já separados: aqui a bolha do contato volta a
  * ser só a fala, e cada evento `human_agent` vira a bolha do atendente antes dela.
  * Run legado (ou ausente da linha do tempo) fica como veio.
@@ -186,7 +235,7 @@ export function applyTimeline(messages: ChatMessage[], turns: TimelineTurn[]): C
 
 /**
  * Nome da conversa quando o 1º turno foi estruturado. Sem nome, o AgentOS usa a primeira
- * entrada, que aí é o texto montado (`# Contexto …`): o Playground nomeia pela fala.
+ * entrada, que aí é o texto montado (`# Mensagem nova do contato …`): o Playground nomeia pela fala.
  */
 export function sessionNameFromSpeech(text: string, max = 80): string {
   const clean = text.replace(/\s+/g, " ").trim();

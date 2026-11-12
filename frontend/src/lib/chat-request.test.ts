@@ -8,10 +8,12 @@ import { describe, it } from "node:test";
 import {
   applyTimeline,
   buildChatBody,
+  contextToSend,
   emptyBlock,
   eventsBefore,
   humanAgentEvent,
   parseContextBlocks,
+  parseSentContext,
   serializeContextBlocks,
   sessionNameFromSpeech,
   validateContextBlocks,
@@ -21,9 +23,9 @@ import type { ChatMessage, TimelineTurn } from "./types";
 const base = { agentType: "suporte", userId: "u1", sessionId: "s1", message: "oi" };
 
 describe("buildChatBody", () => {
-  it("sem blocos nem eventos, o corpo é o de antes (sem events/context vazios)", () => {
+  it("sem blocos nem eventos, o corpo é o de antes (sem events vazio nem context)", () => {
     const body = JSON.parse(
-      JSON.stringify(buildChatBody({ ...base, dependencies: { cpf: "1" }, context: [], events: [] }))
+      JSON.stringify(buildChatBody({ ...base, dependencies: { cpf: "1" }, context: undefined, events: [] }))
     );
     assert.deepEqual(body, {
       agent_type: "suporte",
@@ -53,6 +55,48 @@ describe("buildChatBody", () => {
     assert.deepEqual(body.events, [
       { role: "human_agent", content: "Maria, recebi seus dados", at: "2026-11-11T12:00:00.000Z" },
     ]);
+  });
+});
+
+describe("contextToSend", () => {
+  const dados = { key: "aluno", title: "Dados do aluno", content: "Maria" };
+  const divida = { key: "divida", title: "Dívida", content: "SEM parcela vencida", volatile: true };
+
+  it("primeiro turno: manda os blocos; sem blocos, nada", () => {
+    assert.deepEqual(contextToSend([dados], null), [dados]);
+    assert.equal(contextToSend([], null), undefined);
+  });
+
+  it("blocos iguais ao último envio não vão de novo (o servidor herda)", () => {
+    assert.equal(contextToSend([{ ...dados }, { ...divida }], [dados, divida]), undefined);
+  });
+
+  it("qualquer mudança manda a lista inteira", () => {
+    const mudou = { ...divida, content: "1 parcela vencida" };
+    assert.deepEqual(contextToSend([dados, mudou], [dados, divida]), [dados, mudou]);
+    assert.deepEqual(contextToSend([divida, dados], [dados, divida]), [divida, dados], "a ordem conta");
+    assert.deepEqual(contextToSend([dados, { ...divida, volatile: undefined }], [dados, divida]), [
+      dados,
+      { ...divida, volatile: undefined },
+    ]);
+  });
+
+  it("apagou todos os blocos de uma conversa que tinha contexto: manda [] para limpar", () => {
+    assert.deepEqual(contextToSend([], [dados]), []);
+    assert.equal(contextToSend([], []), undefined, "já estava limpo");
+  });
+
+  it("[] vai no corpo; undefined fica de fora", () => {
+    assert.deepEqual(JSON.parse(JSON.stringify(buildChatBody({ ...base, context: [] }))).context, []);
+    assert.equal("context" in JSON.parse(JSON.stringify(buildChatBody({ ...base, context: undefined }))), false);
+  });
+
+  it("o último envio guardado volta igual; vazio ou inválido é 'nunca mandou'", () => {
+    assert.deepEqual(parseSentContext(JSON.stringify([dados, divida])), [dados, divida]);
+    assert.deepEqual(parseSentContext("[]"), []);
+    assert.equal(parseSentContext(""), null);
+    assert.equal(parseSentContext("{"), null);
+    assert.equal(parseSentContext(null), null);
   });
 });
 

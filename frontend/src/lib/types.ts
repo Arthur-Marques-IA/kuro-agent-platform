@@ -547,6 +547,8 @@ export interface AgentDefinition {
   dependency_fields: DependencyField[];
   memory_backend: MemoryBackend;
   num_history_runs: number;
+  /** Chamadas de tool antigas que voltam no histórico (as mais recentes); `null` = todas. */
+  history_tool_calls?: number | null;
   model_params?: ModelParams | null;
   /** Tempo limite de uma execução; `null` = padrão do serviço (RUN_TIMEOUT_SECONDS). */
   timeout_seconds?: number | null;
@@ -577,6 +579,7 @@ export interface AgentDefinitionInput {
   dependency_fields?: DependencyFieldInput[];
   memory_backend?: MemoryBackend;
   num_history_runs?: number;
+  history_tool_calls?: number | null;
   model_params?: ModelParams | null;
   timeout_seconds?: number | null;
   session_summary?: boolean;
@@ -596,6 +599,7 @@ export interface AgentRevision {
     model_id?: string;
     model_params?: ModelParams;
     timeout_seconds?: number;
+    history_tool_calls?: number;
     tools?: { tool_name: string; kind?: string; config_hash?: string; missing?: boolean }[];
     feedback_rules?: string[];
     response_schema?: SchemaField[];
@@ -987,6 +991,8 @@ export interface TimelineEvent {
   attachments?: AttachmentInfo[];
   /** O evento que é a fala nova do turno. */
   speech?: boolean;
+  /** `agent_sent` igual à última resposta do agente: o servidor o tirou do texto do modelo. */
+  echo?: boolean;
 }
 
 export interface InputContextBlock {

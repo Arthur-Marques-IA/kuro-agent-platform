@@ -43,6 +43,8 @@ export interface FormValues {
   dependencyFields: DependencyField[];
   memoryBackend: MemoryBackend;
   numHistoryRuns: number;
+  /** Chamadas de tool antigas que voltam no histórico; "" = todas (o padrão). */
+  historyToolCalls: string;
   /** Parâmetros de geração como texto: "" = padrão do provedor. */
   temperature: string;
   topP: string;
@@ -87,6 +89,7 @@ export function valuesFrom(agent: AgentDefinition | undefined, defaultModelId: s
     // Agente novo nasce sem memória de longo prazo: liga quem precisa.
     memoryBackend: agent?.memory_backend ?? "none",
     numHistoryRuns: agent?.num_history_runs ?? DEFAULT_HISTORY_RUNS,
+    historyToolCalls: asText(agent?.history_tool_calls),
     temperature: asText(params?.temperature),
     topP: asText(params?.top_p),
     maxTokens: asText(params?.max_tokens),
@@ -114,6 +117,7 @@ export const PARAM_LIMITS = {
   maxTokens: { min: 1, max: 200000, integer: true, label: "Máx. de tokens" },
   thinkingBudget: { min: 0, max: 32768, integer: true, label: "Orçamento de raciocínio" },
   timeoutSeconds: { min: 1, max: 600, integer: true, label: "Tempo limite" },
+  historyToolCalls: { min: 0, max: 1000, integer: true, label: "Tools no histórico" },
 } as const;
 
 export function numberProblem(key: keyof typeof PARAM_LIMITS, raw: string): string | null {
@@ -210,6 +214,9 @@ export function buildUpdate(
   if (values.kind !== "analysis") {
     if (values.memoryBackend !== initial.memoryBackend) payload.memory_backend = values.memoryBackend;
     if (!Object.is(values.numHistoryRuns, initial.numHistoryRuns)) payload.num_history_runs = values.numHistoryRuns;
+    if (values.historyToolCalls.trim() !== initial.historyToolCalls.trim()) {
+      payload.history_tool_calls = values.historyToolCalls.trim() ? Number(values.historyToolCalls) : null;
+    }
     if (values.sessionSummary !== initial.sessionSummary) payload.session_summary = values.sessionSummary;
     if (values.plainText !== initial.plainText) payload.plain_text = values.plainText;
   }
@@ -242,6 +249,7 @@ export function buildCreate(values: FormValues, ctx: ModelContext): AgentDefinit
       : {
           memory_backend: values.memoryBackend,
           num_history_runs: values.numHistoryRuns,
+          history_tool_calls: values.historyToolCalls.trim() ? Number(values.historyToolCalls) : null,
           session_summary: values.sessionSummary,
           plain_text: values.plainText,
         }),
@@ -296,6 +304,7 @@ const PAYLOAD_SECTION: Record<keyof AgentDefinitionInput, FormSectionId> = {
   knowledge_collection: "modelo",
   memory_backend: "memoria",
   num_history_runs: "memoria",
+  history_tool_calls: "memoria",
   session_summary: "memoria",
   plain_text: "memoria",
   response_schema: "saida",
@@ -309,6 +318,7 @@ export interface FormErrors {
   agentType: string | null;
   instructions: string | null;
   numHistoryRuns: string | null;
+  historyToolCalls: string | null;
   modelParams: string | null;
   responseSchema: string | null;
   stages: string | null;
@@ -319,6 +329,7 @@ const ERROR_SECTION: Record<keyof FormErrors, FormSectionId> = {
   agentType: "identidade",
   instructions: "prompt",
   numHistoryRuns: "memoria",
+  historyToolCalls: "memoria",
   modelParams: "modelo",
   responseSchema: "saida",
   stages: "etapas",

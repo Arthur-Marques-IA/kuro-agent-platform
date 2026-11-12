@@ -16,7 +16,7 @@ interface SendOptions {
   attachments?: Attachment[];
   /** Execução de teste: as tools recebem `X-Kuro-Dry-Run: true` e decidem o que simular. */
   dryRun?: boolean;
-  /** Blocos de `context` (texto para o modelo ler); vazio fica fora do corpo. */
+  /** O `context` da sessão (`contextToSend`): `undefined` fica fora do corpo e o servidor herda; `[]` limpa. */
   context?: ContextBlockPayload[];
   /** Eventos antes da fala (atendente humano simulado); vazio fica fora do corpo. */
   events?: ChatEventPayload[];

@@ -69,6 +69,15 @@ describe("agent_sent", () => {
     assert.equal(shown[0].index, 1);
   });
 
+  it("a marca echo do servidor esconde o repetido mesmo sem a resposta anterior na página", () => {
+    const eco = { ...sent("Recebi seus dados"), echo: true };
+    const shown = visibleEvents(turn({ events: [eco, { role: "contact", content: "ok", speech: true }] }), null);
+    assert.deepEqual(
+      shown.map((s) => s.event.role),
+      ["contact"]
+    );
+  });
+
   it("a fala vira bolha própria só quando nenhum evento é a fala", () => {
     assert.equal(speechOutsideEvents(turn({ message: "quero parcelar" })), "quero parcelar");
     assert.equal(speechOutsideEvents(turn({ events: [{ role: "contact", content: "x", speech: true }] })), null);
