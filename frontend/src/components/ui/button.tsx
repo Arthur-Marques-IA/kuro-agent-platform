@@ -4,8 +4,10 @@ import { cn } from "@/lib/cn";
 type Variant = "default" | "secondary" | "outline" | "ghost" | "destructive" | "link";
 type Size = "default" | "sm" | "lg" | "icon" | "icon-sm" | "icon-xs";
 
+// `relative touch-target`: em tela de toque ou estreita, todo botão (inclusive os de ícone de
+// 28–32 px) ganha área de toque de 40 px sem mudar de tamanho; no desktop nada muda.
 const baseClasses =
-  "inline-flex shrink-0 select-none items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium transition-colors " +
+  "relative touch-target inline-flex shrink-0 select-none items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium transition-colors " +
   "outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background " +
   "disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0";
 

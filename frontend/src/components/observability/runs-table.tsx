@@ -6,6 +6,7 @@ import { Activity, ChevronRight } from "lucide-react";
 import { errorMessage, requestJson } from "@/lib/http";
 import { formatCost, formatMs, formatNumber } from "@/lib/format";
 import { mergeFirstPage } from "@/lib/logs-lists";
+import { useListKeyboardNav } from "@/lib/use-list-nav";
 import type { RunPage, RunSummary } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -146,6 +147,10 @@ export function RunsTable({
   /** Mostra a coluna do agente — usado na página `/observability`, que lista vários agentes. */
   showAgentColumn?: boolean;
 }) {
+  // `j`/`k` andam pelas execuções, `Enter` abre (ver lib/use-list-nav.ts).
+  const listRef = useRef<HTMLDivElement>(null);
+  useListKeyboardNav(listRef);
+
   if (state === "loading") {
     return (
       <Card className="flex flex-col gap-3 p-4" aria-busy="true" aria-label="Carregando execuções">
@@ -199,6 +204,7 @@ export function RunsTable({
   return (
     <>
       {/* No celular, cartões: a fala, o agente, o status e o horário, sem rolagem lateral. */}
+      <div ref={listRef} data-list-nav="">
       <ul className="flex flex-col gap-2 md:hidden" aria-label="Execuções">
         {items.map((run) => (
           <RunCard key={run.run_id} run={run} showAgent={showAgentColumn} />
@@ -230,6 +236,7 @@ export function RunsTable({
           </table>
         </div>
       </Card>
+      </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
       {cursor && (
         <Button variant="outline" size="sm" className="h-10 self-center md:h-8" onClick={onLoadMore} disabled={loadingMore}>
@@ -247,6 +254,7 @@ function RunCard({ run, showAgent }: { run: RunSummary; showAgent: boolean }) {
     <li>
       <Link
         href={`/runs/${encodeURIComponent(run.run_id)}`}
+        data-list-nav-item=""
         className="flex min-h-10 flex-col gap-1.5 rounded-xl border border-border bg-card px-3.5 py-3 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
       >
         <p className="line-clamp-2 break-words text-sm font-medium">
@@ -274,10 +282,16 @@ function RunRow({ run, showAgentColumn }: { run: RunSummary; showAgentColumn: bo
   // A fala pura (entrada estruturada); em run legado, o texto inteiro que chegou.
   const message = run.input_message || run.message;
   return (
-    <tr className="group relative transition-colors hover:bg-accent/50">
+    <tr className="group relative transition-colors hover:bg-accent/50 has-[a:focus-visible]:bg-accent/50">
       <td className="max-w-0 px-4 py-2.5">
-        {/* O link cobre a linha inteira; as células ficam como texto normal para leitores de tela. */}
-        <Link href={href} className="absolute inset-0" aria-label={`Abrir trace: ${message ?? run.run_id}`} />
+        {/* O link cobre a linha inteira; as células ficam como texto normal para leitores de tela.
+            É ele que recebe o foco do `j`/`k`: o anel contorna a linha. */}
+        <Link
+          href={href}
+          data-list-nav-item=""
+          className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          aria-label={`Abrir trace: ${message ?? run.run_id}`}
+        />
         <p className="truncate font-medium">{message || <span className="text-muted-foreground">(sem mensagem)</span>}</p>
         <p className="truncate text-xs text-muted-foreground">
           {run.user_id ?? "—"}

@@ -12,6 +12,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState, RelativeTime, Skeleton } from "@/components/ui/primitives";
 import { FeedbackCount } from "@/components/observability/run-status";
 import { apiSearchParams } from "@/lib/logs-query";
+import { useListKeyboardNav } from "@/lib/use-list-nav";
 
 /** Busca `/api/observability/sessions` com os filtros dados — não pagina de verdade, ver `scanned`. */
 export function useSessions(params: Record<string, string | string[]>) {
@@ -70,6 +71,9 @@ export function useSessions(params: Record<string, string | string[]>) {
 /** `refreshTick` muda a cada volta da atualização automática. */
 export function SessionsTable({ params, refreshTick = 0 }: { params: Record<string, string | string[]>; refreshTick?: number }) {
   const { items, state, error, reload, refresh } = useSessions(params);
+  // `j`/`k` andam pelas sessões, `Enter` abre (ver lib/use-list-nav.ts).
+  const listRef = useRef<HTMLDivElement>(null);
+  useListKeyboardNav(listRef);
   const lastTick = useRef(refreshTick);
   useEffect(() => {
     if (lastTick.current === refreshTick) return;
@@ -113,7 +117,7 @@ export function SessionsTable({ params, refreshTick = 0 }: { params: Record<stri
   }
 
   return (
-    <>
+    <div ref={listRef} data-list-nav="">
       {/* No celular, cartões: o contato, a última fala, os agentes e a hora, sem rolagem lateral. */}
       <ul className="flex flex-col gap-2 md:hidden" aria-label="Sessões">
         {items.map((session) => (
@@ -144,7 +148,7 @@ export function SessionsTable({ params, refreshTick = 0 }: { params: Record<stri
           </table>
         </div>
       </Card>
-    </>
+    </div>
   );
 }
 
@@ -157,6 +161,7 @@ function SessionCard({ session }: { session: LogSessionSummary }) {
     <li>
       <Link
         href={sessionHref(session)}
+        data-list-nav-item=""
         className="flex min-h-10 flex-col gap-1 rounded-xl border border-border bg-card px-3.5 py-3 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
       >
         <div className="flex min-w-0 items-baseline gap-2">
@@ -195,9 +200,14 @@ function SessionCard({ session }: { session: LogSessionSummary }) {
 function SessionRow({ session }: { session: LogSessionSummary }) {
   const href = sessionHref(session);
   return (
-    <tr className="group relative transition-colors hover:bg-accent/50">
+    <tr className="group relative transition-colors hover:bg-accent/50 has-[a:focus-visible]:bg-accent/50">
       <td className="max-w-0 px-4 py-2.5">
-        <Link href={href} className="absolute inset-0" aria-label={`Ver sessão: ${session.contact_name ?? session.session_id}`} />
+        <Link
+          href={href}
+          data-list-nav-item=""
+          className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          aria-label={`Ver sessão: ${session.contact_name ?? session.session_id}`}
+        />
         {session.contact_name && <p className="truncate font-medium">{session.contact_name}</p>}
         <p className="truncate text-[13px]" title={session.last_message ?? undefined}>
           {session.last_message || <span className="text-muted-foreground">(sem mensagem)</span>}

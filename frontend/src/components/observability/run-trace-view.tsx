@@ -22,6 +22,7 @@ import { cn } from "@/lib/cn";
 import { ApiError, errorMessage, requestJson } from "@/lib/http";
 import { formatCost, formatDateTime, formatMs, formatNumber } from "@/lib/format";
 import type { RetrievalReferences, RunTrace, TraceScore, TraceSpan } from "@/lib/types";
+import { useEscapeBack } from "@/lib/use-list-nav";
 import { Badge } from "@/components/ui/badge";
 import { CodeBlock } from "@/components/ui/code-block";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -56,6 +57,8 @@ type LoadState =
 
 export function RunTraceView({ runId }: { runId: string }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  // Esc volta para a lista de onde se veio (ou para Execuções), como no `kuro dash`.
+  useEscapeBack("/logs/runs");
 
   const load = useCallback(
     async (attempt: number) => {

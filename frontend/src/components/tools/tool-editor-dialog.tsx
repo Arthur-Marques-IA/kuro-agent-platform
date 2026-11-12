@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Plus, Trash } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { announce } from "@/lib/announce";
 import { errorMessage, requestJson } from "@/lib/http";
 import { slugify } from "@/lib/format";
 import { TOOL_KIND_META } from "@/lib/agent-meta";
@@ -229,6 +230,7 @@ export function ToolEditorDialog({
       onSaved();
     } catch (err) {
       setSubmitError(errorMessage(err));
+      announce(`Não foi possível salvar a tool: ${errorMessage(err)}`, { assertive: true });
     } finally {
       setSubmitting(false);
     }

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useId, useState } from "react";
+import { announce } from "@/lib/announce";
 import { errorMessage, requestJson } from "@/lib/http";
 import type { Collection, EmbedderOption, SearchMode } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -100,6 +101,7 @@ function NewCollectionForm({ onClose, onCreated }: { onClose: () => void; onCrea
       onClose();
     } catch (err) {
       setError(errorMessage(err));
+      announce(`Não foi possível criar a coleção: ${errorMessage(err)}`, { assertive: true });
     } finally {
       setSubmitting(false);
     }

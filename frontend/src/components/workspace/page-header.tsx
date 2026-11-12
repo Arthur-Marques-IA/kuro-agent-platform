@@ -30,7 +30,12 @@ export function PageHeader({
                   <Fragment key={`${crumb.label}-${i}`}>
                     {i > 0 && <ChevronRight className="size-3.5 shrink-0 opacity-60" />}
                     {crumb.href ? (
-                      <Link href={crumb.href} className="truncate hover:text-foreground">
+                      // `truncate` corta um ::after; a área de toque de 40 px vem do padding,
+                      // compensado pela margem negativa (o desenho da trilha não muda).
+                      <Link
+                        href={crumb.href}
+                        className="truncate rounded-md hover:text-foreground max-md:-mx-1.5 max-md:-my-2.5 max-md:min-w-10 max-md:px-1.5 max-md:py-2.5 max-md:text-center"
+                      >
                         {crumb.label}
                       </Link>
                     ) : (

@@ -165,7 +165,7 @@ export function DropdownMenuItem({
         onSelect?.();
       }}
       className={cn(
-        "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] outline-none transition-colors",
+        "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] outline-none transition-colors max-md:min-h-10",
         "hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-50",
         destructive && "text-destructive hover:bg-destructive/10 focus-visible:bg-destructive/10",
         className

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { CircleCheck, CircleX, ExternalLink } from "lucide-react";
+import { announce } from "@/lib/announce";
 import { errorMessage, requestJson } from "@/lib/http";
 import type {
   ModelCredential,
@@ -75,6 +76,7 @@ export function CredentialDialog({
       setTestResult(result);
     } catch (err) {
       setError(errorMessage(err));
+      announce(errorMessage(err), { assertive: true });
     } finally {
       setTesting(false);
     }
@@ -112,6 +114,7 @@ export function CredentialDialog({
       onSaved();
     } catch (err) {
       setError(errorMessage(err));
+      announce(errorMessage(err), { assertive: true });
     } finally {
       setSaving(false);
     }

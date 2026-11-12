@@ -127,7 +127,7 @@ export function TabsTrigger({
         "focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4",
         ctx.variant === "pill"
           ? [
-              "h-7 rounded-md px-3 text-[13px]",
+              "touch-target relative h-7 rounded-md px-3 text-[13px]",
               active ? "bg-card text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground",
             ]
           : [

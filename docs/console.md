@@ -204,10 +204,42 @@ As cores de status são as mesmas nos dois temas e foram conferidas contra dalto
 (`frontend/src/app/globals.css`, `--viz-*`). A linha de "tool falhando" usa um âmbar mais escuro
 que o das barras, porque uma linha fina precisa de mais contraste no fundo claro.
 
-Atalhos: `Ctrl/⌘+K` (paleta de comandos) e `Ctrl/⌘+B` (recolher a sidebar).
 Tema claro, escuro ou do sistema.
 
 O navegador só fala com o Next.js. Os Route Handlers em `frontend/src/app/api/**`
 fazem proxy para o `agent-service` usando `AGENT_SERVICE_URL`, que só existe no
 servidor: sem CORS e sem expor o backend. Não há login no MVP: o `user_id` do
 console fica no `localStorage` do navegador.
+
+## Atalhos e acessibilidade
+
+| Tecla | Onde | O que faz |
+| --- | --- | --- |
+| `Ctrl/⌘+K` | em qualquer tela | abre a paleta de comandos |
+| `Ctrl/⌘+Shift+O` | em qualquer tela | nova conversa no Playground |
+| `Ctrl/⌘+B` | em qualquer tela | recolhe a sidebar |
+| `j` / `k` | listas de execuções e de sessões (Logs, aba Execuções do agente, execuções da sessão) | desce / sobe a seleção, como no `kuro dash` |
+| `Enter` | na linha selecionada | abre a execução ou a sessão |
+| `Esc` | na tela de uma execução ou de uma sessão | volta para a lista de onde você veio (com os filtros), ou para Execuções / Sessões |
+
+A seleção é o foco do teclado: a linha ganha o anel de foco, e o leitor de tela lê o rótulo dela.
+`j`, `k`, `Enter` e `Esc` ficam quietos enquanto você digita num campo, com um diálogo, gaveta ou
+menu aberto (o `Esc` fecha o sobreposto, não sai da tela) e com `Ctrl`, `⌘`, `Alt` ou `Shift`
+apertados. As setas continuam rolando a página. A lógica está em `frontend/src/lib/list-nav.ts`
+(testada) e o hook em `frontend/src/lib/use-list-nav.ts`.
+
+**Leitor de tela.** Um anunciador único (`announce()` em `frontend/src/lib/announce.ts`, com as
+regiões vivas montadas no layout raiz) lê: o fim de cada resposta do Playground (uma vez, com o
+começo da resposta, e não a cada pedaço do streaming), os avisos (toasts) de salvar, criar e
+excluir, e os erros ao salvar agente, tool, collection e credencial (esses em modo assertivo,
+interrompendo a leitura).
+
+**Toque.** Em tela de toque ou com menos de 768 px, botões de ícone, abas em pílula, o fechar dos
+diálogos, os links da trilha e o "Trace" das respostas têm área de toque de pelo menos 40 px, sem
+mudar o desenho (utilitário `touch-target` em `globals.css`). No desktop com mouse nada muda.
+
+**Contraste.** Os tokens de cor passam 4,5:1 para texto de 11–12 px nos dois temas: o texto
+secundário sobre página, cartão e barra lateral, as cores de status como texto e nos badges, e o
+texto dos botões cheios. `frontend/src/lib/contrast.test.ts` lê os tokens do `globals.css` e falha
+se uma mudança derrubar algum desses pares.
+

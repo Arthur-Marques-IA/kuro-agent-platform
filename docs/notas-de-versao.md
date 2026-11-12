@@ -57,6 +57,17 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Novo
 
+- **Console: teclado, leitor de tela, toque e contraste.** Nas listas de execuções e de sessões,
+  `j`/`k` movem a seleção (com anel de foco na linha) e `Enter` abre; na tela de uma execução ou
+  de uma sessão, `Esc` volta para a lista de onde se veio. Os atalhos ficam quietos digitando,
+  com diálogo ou menu aberto e com modificador. Um anunciador único lê no leitor de tela o fim de
+  cada resposta do Playground (uma vez, não a cada pedaço do streaming; antes a conversa inteira
+  era região viva), os avisos de salvar e os erros ao salvar agente, tool, collection e
+  credencial. Salvar uma tool agora mostra um aviso. Em tela de toque ou estreita, botões de
+  ícone e links pequenos ganham área de toque de 40 px sem mudar de tamanho. Cores: vermelho,
+  verde e âmbar do tema claro mais escuros, e o vermelho do tema escuro mais claro (com texto
+  escuro no botão destrutivo), para passar 4,5:1 em badges de 11 px. Ver
+  [Console web](console.md#atalhos-e-acessibilidade).
 - **Console, listas de Logs: exportar CSV, atualização automática e cartões no celular.** Sessões,
   Execuções e RAG ganham **Exportar CSV** com os filtros ativos, buscado no servidor (execuções até
   5.000 linhas, paginadas; sessões até 200), em UTF-8 com BOM e com as células que começam com `=`,

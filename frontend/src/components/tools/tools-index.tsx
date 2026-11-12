@@ -308,6 +308,8 @@ export function ToolsIndex() {
           existingNames={availableTools.map((t) => t.tool_name)}
           onOpenChange={(open) => !open && setEditing(null)}
           onSaved={() => {
+            // O toast também é lido pelo anunciador (salvar uma tool não dizia nada antes).
+            toast({ title: editing === "new" ? "Tool criada" : "Tool salva", variant: "success" });
             setEditing(null);
             refresh();
           }}
@@ -458,10 +460,10 @@ function ToolRow({
           {summary.head ? (
             <p className="line-clamp-2 text-[13px] text-muted-foreground" title={tool.description ?? undefined}>
               {summary.head}
-              {summary.rest && !expanded && <span className="text-muted-foreground/70"> …</span>}
+              {summary.rest && !expanded && <span className="text-muted-foreground"> …</span>}
             </p>
           ) : (
-            <p className="text-[13px] italic text-muted-foreground/70">
+            <p className="text-[13px] italic text-muted-foreground">
               {tool.kind === "builtin" ? "Descrição vem da toolkit." : "Sem descrição — o modelo só vê o nome."}
             </p>
           )}

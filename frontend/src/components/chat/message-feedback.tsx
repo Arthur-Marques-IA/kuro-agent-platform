@@ -130,7 +130,7 @@ export function MessageFeedback({
           <Link
             href={`/runs/${encodeURIComponent(runId)}`}
             title="Ver o trace desta resposta: spans, tokens, custo e avaliações"
-            className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="touch-target relative inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <Activity className="size-3" />
             Trace

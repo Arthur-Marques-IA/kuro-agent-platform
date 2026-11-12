@@ -4,6 +4,7 @@ import { FormEvent, ReactNode, useEffect, useId, useMemo, useState } from "react
 import Link from "next/link";
 import { Plus, Trash, Wrench } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { announce } from "@/lib/announce";
 import { errorMessage } from "@/lib/http";
 import { formatNumber, slugify } from "@/lib/format";
 import {
@@ -408,6 +409,7 @@ export function AgentForm({
       setShowErrors(false);
     } catch (err) {
       setSubmitError(errorMessage(err));
+      announce(`Não foi possível salvar o agente: ${errorMessage(err)}`, { assertive: true });
     } finally {
       setSubmitting(false);
     }
