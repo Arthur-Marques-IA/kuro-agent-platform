@@ -1,6 +1,10 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
+    # Sem isto, depois de um reboot (ou de o Docker reiniciar) o agent-service e o
+    # console voltam sozinhos e o banco não: o serviço fica reiniciando em laço com
+    # "failed to resolve host 'postgres'".
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       # Só vale na criação do volume (PGDATA vazio). Para trocar a senha de um banco
