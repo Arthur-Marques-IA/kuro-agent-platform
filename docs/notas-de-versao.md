@@ -43,6 +43,16 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   (`QUEUE_MAX_WAIT_SECONDS + timeout_seconds + 5`); um cliente com `timeout_seconds + 5`, como o
   [guia de integração](integracao.md#4-erros-e-fallback) recomendava, pode desistir com o run ainda na fila.
   Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
+- **Tools `kind="python"` só enxergam os nomes públicos dos módulos.** O validador aceitava
+  `random._os.getcwd()`, `collections._sys.modules[...]` e `from random import _os`, que davam acesso
+  a `os`/`sys`. Agora o cadastro responde 422 para qualquer acesso a atributo que comece com `_`, para
+  `from x import y` com `y` fora dos nomes públicos do módulo (o `__all__`, sem submódulos como
+  `uuid.os`; `string.Formatter` também fica de fora), para `from x import *` e para `import a.b`
+  (só `collections.abc` é aceito). Na execução, `import x` entrega uma cópia do módulo só com esses
+  nomes, então uma tool já salva que usasse um nome privado passa a falhar ao rodar. Continua não
+  sendo sandbox: é redução de superfície. **O que fazer:** se alguma tool Python sua usa nome com
+  `_` de um módulo, troque pelo equivalente público e salve de novo; `kuro tools invoke <tool>`
+  confere.
 
 - **Tools não alcançam mais a faixa CGNAT (`100.64.0.0/10`).** A trava de egress só deixava de fora
   o que o Python chama de "privado", e essa faixa não entra nessa conta: `100.64.0.1` e

@@ -252,6 +252,94 @@ def test_validate_python_config_rejects_dangerous_code(code):
         validate_python_config({"code": code, "entrypoint": "handler"})
 
 
+_FUGAS_POR_ATRIBUTO_PRIVADO = [
+    "import random\ndef handler():\n    return random._os.getcwd()\n",
+    "import collections\ndef handler():\n    return collections._sys.modules['os']\n",
+    "from random import _os as o\ndef handler():\n    return o.getcwd()\n",
+]
+
+
+@pytest.mark.parametrize("code", _FUGAS_POR_ATRIBUTO_PRIVADO)
+def test_validate_python_config_recusa_atributo_privado_de_modulo(code):
+    with pytest.raises(PythonToolConfigError):
+        validate_python_config({"code": code, "entrypoint": "handler"})
+
+
+@pytest.mark.parametrize("code", _FUGAS_POR_ATRIBUTO_PRIVADO)
+def test_create_tool_python_com_atributo_privado_da_422(code):
+    with pytest.raises(HTTPException) as exc:
+        create_tool(ToolIn(tool_name="py_fuga", kind="python", label="Fuga", config={"code": code, "entrypoint": "handler"}))
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "from uuid import os\ndef handler():\n    return 1\n",  # submódulo reexportado
+        "from string import Formatter\ndef handler():\n    return 1\n",  # get_field devolve objetos
+        "from json import *\ndef handler():\n    return 1\n",
+        "import json.decoder\ndef handler():\n    return 1\n",
+        "def handler(x):\n    return x._private\n",
+    ],
+)
+def test_validate_python_config_recusa_nomes_fora_da_lista(code):
+    with pytest.raises(PythonToolConfigError):
+        validate_python_config({"code": code, "entrypoint": "handler"})
+
+
+def test_tool_python_recebe_copia_do_modulo_sem_os_privados():
+    """Mesmo que a checagem estática deixasse passar, `random._os` não existe em runtime."""
+    from agent_service.tools.python_tool import _safe_import
+
+    random_da_tool = _safe_import("random")
+    assert not hasattr(random_da_tool, "_os")
+    assert random_da_tool.randint(1, 1) == 1
+    import random
+
+    assert random_da_tool is not random
+    with pytest.raises(ImportError):
+        _safe_import("random", None, None, ("_os",), 0)
+    assert not hasattr(_safe_import("uuid"), "os")
+    # Reatribuir na cópia não mexe no módulo real nem na cópia de outra tool.
+    random_da_tool.choice = None
+    assert random.choice is not None and _safe_import("random").choice is not None
+
+
+def test_tool_python_com_imports_legitimos():
+    code = (
+        "import collections.abc\n"
+        "from collections import Counter, defaultdict\n"
+        "from collections.abc import Mapping\n"
+        "from datetime import datetime, timedelta\n"
+        "from decimal import Decimal, ROUND_HALF_UP\n"
+        "import hashlib, json, re, uuid, string, statistics, itertools, functools, base64, textwrap, time, math\n"
+        "def handler(texto: str) -> dict:\n"
+        "    c = Counter(texto.split())\n"
+        "    return {\n"
+        "        'mapping': isinstance(dict(c), Mapping) and isinstance(dict(c), collections.abc.Mapping),\n"
+        "        'top': c.most_common(1)[0][0],\n"
+        "        'hash': hashlib.sha256(texto.encode()).hexdigest()[:8],\n"
+        "        'json': json.loads(json.dumps({'a': 1})),\n"
+        "        'num': re.findall(r'\\d+', texto),\n"
+        "        'dec': str(Decimal('1.005').quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)),\n"
+        "        'uuid': len(str(uuid.uuid4())),\n"
+        "        'up': string.ascii_uppercase[:2],\n"
+        "        'media': statistics.mean([1, 2, 3]),\n"
+        "        'b64': base64.b64encode(b'x').decode(),\n"
+        "        'dia': (datetime(2024, 1, 1) + timedelta(days=1)).day,\n"
+        "        'soma': functools.reduce(lambda a, b: a + b, itertools.chain([1], [2])),\n"
+        "        'raiz': math.sqrt(16),\n"
+        "        'dd': dict(defaultdict(int)),\n"
+        "    }\n"
+    )
+    config = validate_python_config({"code": code, "entrypoint": "handler"})
+    out = compile_python_tool(tool_name="legit", config=config, enabled=True)(texto="a a b 12")
+    assert out == {
+        "mapping": True, "top": "a", "hash": out["hash"], "json": {"a": 1}, "num": ["12"], "dec": "1.01",
+        "uuid": 36, "up": "AB", "media": 2, "b64": "eA==", "dia": 2, "soma": 3, "raiz": 4.0, "dd": {},
+    }  # fmt: skip
+
+
 def test_validate_python_config_allows_listed_modules():
     validate_python_config(
         {"code": "import math, json, re\ndef handler(x: float) -> float:\n    return math.sqrt(x)\n", "entrypoint": "handler"}

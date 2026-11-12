@@ -3,13 +3,23 @@
 simples (`kind="api"`) não cobre — lógica própria, combinar mais de uma
 chamada, transformar dados.
 
-**Isto NÃO é uma sandbox forte.** É uma barreira de dois níveis — checagem
-estática da árvore (`ast`) recusando imports fora de uma lista permitida e
-qualquer nome/atributo perigoso (`os`, `subprocess`, `eval`, `__globals__`,
-`__subclasses__`...), mais `builtins` restritos na execução — pensada pra
-pegar erros e abuso acidental, não pra conter um autor mal-intencionado
-determinado (um sandbox de verdade precisaria de processo/container
-isolado, fora do escopo deste serviço). Por isso:
+**Isto NÃO é uma sandbox.** É redução de superfície, em camadas:
+
+- checagem estática da árvore (`ast`): imports só de uma lista de módulos, e
+  `from x import y` só dos nomes públicos permitidos de cada um; nenhum acesso
+  a atributo que comece com `_` (o que inclui os dunders `__globals__`,
+  `__subclasses__`... e os privados como `random._os` ou `collections._sys`);
+  nenhum nome perigoso (`os`, `subprocess`, `eval`...);
+- na execução, `import x` não entrega o módulo real: entrega uma cópia nova,
+  por import, só com os nomes públicos permitidos (`_module_proxy`). Então
+  `random._os` não existe nem em runtime, e uma tool que reatribui
+  `random.choice` não mexe no `random` do processo nem no das outras tools;
+- `builtins` restritos.
+
+Isso pega erro e abuso acidental e fecha os desvios conhecidos, mas não é
+feito para conter um autor mal-intencionado determinado (isolamento de
+verdade precisaria de processo/container separado, fora do escopo deste
+serviço). Por isso:
 
 - desligado por padrão (`CUSTOM_PYTHON_TOOLS_ENABLED=false`);
 - só ligue se quem tem a chave de escopo `admin` já for confiável: é ela que
@@ -33,6 +43,8 @@ remendados (isolamento de verdade é um projeto à parte — ver "Fora de propó
 - **`str.format` alcança atributos** (`"{0.__class__}".format(x)`), o que a
   checagem estática não vê porque o caminho está dentro de uma string. Isso
   vaza informação sobre os objetos, mas só produz texto — não chama nada.
+  (`string.Formatter` fica de fora da lista justamente porque o
+  `get_field` dele devolve o objeto, não o texto.)
 """
 
 import ast
@@ -63,6 +75,29 @@ _ALLOWED_MODULES = {
     "time",
     "uuid",
 }
+
+# Submódulos que podem ser importados pelo nome pontuado (`import collections.abc`,
+# `from collections.abc import Mapping`). Qualquer outro `import a.b` é recusado.
+_ALLOWED_SUBMODULES = {"collections.abc"}
+
+# Nomes públicos que mesmo assim ficam de fora da cópia do módulo.
+_WITHHELD_NAMES: dict[str, set[str]] = {
+    # `Formatter().get_field("0.__class__...", ...)` percorre atributos (dunders
+    # inclusive) e devolve o OBJETO — o desvio da checagem de atributos.
+    "string": {"Formatter"},
+    # Leem `sys.argv`/arquivos: não servem para nada dentro de uma tool.
+    "uuid": {"main"},
+    "base64": {"main"},
+}
+
+# O que o `httpx` guardado expõe (ver `_guarded_httpx`).
+_HTTPX_NAMES = frozenset(
+    {
+        "request", "get", "post", "put", "patch", "delete", "head",
+        "Client", "AsyncClient",
+        "Response", "HTTPError", "RequestError", "TimeoutException", "HTTPStatusError",
+    }
+)  # fmt: skip
 
 _BANNED_NAMES = {
     "eval",
@@ -138,18 +173,28 @@ def _check_ast(code: str, entrypoint_name: str) -> None:
         raise PythonToolConfigError(f"código inválido: {exc}") from exc
 
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            module = node.module if isinstance(node, ast.ImportFrom) else None
-            names = [module] if module else [alias.name for alias in node.names]
-            for name in names:
-                if name is None or _root_module(name) not in _ALLOWED_MODULES:
-                    raise PythonToolConfigError(f"import não permitido: {name!r} (módulos liberados: {sorted(_ALLOWED_MODULES)})")
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                _check_module_name(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level or not node.module:
+                raise PythonToolConfigError("import relativo não é permitido")
+            _check_module_name(node.module)
+            allowed = _public_names(node.module)
+            for alias in node.names:
+                if alias.name not in allowed:
+                    raise PythonToolConfigError(
+                        f"nome não permitido em 'from {node.module} import': {alias.name!r} "
+                        f"(liberados: {sorted(allowed)})"
+                    )
         elif isinstance(node, ast.ClassDef):
             raise PythonToolConfigError("definição de classe não é permitida — escreva funções")
         elif isinstance(node, ast.Name) and node.id in _BANNED_NAMES:
             raise PythonToolConfigError(f"identificador não permitido: {node.id!r}")
         elif isinstance(node, ast.Attribute):
-            if node.attr in _BANNED_NAMES or (node.attr.startswith("__") and node.attr.endswith("__")):
+            # Qualquer `_` no início: dunders (`__globals__`) e privados de
+            # módulo (`random._os`, `collections._sys`) são o caminho de fuga.
+            if node.attr in _BANNED_NAMES or node.attr.startswith("_"):
                 raise PythonToolConfigError(f"acesso a atributo não permitido: {node.attr!r}")
 
     top_level_defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
@@ -164,6 +209,63 @@ def _check_ast(code: str, entrypoint_name: str) -> None:
 
     if not any(n.name == entrypoint_name for n in top_level_defs):
         raise PythonToolConfigError(f"nenhuma função chamada {entrypoint_name!r} foi definida em code")
+
+
+def _check_module_name(name: str) -> None:
+    if name in _ALLOWED_MODULES or name in _ALLOWED_SUBMODULES:
+        return
+    raise PythonToolConfigError(
+        f"import não permitido: {name!r} (módulos liberados: {sorted(_ALLOWED_MODULES | _ALLOWED_SUBMODULES)})"
+    )
+
+
+@functools.lru_cache(maxsize=None)
+def _public_names(module_name: str) -> frozenset[str]:
+    """Os nomes que a tool enxerga em `module_name`: o `__all__` do módulo (ou,
+    sem ele, o que não começa com `_`), menos submódulos — `uuid.os`,
+    `statistics.sys` —, nomes perigosos e os de `_WITHHELD_NAMES`. Os
+    submódulos de `_ALLOWED_SUBMODULES` entram como atributo do pai."""
+    if module_name == "httpx":
+        return _HTTPX_NAMES
+    import importlib
+    import types
+
+    module = importlib.import_module(module_name)
+    declared = getattr(module, "__all__", None)
+    candidates = declared if declared is not None else dir(module)
+    withheld = _WITHHELD_NAMES.get(module_name, set())
+    names = {
+        name
+        for name in candidates
+        if not name.startswith("_")
+        and name not in _BANNED_NAMES
+        and name not in withheld
+        and hasattr(module, name)
+        and not isinstance(getattr(module, name), types.ModuleType)
+    }
+    names |= {sub.rsplit(".", 1)[1] for sub in _ALLOWED_SUBMODULES if sub.rsplit(".", 1)[0] == module_name}
+    return frozenset(names)
+
+
+def _module_proxy(module_name: str) -> Any:
+    """Cópia nova de `module_name` com só os nomes de `_public_names` — o que a
+    tool recebe no lugar do módulo real. Nova a cada import, para uma tool não
+    conseguir trocar uma função que outra tool (ou o serviço) usa."""
+    import importlib
+    import types
+
+    if module_name == "httpx":
+        source: Any = _guarded_httpx()
+    else:
+        source = importlib.import_module(module_name)
+    proxy = types.ModuleType(module_name)
+    for name in _public_names(module_name):
+        dotted = f"{module_name}.{name}"
+        if dotted in _ALLOWED_SUBMODULES:
+            setattr(proxy, name, _module_proxy(dotted))
+        else:
+            setattr(proxy, name, getattr(source, name))
+    return proxy
 
 
 def _is_literal(node: ast.AST | None) -> bool:
@@ -243,14 +345,22 @@ def _mark_dry_run(request: Any) -> None:
         request.headers[DRY_RUN_HEADER] = "true"
 
 
-def _safe_import(name: str, *args: Any, **kwargs: Any) -> Any:
-    import importlib
+def _safe_import(
+    name: str, _globals: Any = None, _locals: Any = None, fromlist: Any = (), level: int = 0
+) -> Any:
+    """O `__import__` da tool: nunca o módulo real, sempre `_module_proxy`.
 
-    if _root_module(name) not in _ALLOWED_MODULES:
+    Segue a semântica do `__import__`: `import a.b` devolve `a` (com `b` como
+    atributo) e `from a.b import x` devolve `a.b`."""
+    if level or (name not in _ALLOWED_MODULES and name not in _ALLOWED_SUBMODULES):
         raise ImportError(f"import não permitido em tool Python: {name!r}")
-    if _root_module(name) == "httpx":
-        return _guarded_httpx()
-    return importlib.import_module(name)
+    if fromlist:
+        module = _module_proxy(name)
+        for item in fromlist:
+            if item not in _public_names(name):
+                raise ImportError(f"nome não permitido em 'from {name} import': {item!r}")
+        return module
+    return _module_proxy(_root_module(name))
 
 
 _SAFE_BUILTIN_NAMES = (
