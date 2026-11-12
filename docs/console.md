@@ -230,9 +230,10 @@ apertados. As setas continuam rolando a página. A lógica está em `frontend/sr
 
 **Leitor de tela.** Um anunciador único (`announce()` em `frontend/src/lib/announce.ts`, com as
 regiões vivas montadas no layout raiz) lê: o fim de cada resposta do Playground (uma vez, com o
-começo da resposta, e não a cada pedaço do streaming), os avisos (toasts) de salvar, criar e
-excluir, e os erros ao salvar agente, tool, collection e credencial (esses em modo assertivo,
-interrompendo a leitura).
+começo da resposta, e não a cada pedaço do streaming) e os avisos (toasts) de salvar, criar e
+excluir, com os de erro em modo assertivo, interrompendo a leitura. Os erros ao salvar agente,
+tool, collection e credencial aparecem dentro do formulário com `role="alert"`: vários deles ficam
+num diálogo modal, e uma região viva de fora dele pode ser ignorada pelo leitor de tela.
 
 **Toque.** Em tela de toque ou com menos de 768 px, botões de ícone, abas em pílula, o fechar dos
 diálogos, os links da trilha e o "Trace" das respostas têm área de toque de pelo menos 40 px, sem

@@ -28,13 +28,14 @@ export function PageHeader({
               <nav aria-label="Trilha" className="flex min-w-0 items-center gap-1 text-[13px] text-muted-foreground">
                 {breadcrumbs.map((crumb, i) => (
                   <Fragment key={`${crumb.label}-${i}`}>
-                    {i > 0 && <ChevronRight className="size-3.5 shrink-0 opacity-60" />}
+                    {i > 0 && <ChevronRight className="pointer-events-none size-3.5 shrink-0 opacity-60" aria-hidden />}
                     {crumb.href ? (
                       // `truncate` corta um ::after; a área de toque de 40 px vem do padding,
-                      // compensado pela margem negativa (o desenho da trilha não muda).
+                      // compensado pela margem negativa (o desenho da trilha não muda). `relative`
+                      // põe o link acima do título, que senão roubaria a parte de baixo do toque.
                       <Link
                         href={crumb.href}
-                        className="truncate rounded-md hover:text-foreground max-md:-mx-1.5 max-md:-my-2.5 max-md:min-w-10 max-md:px-1.5 max-md:py-2.5 max-md:text-center"
+                        className="relative truncate rounded-md hover:text-foreground max-md:-mx-1.5 max-md:-my-2.5 max-md:min-h-10 max-md:min-w-10 max-md:px-1.5 max-md:py-2.5 max-md:text-center"
                       >
                         {crumb.label}
                       </Link>

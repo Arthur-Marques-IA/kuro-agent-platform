@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { CircleCheck, CircleX, ExternalLink } from "lucide-react";
-import { announce } from "@/lib/announce";
 import { errorMessage, requestJson } from "@/lib/http";
 import type {
   ModelCredential,
@@ -76,7 +75,6 @@ export function CredentialDialog({
       setTestResult(result);
     } catch (err) {
       setError(errorMessage(err));
-      announce(errorMessage(err), { assertive: true });
     } finally {
       setTesting(false);
     }
@@ -114,7 +112,6 @@ export function CredentialDialog({
       onSaved();
     } catch (err) {
       setError(errorMessage(err));
-      announce(errorMessage(err), { assertive: true });
     } finally {
       setSaving(false);
     }
@@ -217,7 +214,8 @@ export function CredentialDialog({
           )}
         </div>
         {error && (
-          <Badge variant="destructive" className="h-auto w-fit whitespace-normal px-2 py-1 text-left">
+          // role="alert": num diálogo modal, a região viva de fora pode ser ignorada pelo leitor de tela.
+          <Badge role="alert" variant="destructive" className="h-auto w-fit whitespace-normal px-2 py-1 text-left">
             {error}
           </Badge>
         )}

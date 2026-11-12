@@ -62,8 +62,8 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   de uma sessão, `Esc` volta para a lista de onde se veio. Os atalhos ficam quietos digitando,
   com diálogo ou menu aberto e com modificador. Um anunciador único lê no leitor de tela o fim de
   cada resposta do Playground (uma vez, não a cada pedaço do streaming; antes a conversa inteira
-  era região viva), os avisos de salvar e os erros ao salvar agente, tool, collection e
-  credencial. Salvar uma tool agora mostra um aviso. Em tela de toque ou estreita, botões de
+  era região viva) e os avisos de salvar; os erros ao salvar agente, tool, collection e
+  credencial são anunciados no próprio formulário (`role="alert"`). Salvar uma tool agora mostra um aviso. Em tela de toque ou estreita, botões de
   ícone e links pequenos ganham área de toque de 40 px sem mudar de tamanho. Cores: vermelho,
   verde e âmbar do tema claro mais escuros, e o vermelho do tema escuro mais claro (com texto
   escuro no botão destrutivo), para passar 4,5:1 em badges de 11 px. Ver

@@ -103,7 +103,7 @@ export function MessageFeedback({
     // Ensinando, o bloco ocupa a linha inteira do rodapé: o campo de texto precisa
     // de espaço, e na altura de uma linha de ícones ele ficava cortado.
     <div className={cn("flex flex-col gap-1.5", ensinando && "basis-full")}>
-      <div className={cn("flex items-center", className)} data-voted={vote === null ? undefined : true}>
+      <div className={cn("flex items-center max-md:gap-3 pointer-coarse:gap-3", className)} data-voted={vote === null ? undefined : true}>
         {([1, 0] as const).map((value) => {
           const active = vote === value;
           const label = value === 1 ? "Resposta útil" : "Resposta ruim — ensinar o agente";

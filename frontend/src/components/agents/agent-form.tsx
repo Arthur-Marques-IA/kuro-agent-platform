@@ -4,7 +4,6 @@ import { FormEvent, ReactNode, useEffect, useId, useMemo, useState } from "react
 import Link from "next/link";
 import { Plus, Trash, Wrench } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { announce } from "@/lib/announce";
 import { errorMessage } from "@/lib/http";
 import { formatNumber, slugify } from "@/lib/format";
 import {
@@ -409,7 +408,6 @@ export function AgentForm({
       setShowErrors(false);
     } catch (err) {
       setSubmitError(errorMessage(err));
-      announce(`Não foi possível salvar o agente: ${errorMessage(err)}`, { assertive: true });
     } finally {
       setSubmitting(false);
     }
@@ -953,7 +951,8 @@ export function AgentForm({
   );
 
   const status = submitError ? (
-    <p className="min-w-0 text-[13px] text-destructive">{submitError}</p>
+    // role="alert": anunciado também quando o formulário está na gaveta (modal) do Playground.
+    <p role="alert" className="min-w-0 text-[13px] text-destructive">{submitError}</p>
   ) : mode === "edit" ? (
     <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
       <span className={cn("size-1.5 rounded-full", dirty ? "bg-warning" : "bg-success")} />
