@@ -141,6 +141,10 @@ docker compose up -d --build                       # núcleo: postgres, agent-se
 uv run kuro health                                 # serviço, autenticação, Langfuse, provedores
 ```
 
+Sem `ADMIN_API_KEY`/`RUNTIME_API_KEY`, o serviço só sobe com `ALLOW_OPEN=1`: o `docker-compose.yml`
+liga isso por padrão (a porta fica só no loopback), mas fora da sua máquina defina as chaves
+([operação](docs/operacao.md#segurança-e-limitações-atuais)).
+
 A API fica em http://127.0.0.1:58000 (`/docs` tem o OpenAPI). O console web e o Langfuse são
 opcionais, cada um num profile do Compose; portas, HTTPS e variáveis estão em
 [operação](docs/operacao.md).

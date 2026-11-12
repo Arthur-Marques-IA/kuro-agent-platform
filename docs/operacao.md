@@ -82,6 +82,10 @@ na frente, que resolve certificado e renovação sozinho:
 docker compose --profile tls up -d
 ```
 
+**Só sobe com a autenticação ligada.** O profile põe o serviço na internet; sem
+`ADMIN_API_KEY`/`RUNTIME_API_KEY`, o `caddy` recusa começar e diz o que falta no log
+(`docker compose logs caddy`). `KURO_TLS_ALLOW_OPEN=1` pula a verificação, só para teste local.
+
 Com o domínio apontando para a máquina e as portas 80/443 alcançáveis, o
 certificado é emitido pelo Let's Encrypt no primeiro acesso e renovado antes de
 vencer. A porta 80 precisa ficar aberta: é por onde a validação acontece e por
@@ -218,7 +222,8 @@ agent-service). A chave privada dela fica no volume do Caddy.
 
 | Variável | Padrão | Para quê |
 |---|---|---|
-| `ADMIN_API_KEY` / `RUNTIME_API_KEY` | — | chaves de API; **sem elas o serviço fica aberto**. Aceitam lista `nova,antiga` para [rotacionar](#rotacionar-as-chaves) |
+| `ADMIN_API_KEY` / `RUNTIME_API_KEY` | — | chaves de API; **sem nenhuma o serviço não sobe** (salvo `ALLOW_OPEN=1`). Aceitam lista `nova,antiga` para [rotacionar](#rotacionar-as-chaves) |
+| `ALLOW_OPEN` | `false` (`1` no `docker-compose.yml`) | `1` deixa subir **sem chave**, aberto a quem alcança a porta, com aviso no log. Só para a máquina de quem desenvolve; com chave, não faz diferença. Ver [Segurança](#segurança-e-limitações-atuais) |
 | `KURO_API_DOMAIN` / `KURO_TLS_EMAIL` | `localhost` / — | domínio e e-mail do certificado (profile `tls`) |
 | `KURO_PUBLIC_IP` / `KURO_IP_PORT` | descoberto / `58443` | IP e porta do HTTPS pelo IP (profile `ip`) |
 | `KURO_PUBLIC_URL` | — | endereço do serviço visto de fora, se nenhum dos profiles acerta (o `kuro mcp-config` e o contrato de integração usam) |
@@ -285,6 +290,34 @@ O que precisa ser coerente entre processos fica no Postgres: idempotência, esta
 procedimentos (o 409 de sessão ocupada), versões da configuração e a [fila de jobs](#fila-de-jobs).
 O MCP pela URL é a exceção: precisa de um worker só (ver [HTTPS](#https-profile-tls)).
 
+## A subida: migração, seeds e várias réplicas
+
+Importar `agent_service.main` não toca no banco: tudo acontece na subida (o lifespan do app),
+nesta ordem:
+
+1. **Configuração:** as origens de CORS e a autenticação (sem chave de API, só com
+   `ALLOW_OPEN=1`). Errada, a subida para aqui, antes de qualquer acesso ao banco.
+2. **Sob um lock** — `pg_advisory_lock(7743220957235996530)` (a chave é fixa,
+   `MIGRATION_LOCK_KEY` em `migrations/__init__.py`), numa conexão só dele:
+   1. **migração e seeds**;
+   2. **o app:** o AgentOS lê os agentes e as collections do banco já migrado (e o Agno cria a
+      extensão `vector`, as tabelas de vetores e as `agno_*` dele);
+   3. **o que roda em background:** o MCP em `/mcp`, o acerto das fontes de site e o worker da
+      [fila de jobs](#fila-de-jobs).
+
+   O lock é solto quando a subida termina. Duas réplicas (ou `--workers N`) subindo juntas fazem
+   isso uma de cada vez: a segunda loga `Esperando outra instância terminar de migrar o banco`
+   e, quando pega o lock, acha o banco já migrado e segue. Sem isso, além da migração em dobro, o
+   `CREATE EXTENSION/TABLE IF NOT EXISTS` do Agno em paralelo derrubava uma delas com
+   `duplicate key`. O `uv run kuro-migrate` usa o mesmo lock.
+
+Uma falha em qualquer passo aparece no log como o motivo seguido de
+`Application startup failed. Exiting.`, e o processo sai (código 3). O uvicorn só abre a porta
+depois da subida, então até lá uma conexão é recusada, como antes. Quem roda o uvicorn com
+`--lifespan off` pula a subida inteira: toda requisição recebe 503 `O serviço ainda está subindo.` Um container que trava esperando o lock
+é outra réplica migrando (ou uma sessão que segurou o lock): `SELECT * FROM pg_locks WHERE
+locktype = 'advisory'` mostra quem.
+
 ## Fila de jobs
 
 O trabalho em background (hoje, a sincronização de sites) passa por uma fila no próprio Postgres,
@@ -329,11 +362,21 @@ chave só: `-H "Authorization: Bearer ${ADMIN_API_KEY%%,*}"` (a lista inteira re
 Leia antes de expor o serviço fora de uma rede confiável:
 
 - **Autenticação: defina as duas chaves antes de sair da sua máquina.**
-  `ADMIN_API_KEY` e `RUNTIME_API_KEY` no `.env`. Sem elas o serviço fica aberto
-  (comportamento de antes, para não quebrar quem roda local) e quem alcança a
-  porta lê toda conversa que passou por ali (`/observability/runs`, `/sessions`),
-  reescreve o prompt de um agente em produção e lê as credenciais de modelo.
-  `kuro health` mostra em vermelho quando está aberto.
+  `ADMIN_API_KEY` e `RUNTIME_API_KEY` no `.env`. Aberto, quem alcança a porta lê
+  toda conversa que passou por ali (`/observability/runs`, `/sessions`), reescreve
+  o prompt de um agente em produção e lê as credenciais de modelo. Por isso, **sem
+  chave nenhuma o serviço não sobe**: o log diz o que definir. Rodar aberto de
+  propósito pede `ALLOW_OPEN=1`; aí ele sobe com um aviso no log, o `/health`
+  responde `"auth": "disabled"` e o `kuro health` mostra em vermelho.
+
+  O `docker-compose.yml` liga o `ALLOW_OPEN` por padrão, para o `docker compose up`
+  de quem desenvolve funcionar sem chave: a porta só é publicada no loopback. Os
+  profiles que publicam para fora (`tls` e `ip`) conferem o `/health` e recusam subir
+  com a autenticação desligada, então não herdam isso em silêncio. Duas coisas que
+  não são conferidas: um `AGENT_SERVICE_BIND` fora do loopback (defina as chaves
+  antes de mudá-lo) e um proxy seu na frente. Para desligar no compose,
+  `ALLOW_OPEN=0` no `.env` (vazio conta como não definido e vira `1`). Fora do
+  compose (`uv run uvicorn`, outra orquestração), o padrão é fechado.
 
   | Escopo | Alcança | Quem usa |
   |---|---|---|

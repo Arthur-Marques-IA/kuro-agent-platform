@@ -1,16 +1,41 @@
 #!/bin/sh
 # TLS na frente do agent-service e do console (profile `tls`).
 #
-# O console injeta a chave admin em toda chamada que faz à API (o BFF do Next.js
-# guarda a chave no servidor). Publicado sem barreira, quem achasse o domínio do
-# console teria acesso total: agentes, traces, conversas e credenciais. Por isso o
-# Caddyfile põe basic_auth no bloco do console, e este script só sobe o Caddy com
-# usuário e hash definidos.
+# Este profile põe o serviço e o console na internet pelo domínio. Antes de subir o
+# Caddy, duas conferências — qualquer uma que falhe, ele não publica nada:
 #
-# A checagem fica aqui, e não num `${VAR:?}` do docker-compose.yml, porque o
-# Compose interpola o arquivo inteiro antes de olhar os profiles: um `:?` no
-# serviço `caddy` faria até o `docker compose up -d` sem profile nenhum falhar.
+# 1. A API com a autenticação ligada. O `docker-compose.yml` liga o ALLOW_OPEN por
+#    padrão (para quem desenvolve, com a porta só no loopback), então um agent-service
+#    sem chave sobe aberto — e o Caddy o publicaria assim. É a mesma verificação do
+#    profile `ip` (`caddy-ip.sh`).
+# 2. O login do console. O console injeta a chave admin em toda chamada que faz à API
+#    (o BFF do Next.js guarda a chave no servidor). Publicado sem barreira, quem achasse
+#    o domínio do console teria acesso total: agentes, traces, conversas e credenciais.
+#    Por isso o Caddyfile põe basic_auth no bloco do console, e este script só sobe o
+#    Caddy com usuário e hash definidos.
+#
+# A checagem fica aqui, e não num `${VAR:?}` do docker-compose.yml, porque o Compose
+# interpola o arquivo inteiro antes de olhar os profiles: um `:?` no serviço `caddy`
+# faria até o `docker compose up -d` sem profile nenhum falhar.
 set -eu
+
+sair() {
+	sleep 30 # sem isso o restart do Docker repete a mensagem sem parar
+	exit 1
+}
+
+if [ "${KURO_TLS_ALLOW_OPEN:-}" != "1" ]; then
+	health="$(wget -qO- -T 10 http://agent-service:8000/health 2>/dev/null || true)"
+	case "$health" in
+		*'"auth":"enabled"'* | *'"auth": "enabled"'*) ;;
+		*)
+			echo "kuro: recusei publicar o serviço pelo domínio: a autenticação está desligada (ou o agent-service não respondeu)." >&2
+			echo "kuro: defina ADMIN_API_KEY e RUNTIME_API_KEY no .env (openssl rand -hex 32) e rode docker compose --profile tls up -d de novo." >&2
+			echo "kuro: só para teste local, KURO_TLS_ALLOW_OPEN=1 pula esta verificação." >&2
+			sair
+			;;
+	esac
+fi
 
 recusar() {
 	echo "kuro: recusei subir o profile tls: $1" >&2
@@ -19,8 +44,7 @@ recusar() {
 	echo "kuro:   CONSOLE_BASIC_AUTH_USER=admin" >&2
 	echo "kuro:   CONSOLE_BASIC_AUTH_HASH='\$2a\$14\$...'" >&2
 	echo "kuro: depois, docker compose --profile tls up -d de novo. Detalhes em docs/operacao.md." >&2
-	sleep 30 # sem isso o restart do Docker repete a mensagem sem parar
-	exit 1
+	sair
 }
 
 if [ -z "${CONSOLE_BASIC_AUTH_USER:-}" ] || [ -z "${CONSOLE_BASIC_AUTH_HASH:-}" ]; then

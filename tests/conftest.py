@@ -9,6 +9,9 @@ os.environ.setdefault("GOOGLE_API_KEY", "test-key")
 # fazem o I/O do banco numa thread do pool (`run_in_threadpool`).
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{Path(tempfile.mkdtemp()) / 'agent_service.db'}")
 os.environ.setdefault("CREDENTIALS_ENCRYPTION_KEY", Fernet.generate_key().decode())
+# A suíte roda sem chave de API (cada teste de autenticação liga a sua): sem isto, o que
+# sobe o app (`main.py`) recusaria subir aberto (`api/auth.py`, `check_startup_auth`).
+os.environ.setdefault("ALLOW_OPEN", "1")
 
 from agent_service.agents.seed import seed_default_agents  # noqa: E402
 from agent_service.migrations import upgrade_database  # noqa: E402

@@ -33,6 +33,20 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   `up`, gere o hash com `docker run --rm caddy:2-alpine caddy hash-password --plaintext 'senha'` e
   ponha no `.env` com o hash entre aspas simples (`CONSOLE_BASIC_AUTH_HASH='$2a$14$...'`). Ver
   [Login do console](operacao.md#login-do-console-basic_auth).
+- **Sem chave de API, o serviço não sobe mais.** Antes, sem `ADMIN_API_KEY` nem `RUNTIME_API_KEY`
+  ele subia aberto a quem alcançasse a porta. Agora a subida falha com uma mensagem que diz o que
+  definir, a não ser com `ALLOW_OPEN=1` explícito (aí sobe aberto como antes, com aviso no log, e o
+  `/health` segue dizendo `"auth": "disabled"`). Uma instalação sem chave pode parar de subir depois
+  de atualizar: defina `ADMIN_API_KEY` e `RUNTIME_API_KEY` no `.env` (o recomendado) ou, só na sua
+  máquina, `ALLOW_OPEN=1`. Com chave configurada, nada muda.
+  - No `docker-compose.yml`, `ALLOW_OPEN` vem ligado por padrão (a porta só é publicada no
+    loopback), então o `docker compose up` local segue funcionando sem chave. Para desligar,
+    `ALLOW_OPEN=0` no `.env`.
+  - O profile `tls` passa a conferir a autenticação como o `ip` já fazia: com ela desligada, o
+    `caddy` recusa publicar e diz o que falta (`docker compose logs caddy`).
+    `KURO_TLS_ALLOW_OPEN=1` pula a verificação, só para teste local.
+  - Fora do compose (`uv run uvicorn`, Kubernetes, outra orquestração) o padrão é fechado: defina as
+    chaves ou `ALLOW_OPEN=1`.
 - **`kuro connect --json` e `kuro mcp-config --json` mudaram de formato.** No `kuro connect`,
   `registered` e `replaced` deixam de ser `true`/`false` e passam a ser listas com os clientes
   (`["claude-code", "vscode"]`; vazia quando nada foi registrado), e entram `wrapper`, `codex` e
@@ -428,6 +442,21 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   undefined (reading 'search_mode')". Agora ela abre e diz que o serviço parece mais antigo que o
   console. A tela de erro do console também deixou de mostrar só a mensagem crua do JavaScript:
   explica em português o que conferir, e o detalhe técnico fica recolhido, com botão de copiar.
+- **Réplicas subindo juntas, uma de cada vez.** A migração, os seeds e a montagem do app saíram
+  do import do módulo para a subida (o lifespan), sob um `pg_advisory_lock`: com várias réplicas
+  (ou `--workers N`) subindo juntas, uma sobe por vez, e as outras logam `Esperando outra
+  instância terminar de migrar o banco` até a vez delas, quando acham o banco já migrado e seguem.
+  O `kuro-migrate` usa o mesmo lock. Uma subida recusada (sem chave de API, CORS inválido, banco
+  fora do ar) mostra o mesmo motivo de antes, agora seguido de `Application startup failed.
+  Exiting.` do uvicorn, e o processo sai com código 3 (antes falhava no import, com o traceback).
+  Quem roda o uvicorn com `--lifespan off` passa a receber 503 `O serviço ainda está subindo.` em
+  toda requisição. Ver [a subida](operacao.md#a-subida-migração-seeds-e-várias-réplicas).
+
+### Corrigido
+
+- **Duas réplicas subindo juntas podiam derrubar uma delas.** As duas migravam ao mesmo tempo, e o
+  `CREATE EXTENSION IF NOT EXISTS vector` do Agno em paralelo cai com `duplicate key value
+  violates unique constraint "pg_extension_name_index"`. Agora a subida é serializada pelo lock.
 
 - **Conectar o MCP no Windows.** O comando antigo (`uvx --from "agent-service[mcp] @ git+..." kuro
   connect`) clona o repositório, e no Windows o clone falhava num caminho longo do `frontend/` se o
