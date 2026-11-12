@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { announce, chatCompletionAnnouncement } from "@/lib/announce";
 import { parseSseStream } from "@/lib/sse";
 import { apiUrl, readErrorMessage } from "@/lib/http";
 import { createId } from "@/lib/id";
@@ -29,10 +30,13 @@ interface SendOptions {
  */
 export function useChat({
   agentType,
+  agentName,
   userId,
   initialMessages,
 }: {
   agentType: string;
+  /** Nome lido pelo leitor de tela quando a resposta termina ("Suporte respondeu: …"). */
+  agentName?: string;
   userId: string;
   initialMessages?: ChatMessage[];
 }) {
@@ -84,6 +88,13 @@ export function useChat({
       ]);
 
       let receivedContent = false;
+      // O texto acumulado, para o anúncio do fim: a conversa não é região viva (leria cada
+      // pedaço do streaming), então o leitor de tela ouve a resposta uma vez, quando termina.
+      let fullText = "";
+      const finish = (result: { error?: string | null; stopped?: boolean }) => {
+        const { text, assertive } = chatCompletionAnnouncement({ agentName, content: fullText, ...result });
+        announce(text, { assertive });
+      };
       try {
         const response = await fetch(apiUrl("/api/chat/stream"), {
           method: "POST",
@@ -114,6 +125,7 @@ export function useChat({
             const { content } = JSON.parse(sseEvent.data) as { content?: string };
             if (!content) continue;
             receivedContent = true;
+            fullText += content;
             patchMessage(assistantId, (m) => ({ ...m, content: m.content + content }));
           } else if (sseEvent.event === "usage") {
             const usage = JSON.parse(sseEvent.data) as UsageMetrics;
@@ -133,14 +145,17 @@ export function useChat({
         }
         const finalError = streamError;
         patchMessage(assistantId, (m) => ({ ...m, pending: false, error: finalError ?? undefined }));
+        finish({ error: finalError });
         return true;
       } catch (err) {
         if (controller.signal.aborted) {
           patchMessage(assistantId, (m) => ({ ...m, pending: false, stopped: true }));
+          finish({ stopped: true });
           return receivedContent;
         }
         const errorText = err instanceof Error ? err.message : "Erro desconhecido";
         patchMessage(assistantId, (m) => ({ ...m, pending: false, error: errorText }));
+        finish({ error: errorText });
         return receivedContent;
       } finally {
         streamingRef.current = false;
@@ -148,7 +163,7 @@ export function useChat({
         setIsStreaming(false);
       }
     },
-    [agentType, userId, patchMessage]
+    [agentType, agentName, userId, patchMessage]
   );
 
   const stop = useCallback(() => abortRef.current?.abort(), []);

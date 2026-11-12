@@ -10,6 +10,7 @@ import "@fontsource/ibm-plex-sans/700.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/500.css";
 import "@fontsource/jetbrains-mono/600.css";
+import { LiveAnnouncer } from "@/components/ui/announcer";
 import { ConfirmProvider } from "@/components/ui/confirm";
 import { ToastProvider } from "@/components/ui/toast";
 import { themeInitScript } from "@/lib/theme-script";
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <ToastProvider>
           <ConfirmProvider>{children}</ConfirmProvider>
         </ToastProvider>
+        <LiveAnnouncer />
       </body>
     </html>
   );

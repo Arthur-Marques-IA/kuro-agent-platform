@@ -150,6 +150,39 @@ a lista mostra também os números deles. Mudar os agentes tira o filtro de vers
 Links antigos: `/logs?user_id=…` vai para as sessões do usuário e `/logs?session_id=…` para as
 execuções da sessão.
 
+Os filtros mudam a URL no lugar (sem criar uma entrada no histórico a cada tecla): o **Voltar** do
+navegador, depois de abrir uma execução ou uma sessão, volta à lista com o mesmo recorte.
+
+**Vazio só por causa dos testes.** Quando o Panorama ou a lista de Execuções vem vazia com os testes
+de fora, uma consulta de uma linha (`GET /observability/runs?limit=1&include_dry_run=true`, com o
+mesmo recorte) diz se há execuções de teste ali; havendo, o vazio explica isso e traz o botão
+**Incluir testes**. A consulta só acontece no vazio: telas com dados não pagam nada.
+
+**Exportar CSV** (Sessões, Execuções e RAG) baixa o recorte atual, com todos os filtros ativos,
+buscado no servidor — não só o que está na tela:
+
+- **Execuções**: página a página (100 por chamada) até **5.000 linhas**, as mais recentes (ou na
+  ordem escolhida); com a amostra aleatória, exporta a amostra. O botão mostra quantas já vieram, e o
+  aviso no fim diz se o teto cortou o resto (aí, estreite o período ou os filtros).
+- **Sessões**: uma chamada só, até **200 sessões** de atividade mais recente (a API não pagina
+  sessões; a tela mostra 100).
+
+O arquivo é UTF-8 com BOM (o Excel lê os acentos), separado por vírgula, com CRLF entre linhas e as
+colunas com os nomes da API (`started_at`, `run_id`, `agent_type`, `status`, `message`, `output`,
+`cost_usd`…). Um texto que começa com `=`, `+`, `-`, `@`, tab ou CR ganha um `'` na frente, para a
+planilha não o executar como fórmula. No Excel em português (que separa por ponto e vírgula), abra
+por **Dados › De Texto/CSV** se as colunas vierem juntas.
+
+**Atualização automática**: ao lado de **Atualizar**, o seletor **Auto** (desligada, 10 s, 30 s ou
+60 s) busca de novo sozinho, como o `kuro dash`. Ele não remonta a lista: o que chegou entra no topo,
+o que mudou troca no lugar, o que veio de "Carregar mais" continua, e a rolagem fica onde estava (numa
+amostra aleatória a lista não muda). Com a aba oculta, para; ao voltar, atualiza na hora. A escolha
+fica guardada no navegador. **Atualizar** continua recarregando tudo do zero.
+
+**No celular** (abaixo de 768 px), as listas de Sessões e Execuções viram cartões: a fala (ou o
+contato e a última fala), o agente, o status e o horário, sem rolagem lateral; os controles de filtro
+têm 40 px de altura para o toque.
+
 ## A tela da execução
 
 `/runs/{run_id}` abre de qualquer lista (Logs, sessão, aba Execuções do agente). Além dos spans,
@@ -249,7 +282,6 @@ As cores de status são as mesmas nos dois temas e foram conferidas contra dalto
 (`frontend/src/app/globals.css`, `--viz-*`). A linha de "tool falhando" usa um âmbar mais escuro
 que o das barras, porque uma linha fina precisa de mais contraste no fundo claro.
 
-Atalhos: `Ctrl/⌘+K` (paleta de comandos) e `Ctrl/⌘+B` (recolher a sidebar).
 Tema claro, escuro ou do sistema.
 
 O navegador só fala com o Next.js. Os Route Handlers em `frontend/src/app/api/**`
@@ -276,3 +308,37 @@ Sem as duas variáveis, o Caddy não publica nada e diz o que falta em
 `docker compose --profile tls logs caddy`. A API (`/chat`, `/analyze`, `/mcp`, `/health`) não
 passa por esse login: ela continua com a chave dela. Detalhes, inclusive o cuidado com o `$` do
 hash, em [Login do console](operacao.md#login-do-console-basic_auth).
+
+## Atalhos e acessibilidade
+
+| Tecla | Onde | O que faz |
+| --- | --- | --- |
+| `Ctrl/⌘+K` | em qualquer tela | abre a paleta de comandos |
+| `Ctrl/⌘+Shift+O` | em qualquer tela | nova conversa no Playground |
+| `Ctrl/⌘+B` | em qualquer tela | recolhe a sidebar |
+| `j` / `k` | listas de execuções e de sessões (Logs, aba Execuções do agente, execuções da sessão) | desce / sobe a seleção, como no `kuro dash` |
+| `Enter` | na linha selecionada | abre a execução ou a sessão |
+| `Esc` | na tela de uma execução ou de uma sessão | volta para a lista de onde você veio (com os filtros), ou para Execuções / Sessões |
+
+A seleção é o foco do teclado: a linha ganha o anel de foco, e o leitor de tela lê o rótulo dela.
+`j`, `k`, `Enter` e `Esc` ficam quietos enquanto você digita num campo, com um diálogo, gaveta ou
+menu aberto (o `Esc` fecha o sobreposto, não sai da tela) e com `Ctrl`, `⌘`, `Alt` ou `Shift`
+apertados. As setas continuam rolando a página. A lógica está em `frontend/src/lib/list-nav.ts`
+(testada) e o hook em `frontend/src/lib/use-list-nav.ts`.
+
+**Leitor de tela.** Um anunciador único (`announce()` em `frontend/src/lib/announce.ts`, com as
+regiões vivas montadas no layout raiz) lê: o fim de cada resposta do Playground (uma vez, com o
+começo da resposta, e não a cada pedaço do streaming) e os avisos (toasts) de salvar, criar e
+excluir, com os de erro em modo assertivo, interrompendo a leitura. Os erros ao salvar agente,
+tool, collection e credencial aparecem dentro do formulário com `role="alert"`: vários deles ficam
+num diálogo modal, e uma região viva de fora dele pode ser ignorada pelo leitor de tela.
+
+**Toque.** Em tela de toque ou com menos de 768 px, botões de ícone, abas em pílula, o fechar dos
+diálogos, os links da trilha e o "Trace" das respostas têm área de toque de pelo menos 40 px, sem
+mudar o desenho (utilitário `touch-target` em `globals.css`). No desktop com mouse nada muda.
+
+**Contraste.** Os tokens de cor passam 4,5:1 para texto de 11–12 px nos dois temas: o texto
+secundário sobre página, cartão e barra lateral, as cores de status como texto e nos badges, e o
+texto dos botões cheios. `frontend/src/lib/contrast.test.ts` lê os tokens do `globals.css` e falha
+se uma mudança derrubar algum desses pares.
+

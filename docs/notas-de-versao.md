@@ -132,6 +132,26 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   a entrada e a saída completas (espaço passa a abrir e fechar o span) e `y` copia o `run_id`.
   Ver [tui.md](tui.md). As capturas de `docs/telas/` agora saem de `docs/telas/gerar.py`.
 
+- **Console: teclado, leitor de tela, toque e contraste.** Nas listas de execuções e de sessões,
+  `j`/`k` movem a seleção (com anel de foco na linha) e `Enter` abre; na tela de uma execução ou
+  de uma sessão, `Esc` volta para a lista de onde se veio. Os atalhos ficam quietos digitando,
+  com diálogo ou menu aberto e com modificador. Um anunciador único lê no leitor de tela o fim de
+  cada resposta do Playground (uma vez, não a cada pedaço do streaming; antes a conversa inteira
+  era região viva) e os avisos de salvar; os erros ao salvar agente, tool, collection e
+  credencial são anunciados no próprio formulário (`role="alert"`). Salvar uma tool agora mostra um aviso. Em tela de toque ou estreita, botões de
+  ícone e links pequenos ganham área de toque de 40 px sem mudar de tamanho. Cores: vermelho,
+  verde e âmbar do tema claro mais escuros, e o vermelho do tema escuro mais claro (com texto
+  escuro no botão destrutivo), para passar 4,5:1 em badges de 11 px. Ver
+  [Console web](console.md#atalhos-e-acessibilidade).
+- **Console, listas de Logs: exportar CSV, atualização automática e cartões no celular.** Sessões,
+  Execuções e RAG ganham **Exportar CSV** com os filtros ativos, buscado no servidor (execuções até
+  5.000 linhas, paginadas; sessões até 200), em UTF-8 com BOM e com as células que começam com `=`,
+  `+`, `-` ou `@` neutralizadas contra fórmula. Ao lado de **Atualizar**, o seletor **Auto**
+  (desligada, 10, 30 ou 60 s) atualiza sem perder a rolagem nem o que veio de "Carregar mais", pausa
+  com a aba oculta e fica lembrado no navegador. O Panorama e as Execuções vazios por terem só testes
+  (`dry_run`) dizem isso e trazem o botão **Incluir testes**. Abaixo de 768 px, as listas viram
+  cartões (fala, agente, status, horário) e os filtros têm 40 px para o toque. Ver
+  [Console web](console.md#logs-panorama-sessões-e-execuções).
 - **Linha do tempo da sessão: `GET /observability/sessions/{id}/timeline`.** Um turno por run, em
   ordem cronológica, já separado: `events` (como gravados, com `kind`, `attachments` e `speech`),
   `message` (a fala pura), `context` (cada bloco com `changed` contra o turno estruturado anterior e,

@@ -214,7 +214,8 @@ export function CredentialDialog({
           )}
         </div>
         {error && (
-          <Badge variant="destructive" className="h-auto w-fit whitespace-normal px-2 py-1 text-left">
+          // role="alert": num diálogo modal, a região viva de fora pode ser ignorada pelo leitor de tela.
+          <Badge role="alert" variant="destructive" className="h-auto w-fit whitespace-normal px-2 py-1 text-left">
             {error}
           </Badge>
         )}

@@ -241,7 +241,7 @@ export function MessageBubble({
         )}
 
         {showFooter && (
-          <div className="mt-1.5 flex min-h-6 flex-wrap items-center gap-1.5">
+          <div className="mt-1.5 flex min-h-6 flex-wrap items-center gap-1.5 max-md:gap-x-3 pointer-coarse:gap-x-3">
             {message.usage && <UsageSummary usage={message.usage} />}
             {/* O feedback fica sempre visível: é por ele que se ensina o agente, e
                 escondido no hover ninguém achava. Copiar aparece só no hover. */}

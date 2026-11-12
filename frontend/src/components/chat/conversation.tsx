@@ -102,6 +102,7 @@ export function Conversation({
   const agent = getAgent(agentType);
   const { messages, send, stop, truncateFrom, isStreaming, procedureState, setProcedureState } = useChat({
     agentType,
+    agentName: agent?.name,
     userId,
     initialMessages,
   });
@@ -566,7 +567,7 @@ function MessageList({
         {messages.length === 0 && pending.length === 0 ? (
           empty
         ) : (
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6 sm:px-6" aria-live="polite">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6 sm:px-6">
             {messages.map((message) => (
               <MessageBubble
                 key={message.id}

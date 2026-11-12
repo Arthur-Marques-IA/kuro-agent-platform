@@ -2,6 +2,7 @@
 
 import { ReactNode, createContext, useCallback, useContext, useRef, useState } from "react";
 import { CircleAlert, CircleCheck, Info, X } from "lucide-react";
+import { announce } from "@/lib/announce";
 import { cn } from "@/lib/cn";
 
 type ToastVariant = "default" | "success" | "error";
@@ -33,6 +34,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     ({ title, description, variant = "default" }: ToastInput) => {
       const id = ++nextId.current;
       setToasts((prev) => [...prev.slice(-3), { id, title, description, variant }]);
+      // Lido pelo anunciador único (o mesmo do Playground e dos formulários), não por uma
+      // região própria: erro interrompe, o resto espera a vez — e nada é lido duas vezes.
+      announce(description ? `${title}. ${description}` : title, { assertive: variant === "error" });
       window.setTimeout(() => dismiss(id), variant === "error" ? 7000 : 4000);
     },
     [dismiss]
@@ -42,7 +46,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={toast}>
       {children}
       <div
-        aria-live="polite"
         className="pointer-events-none fixed inset-x-0 bottom-0 z-[100] flex flex-col items-center gap-2 p-4 sm:items-end"
       >
         {toasts.map((t) => {
@@ -50,7 +53,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           return (
             <div
               key={t.id}
-              role={t.variant === "error" ? "alert" : "status"}
               className="pointer-events-auto flex w-full max-w-sm animate-slide-up items-start gap-3 rounded-xl border border-border bg-popover p-3.5 text-popover-foreground shadow-lg"
             >
               <Icon
@@ -70,7 +72,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 onClick={() => dismiss(t.id)}
-                className="rounded-md p-0.5 text-muted-foreground hover:text-foreground"
+                className="touch-target relative rounded-md p-0.5 text-muted-foreground hover:text-foreground"
                 aria-label="Dispensar"
               >
                 <X className="size-3.5" />

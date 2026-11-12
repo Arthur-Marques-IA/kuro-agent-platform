@@ -8,6 +8,7 @@ import { ApiError, apiUrl, errorMessage, requestJson } from "@/lib/http";
 import { contextTurnFor, sessionTitle } from "@/lib/timeline";
 import type { SessionMemory } from "@/lib/transcript";
 import type { SessionTimeline } from "@/lib/types";
+import { useEscapeBack } from "@/lib/use-list-nav";
 import { Badge } from "@/components/ui/badge";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -102,6 +103,8 @@ export function SessionDetailView({ sessionId }: { sessionId: string }) {
   const turns = useMemo(() => timeline?.items ?? [], [timeline]);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Esc volta para a lista de onde se veio (ou para Sessões); com a gaveta aberta, o Esc é dela.
+  useEscapeBack("/logs/sessions");
 
   // O painel mostra o turno em foco se ele tem contexto; senão, o último turno com contexto antes dele.
   const contextTurn = contextTurnFor(turns, focusId);

@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useId, useState } from "react";
 import { History, Pencil, SlidersHorizontal, TriangleAlert } from "lucide-react";
+import { announce } from "@/lib/announce";
 import { collectionSearch } from "@/lib/collection-search";
 import { errorMessage, requestJson } from "@/lib/http";
 import type { Collection, CollectionSearchConfig, CollectionVersion, SearchMode } from "@/lib/types";
@@ -143,6 +144,7 @@ function SearchForm({
       onDone(true);
     } catch (err) {
       setError(errorMessage(err));
+      announce(`Não foi possível salvar a busca: ${errorMessage(err)}`, { assertive: true });
     } finally {
       setSaving(false);
     }

@@ -242,7 +242,8 @@ export function AgentForm({
   );
 
   const statusLine = submitError ? (
-    <p className="min-w-0 text-[13px] text-destructive">{submitError}</p>
+    // role="alert": anunciado também quando o formulário está na gaveta (modal) do Playground.
+    <p role="alert" className="min-w-0 text-[13px] text-destructive">{submitError}</p>
   ) : mode === "edit" ? (
     <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
       <span className={cn("size-1.5 rounded-full", dirty ? "bg-warning" : "bg-success")} />

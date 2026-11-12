@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Activity, RefreshCw, Search } from "lucide-react";
+import { Activity, Download, RefreshCw, Search } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   RUN_SORTS,
+  apiSearchParams,
   logsHref,
   parseLogsQuery,
   searchParamsRecord,
@@ -14,12 +15,30 @@ import {
   type LogsPath,
   type LogsQuery
 } from "@/lib/logs-query";
-import { requestJson } from "@/lib/http";
-import type { RunPage } from "@/lib/types";
+import { toCsv } from "@/lib/csv";
+import {
+  AUTO_REFRESH_OPTIONS,
+  AUTO_REFRESH_STORAGE_KEY,
+  RUNS_EXPORT_LIMIT,
+  RUNS_EXPORT_PAGE,
+  RUN_CSV_COLUMNS,
+  SESSIONS_EXPORT_LIMIT,
+  SESSION_CSV_COLUMNS,
+  collectPages,
+  exportFileName,
+  parseAutoRefresh,
+  testsProbeParams,
+} from "@/lib/logs-lists";
+import { formatNumber } from "@/lib/format";
+import { errorMessage, requestJson } from "@/lib/http";
+import { useLocalStorage } from "@/lib/use-local-storage";
+import type { LogSessionPage, RunPage } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { EmptyState } from "@/components/ui/primitives";
+import { EmptyState, Spinner } from "@/components/ui/primitives";
+import { Select } from "@/components/ui/select";
+import { useToast } from "@/components/ui/toast";
 import { useLogsRange } from "@/components/observability/period-filter";
 import { AgentMultiSelect, FixedFilter, PeriodPicker, StatusMultiSelect } from "@/components/observability/logs-filters";
 import { RunsTable, useRunsPager } from "@/components/observability/runs-table";
@@ -99,11 +118,94 @@ function LogsNav({ current, query }: { current: LogsPath; query: LogsQuery }) {
   );
 }
 
+// -- Atualização automática ------------------------------------------------------
+
+/**
+ * A preferência (desligada, 10, 30 ou 60 s), lembrada no navegador, e um contador que sobe a cada volta.
+ * Com a aba oculta o relógio para; ao voltar, atualiza na hora se já passou o intervalo. Quem consome o
+ * contador atualiza em silêncio: sem remontar a lista, a rolagem e o foco ficam onde estavam.
+ */
+function useAutoRefresh() {
+  const [stored, setStored] = useLocalStorage<string>(AUTO_REFRESH_STORAGE_KEY, "0");
+  const seconds = parseAutoRefresh(stored);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!seconds) return;
+    const every = seconds * 1000;
+    let last = Date.now();
+    let timer: number | undefined;
+    const fire = () => {
+      last = Date.now();
+      setTick((t) => t + 1);
+    };
+    const stop = () => {
+      if (timer !== undefined) window.clearInterval(timer);
+      timer = undefined;
+    };
+    const start = () => {
+      stop();
+      timer = window.setInterval(fire, every);
+    };
+    const onVisibility = () => {
+      if (document.hidden) return stop();
+      if (Date.now() - last >= every) fire();
+      start();
+    };
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [seconds]);
+  return { seconds, setSeconds: (value: number) => setStored(String(parseAutoRefresh(String(value)))), tick };
+}
+
+/** Chama `onTick` a cada volta do contador (não na montagem). */
+function useOnTick(tick: number, onTick: () => void) {
+  const last = useRef(tick);
+  const callback = useRef(onTick);
+  useEffect(() => {
+    callback.current = onTick;
+  });
+  useEffect(() => {
+    if (last.current === tick) return;
+    last.current = tick;
+    callback.current();
+  }, [tick]);
+}
+
+type AutoRefresh = ReturnType<typeof useAutoRefresh>;
+
+/**
+ * No cabeçalho a partir de `sm`; no celular, na linha dos filtros (no cabeçalho ele espremeria o título
+ * e a descrição). As duas cópias leem a mesma preferência.
+ */
+function AutoRefreshSelect({ auto, className }: { auto: AutoRefresh; className?: string }) {
+  return (
+    <Select
+      aria-label="Atualização automática"
+      title="Atualiza a lista sozinha, sem perder a rolagem. Pausa com a aba oculta."
+      value={String(auto.seconds)}
+      onChange={(e) => auto.setSeconds(Number(e.target.value))}
+      wrapperClassName={cn("w-36", className)}
+      className="h-10 text-[13px] md:h-8"
+    >
+      {AUTO_REFRESH_OPTIONS.map((s) => (
+        <option key={s} value={s}>
+          {s ? `Auto: ${s} s` : "Auto: desligada"}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
 function LogsShell({
   current,
   query,
   description,
   onReload,
+  auto,
   loading = false,
   children,
 }: {
@@ -111,6 +213,7 @@ function LogsShell({
   query: LogsQuery;
   description: string;
   onReload: () => void;
+  auto: AutoRefresh;
   loading?: boolean;
   children: ReactNode;
 }) {
@@ -139,10 +242,13 @@ function LogsShell({
         title="Logs"
         description={description}
         actions={
-          <Button variant="outline" size="sm" onClick={onReload} disabled={loading}>
-            <RefreshCw className={loading ? "animate-spin" : undefined} />
-            Atualizar
-          </Button>
+          <>
+            <AutoRefreshSelect auto={auto} className="hidden sm:block" />
+            <Button variant="outline" size="sm" className="h-10 md:h-8" onClick={onReload} disabled={loading}>
+              <RefreshCw className={loading ? "animate-spin" : undefined} />
+              Atualizar
+            </Button>
+          </>
         }
         tabs={<LogsNav current={current} query={query} />}
       />
@@ -172,6 +278,15 @@ export function LogsOverviewView({ initial }: { initial: LogsQuery }) {
     return p;
   }, [query.agents, range, query.tests]);
   const overview = useOverview(overviewParams, range.ready);
+  const auto = useAutoRefresh();
+  useOnTick(auto.tick, overview.refresh);
+
+  // Vazio sem os testes: uma sondagem de uma linha diz se há testes no recorte (só neste caso).
+  const probeParams = useMemo(() => rangeParams(query.agents, range), [query.agents, range]);
+  const onlyTests = useTestsExist(
+    probeParams,
+    overview.state === "ready" && overview.data?.totals.runs === 0 && !overview.data.include_dry_run && !query.tests
+  );
 
   // Cada número do Panorama leva às execuções que ele conta, com o mesmo período, agentes e testes.
   const runsHref = (drill: Partial<LogsQuery>) => logsHref("/logs/runs", { ...sharedLogsQuery(query), ...drill });
@@ -182,13 +297,14 @@ export function LogsOverviewView({ initial }: { initial: LogsQuery }) {
       query={query}
       description="Como os agentes foram no período: o que falhou, quanto custou e se a versão nova melhorou."
       onReload={overview.reload}
+      auto={auto}
       loading={overview.state === "loading"}
     >
       <div className="flex flex-wrap items-center gap-2">
         <PeriodPicker query={query} onChange={update} />
         <AgentMultiSelect value={query.agents} onChange={(agents) => update({ agents })} />
         <label
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-border px-3 text-[13px]"
+          className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-3 text-[13px] md:h-9"
           title="Execuções do Playground e de testes com dry_run. Ficam fora das métricas por padrão."
         >
           <input
@@ -199,9 +315,137 @@ export function LogsOverviewView({ initial }: { initial: LogsQuery }) {
           />
           Incluir testes
         </label>
+        <AutoRefreshSelect auto={auto} className="sm:hidden" />
       </div>
-      <OverviewPanel overview={overview} runsHref={runsHref} />
+      <OverviewPanel
+        overview={overview}
+        runsHref={runsHref}
+        emptyAction={onlyTests ? <IncludeTestsButton onClick={() => update({ tests: true })} /> : undefined}
+      />
     </LogsShell>
+  );
+}
+
+// -- "Incluir testes" no estado vazio -------------------------------------------------
+
+/**
+ * Há execuções de teste (dry_run) neste recorte? Só pergunta quando `enabled` (a lista sem testes veio
+ * vazia), com `limit=1`: as telas com dados não pagam nada por isso.
+ */
+function useTestsExist(params: Record<string, string | string[]>, enabled: boolean): boolean {
+  const key = JSON.stringify(params);
+  const [found, setFound] = useState<{ key: string; value: boolean } | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true;
+    requestJson<RunPage>(`/api/observability/runs?${apiSearchParams(testsProbeParams(params))}`, { fallbackError: "" })
+      .then((page) => {
+        if (active) setFound({ key, value: page.items.length > 0 });
+      })
+      .catch(() => {}); // sem resposta, fica o vazio comum
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, enabled]);
+  return enabled && found?.key === key && found.value;
+}
+
+function IncludeTestsButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button variant="outline" size="sm" className="h-10 md:h-8" onClick={onClick}>
+      Incluir testes
+    </Button>
+  );
+}
+
+// -- Exportar CSV ----------------------------------------------------------------
+
+/** Baixa o texto como arquivo, sem passar pelo servidor. */
+function downloadText(text: string, fileName: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * Exporta o recorte atual, com todos os filtros, buscado no servidor (não só o que está na tela):
+ * execuções página a página até 5.000 linhas; sessões numa chamada só, até 200 (a API não pagina
+ * sessões). O aviso no fim diz quantas linhas saíram e se o teto cortou o resto.
+ */
+function ExportCsvButton({ kind, params }: { kind: "runs" | "sessions"; params: Record<string, string | string[]> }) {
+  const toast = useToast();
+  const [progress, setProgress] = useState<number | null>(null);
+  const cap = kind === "runs" ? RUNS_EXPORT_LIMIT : SESSIONS_EXPORT_LIMIT;
+  const noun = kind === "runs" ? "execuções" : "sessões";
+
+  async function exportCsv() {
+    setProgress(0);
+    try {
+      let csv: string;
+      let count: number;
+      let truncated: boolean;
+      if (kind === "runs") {
+        // `_seed` só serve para a lista recarregar; a amostra exporta as linhas sorteadas, sem paginar.
+        const apiParams = Object.fromEntries(Object.entries(params).filter(([key]) => key !== "_seed"));
+        const result = await collectPages(
+          (cursor) =>
+            requestJson<RunPage>(
+              `/api/observability/runs?${apiSearchParams({ ...apiParams, limit: String(RUNS_EXPORT_PAGE), ...(cursor ? { cursor } : {}) })}`,
+              { fallbackError: "Falha ao buscar as execuções" }
+            ),
+          { max: RUNS_EXPORT_LIMIT, pageSize: RUNS_EXPORT_PAGE, onProgress: setProgress }
+        );
+        csv = toCsv(RUN_CSV_COLUMNS, result.items);
+        count = result.items.length;
+        truncated = result.truncated;
+      } else {
+        const page = await requestJson<LogSessionPage>(
+          `/api/observability/sessions?${apiSearchParams({ ...params, limit: String(SESSIONS_EXPORT_LIMIT) })}`,
+          { fallbackError: "Falha ao buscar as sessões" }
+        );
+        csv = toCsv(SESSION_CSV_COLUMNS, page.items);
+        count = page.items.length;
+        truncated = count >= SESSIONS_EXPORT_LIMIT;
+      }
+      downloadText(csv, exportFileName(kind === "runs" ? "execucoes" : "sessoes", new Date()));
+      toast({
+        title: count === 1 ? `1 ${noun.replace(/ões$/, "ão")} exportada` : `${formatNumber(count)} ${noun} exportadas`,
+        description: truncated
+          ? `Parou no teto de ${formatNumber(cap)} (as mais recentes). Estreite o período ou os filtros para pegar o resto.`
+          : "Com os filtros ativos.",
+        variant: "success",
+      });
+    } catch (err) {
+      toast({ title: "Não foi possível exportar", description: errorMessage(err), variant: "error" });
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  const help =
+    kind === "runs"
+      ? `Baixa as execuções do recorte atual (com todos os filtros), buscadas no servidor até ${formatNumber(cap)} linhas — não só as que estão na tela.`
+      : `Baixa as sessões do recorte atual (com todos os filtros), até ${formatNumber(cap)} de atividade mais recente.`;
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-10 md:h-9"
+      onClick={() => void exportCsv()}
+      disabled={progress != null}
+      title={help}
+      aria-label={`Exportar CSV: ${help}`}
+    >
+      {progress != null ? <Spinner /> : <Download />}
+      {progress != null ? (progress ? `Exportando… ${formatNumber(progress)}` : "Exportando…") : `Exportar CSV (até ${formatNumber(cap)})`}
+    </Button>
   );
 }
 
@@ -216,6 +460,13 @@ export function LogsExplorerView({ view, initial }: { view: "sessions" | "runs" 
   const range = useLogsRange(query);
   // O texto digitado só vira filtro (URL e chamada à API) depois de uma pausa.
   const [searchText, setSearchText] = useState(query.search);
+  // A busca mudou por fora (link da paleta, "Limpar filtros"): o campo acompanha. Enquanto a pessoa
+  // digita, o texto aparado bate com o filtro e o campo fica como está (com o espaço do fim).
+  const [seenSearch, setSeenSearch] = useState(query.search);
+  if (seenSearch !== query.search) {
+    setSeenSearch(query.search);
+    if (searchText.trim() !== query.search) setSearchText(query.search);
+  }
   useEffect(() => {
     const timer = window.setTimeout(() => update({ search: searchText.trim() }), 300);
     return () => window.clearTimeout(timer);
@@ -240,8 +491,10 @@ export function LogsExplorerView({ view, initial }: { view: "sessions" | "runs" 
   }, [query.search, router]);
   // A amostra aleatória não vai para a URL: recarregar sorteia de novo.
   const [sampleSeed, setSampleSeed] = useState<number | null>(null);
-  // "Atualizar" remonta as listas e os números do filtro fixo, que buscam de novo.
+  // "Atualizar" remonta as listas e os números do filtro fixo, que buscam de novo. A atualização
+  // automática não remonta: as listas recebem o `tick` e buscam em silêncio.
   const [nonce, setNonce] = useState(0);
+  const auto = useAutoRefresh();
 
   const params = useMemo(() => {
     const p = rangeParams(query.agents, range);
@@ -303,6 +556,7 @@ export function LogsExplorerView({ view, initial }: { view: "sessions" | "runs" 
             : "Cada execução de todos os agentes, com a fila de revisão para achar o que vale olhar. Abra uma para ver o trace."
       }
       onReload={() => setNonce((n) => n + 1)}
+      auto={auto}
     >
       <div className="flex flex-wrap items-center gap-2">
         {fixed.map((f) => (
@@ -320,13 +574,14 @@ export function LogsExplorerView({ view, initial }: { view: "sessions" | "runs" 
             onChange={(e) => setSearchText(e.target.value)}
             placeholder="Buscar sessão, usuário, conversa ou run_id…"
             aria-label="Buscar por sessão, usuário ou conversation_id"
-            className="pl-9"
+            className="h-10 pl-9 md:h-9"
           />
         </div>
         {filtered && (
           <Button
             variant="ghost"
             size="sm"
+            className="h-10 md:h-8"
             onClick={() => {
               update({ agents: [], statuses: [], search: "", version: null });
               setSearchText("");
@@ -335,13 +590,19 @@ export function LogsExplorerView({ view, initial }: { view: "sessions" | "runs" 
             Limpar filtros
           </Button>
         )}
+        <AutoRefreshSelect auto={auto} className="sm:hidden" />
+        {range.ready && (
+          <div className="sm:ml-auto">
+            <ExportCsvButton kind={view === "sessions" ? "sessions" : "runs"} params={view === "sessions" ? params : runsParams} />
+          </div>
+        )}
       </div>
 
       {/* Com um usuário ou uma sessão fixos, os números são deles: o Panorama não recorta por isso. */}
       {range.ready && (query.userId || params.session_id) && <StatsPanel key={`stats-${nonce}`} params={params} />}
 
       {view === "sessions" ? (
-        range.ready && <SessionsTable key={`sessions-${nonce}`} params={params} />
+        range.ready && <SessionsTable key={`sessions-${nonce}`} params={params} refreshTick={auto.tick} />
       ) : (
         <>
           {view === "rag" && range.ready && (
@@ -372,6 +633,9 @@ export function LogsExplorerView({ view, initial }: { view: "sessions" | "runs" 
             <RunsList
               key={nonce}
               params={runsParams}
+              refreshTick={auto.tick}
+              includeTests={query.tests}
+              onIncludeTests={() => update({ tests: true })}
               emptyTitle={filtered || fixed.length || reviewing ? "Nenhuma execução com esses filtros" : "Nenhuma execução registrada"}
             />
           )}
@@ -381,8 +645,26 @@ export function LogsExplorerView({ view, initial }: { view: "sessions" | "runs" 
   );
 }
 
-function RunsList({ params, emptyTitle }: { params: Record<string, string | string[]>; emptyTitle: string }) {
+function RunsList({
+  params,
+  emptyTitle,
+  refreshTick,
+  includeTests,
+  onIncludeTests,
+}: {
+  params: Record<string, string | string[]>;
+  emptyTitle: string;
+  refreshTick: number;
+  includeTests: boolean;
+  onIncludeTests: () => void;
+}) {
   const pager = useRunsPager(params);
+  useOnTick(refreshTick, () => void pager.refresh());
+  // Vazio de verdade (sem página seguinte) e sem os testes: há testes neste recorte?
+  const onlyTests = useTestsExist(
+    params,
+    !includeTests && pager.state === "ready" && pager.items.length === 0 && !pager.cursor && !("sample" in params)
+  );
   return (
     <RunsTable
       items={pager.items}
@@ -393,6 +675,12 @@ function RunsList({ params, emptyTitle }: { params: Record<string, string | stri
       onLoadMore={() => void pager.loadMore()}
       onRetry={() => void pager.reload()}
       emptyTitle={emptyTitle}
+      emptyDescription={
+        onlyTests
+          ? "Só há execuções de teste (Playground, dry_run) neste recorte, e elas ficam de fora por padrão."
+          : undefined
+      }
+      emptyAction={onlyTests ? <IncludeTestsButton onClick={onIncludeTests} /> : undefined}
       showAgentColumn
     />
   );

@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Activity, ChevronRight } from "lucide-react";
 import { errorMessage, requestJson } from "@/lib/http";
 import { formatCost, formatMs, formatNumber } from "@/lib/format";
+import { mergeFirstPage } from "@/lib/logs-lists";
+import { useListKeyboardNav } from "@/lib/use-list-nav";
 import type { RunPage, RunSummary } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,17 +44,27 @@ export function useRunsPager(params: Record<string, string | string[]>) {
     [paramsKey]
   );
 
+  // Cada carga ganha um número: a resposta de uma carga velha (filtro trocado no meio) é descartada.
+  const generation = useRef(0);
+  const busy = useRef(false);
+
   const reload = useCallback(async () => {
+    const mine = ++generation.current;
+    busy.current = true;
     setState("loading");
     setError(null);
     try {
       const page = await fetchPage(null);
+      if (mine !== generation.current) return;
       setItems(page.items);
       setCursor(page.next_cursor ?? null);
       setState("ready");
     } catch (err) {
+      if (mine !== generation.current) return;
       setError(errorMessage(err));
       setState("error");
+    } finally {
+      if (mine === generation.current) busy.current = false;
     }
   }, [fetchPage]);
 
@@ -64,19 +76,48 @@ export function useRunsPager(params: Record<string, string | string[]>) {
 
   async function loadMore() {
     if (!cursor) return;
+    const mine = generation.current;
+    busy.current = true;
     setLoadingMore(true);
     try {
       const page = await fetchPage(cursor);
+      if (mine !== generation.current) return;
       setItems((prev) => [...prev, ...page.items]);
       setCursor(page.next_cursor ?? null);
     } catch (err) {
-      setError(errorMessage(err));
+      if (mine === generation.current) setError(errorMessage(err));
     } finally {
+      busy.current = false;
       setLoadingMore(false);
     }
   }
 
-  return { items, cursor, state, loadingMore, error, reload, loadMore };
+  /**
+   * Atualização silenciosa (a automática): busca a primeira página de novo e mescla no que está na
+   * tela, sem esqueleto e sem perder o que veio de "Carregar mais" — a rolagem fica onde estava.
+   * Numa amostra aleatória não faz nada (cada busca sortearia outra).
+   */
+  const refresh = useCallback(async () => {
+    if (busy.current || "sample" in params) return;
+    const mine = generation.current;
+    busy.current = true;
+    try {
+      const page = await fetchPage(null);
+      if (mine !== generation.current) return;
+      const prepend = !("sort" in params);
+      // O cursor fica: ele aponta para depois do que já foi carregado, e as novas entram no topo.
+      setItems((prev) => mergeFirstPage(prev, page.items, (run) => run.run_id, prepend));
+      setState("ready");
+      setError(null);
+    } catch {
+      // Falhar em silêncio: a próxima volta tenta de novo, e o botão "Atualizar" mostra o erro.
+    } finally {
+      if (mine === generation.current) busy.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchPage]);
+
+  return { items, cursor, state, loadingMore, error, reload, loadMore, refresh };
 }
 
 export function RunsTable({
@@ -88,6 +129,8 @@ export function RunsTable({
   onLoadMore,
   onRetry,
   emptyTitle,
+  emptyDescription = "Execuções recém-terminadas levam alguns segundos para aparecer.",
+  emptyAction,
   showAgentColumn = false,
 }: {
   items: RunSummary[];
@@ -98,9 +141,16 @@ export function RunsTable({
   onLoadMore: () => void;
   onRetry: () => void;
   emptyTitle: string;
+  emptyDescription?: ReactNode;
+  /** Ação a mais no estado vazio (o "Incluir testes" quando só há testes no recorte). */
+  emptyAction?: ReactNode;
   /** Mostra a coluna do agente — usado na página `/observability`, que lista vários agentes. */
   showAgentColumn?: boolean;
 }) {
+  // `j`/`k` andam pelas execuções, `Enter` abre (ver lib/use-list-nav.ts).
+  const listRef = useRef<HTMLDivElement>(null);
+  useListKeyboardNav(listRef);
+
   if (state === "loading") {
     return (
       <Card className="flex flex-col gap-3 p-4" aria-busy="true" aria-label="Carregando execuções">
@@ -134,14 +184,16 @@ export function RunsTable({
         <EmptyState
           icon={Activity}
           title={emptyTitle}
-          description="Execuções recém-terminadas levam alguns segundos para aparecer."
+          description={emptyDescription}
           action={
             // Uma página pode vir vazia (traces de fora do serviço) e ainda haver mais.
-            cursor && (
+            cursor ? (
               <Button variant="outline" size="sm" onClick={onLoadMore} disabled={loadingMore}>
                 {loadingMore && <Spinner />}
                 Carregar mais
               </Button>
+            ) : (
+              emptyAction
             )
           }
         />
@@ -151,7 +203,14 @@ export function RunsTable({
 
   return (
     <>
-      <Card className="overflow-hidden">
+      {/* No celular, cartões: a fala, o agente, o status e o horário, sem rolagem lateral. */}
+      <div ref={listRef} data-list-nav="">
+      <ul className="flex flex-col gap-2 md:hidden" aria-label="Execuções">
+        {items.map((run) => (
+          <RunCard key={run.run_id} run={run} showAgent={showAgentColumn} />
+        ))}
+      </ul>
+      <Card className="hidden overflow-hidden md:block">
         <div className="scrollbar-thin overflow-x-auto">
           <table className="w-full min-w-[1040px] text-sm">
             <thead>
@@ -177,9 +236,10 @@ export function RunsTable({
           </table>
         </div>
       </Card>
+      </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
       {cursor && (
-        <Button variant="outline" size="sm" className="self-center" onClick={onLoadMore} disabled={loadingMore}>
+        <Button variant="outline" size="sm" className="h-10 self-center md:h-8" onClick={onLoadMore} disabled={loadingMore}>
           {loadingMore && <Spinner />}
           Carregar mais
         </Button>
@@ -188,15 +248,50 @@ export function RunsTable({
   );
 }
 
+function RunCard({ run, showAgent }: { run: RunSummary; showAgent: boolean }) {
+  const message = run.input_message || run.message;
+  return (
+    <li>
+      <Link
+        href={`/runs/${encodeURIComponent(run.run_id)}`}
+        data-list-nav-item=""
+        className="flex min-h-10 flex-col gap-1.5 rounded-xl border border-border bg-card px-3.5 py-3 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <p className="line-clamp-2 break-words text-sm font-medium">
+          {message || <span className="text-muted-foreground">(sem mensagem)</span>}
+        </p>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <RunStatusBadge status={run.status} title={run.status_message} />
+          {showAgent && <span className="min-w-0 max-w-full truncate text-foreground">{run.agent_name ?? run.agent_type}</span>}
+          {!!run.tool_failures && (
+            <Badge variant="warning">
+              {run.tool_failures} {run.tool_failures === 1 ? "tool falhou" : "tools falharam"}
+            </Badge>
+          )}
+          <span className="ml-auto whitespace-nowrap">
+            <RelativeTime date={run.started_at} />
+          </span>
+        </div>
+      </Link>
+    </li>
+  );
+}
+
 function RunRow({ run, showAgentColumn }: { run: RunSummary; showAgentColumn: boolean }) {
   const href = `/runs/${encodeURIComponent(run.run_id)}`;
   // A fala pura (entrada estruturada); em run legado, o texto inteiro que chegou.
   const message = run.input_message || run.message;
   return (
-    <tr className="group relative transition-colors hover:bg-accent/50">
+    <tr className="group relative transition-colors hover:bg-accent/50 has-[a:focus-visible]:bg-accent/50">
       <td className="max-w-0 px-4 py-2.5">
-        {/* O link cobre a linha inteira; as células ficam como texto normal para leitores de tela. */}
-        <Link href={href} className="absolute inset-0" aria-label={`Abrir trace: ${message ?? run.run_id}`} />
+        {/* O link cobre a linha inteira; as células ficam como texto normal para leitores de tela.
+            É ele que recebe o foco do `j`/`k`: o anel contorna a linha. */}
+        <Link
+          href={href}
+          data-list-nav-item=""
+          className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          aria-label={`Abrir trace: ${message ?? run.run_id}`}
+        />
         <p className="truncate font-medium">{message || <span className="text-muted-foreground">(sem mensagem)</span>}</p>
         <p className="truncate text-xs text-muted-foreground">
           {run.user_id ?? "—"}
