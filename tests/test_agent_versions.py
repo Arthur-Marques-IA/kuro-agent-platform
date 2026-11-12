@@ -10,9 +10,8 @@ from agno.metrics import ModelMetrics, RunMetrics
 from agno.run.agent import RunCompletedEvent, RunStartedEvent
 from fastapi import HTTPException
 
-from agent_service.agents import registry
 from agent_service.agents.registry import get_agent_with_definition
-from agent_service.agents.store import create_definition, get_definition as _get_definition, delete_definition, get_feedback_note, save_feedback_note, update_definition
+from agent_service.agents.store import create_definition, delete_definition, get_feedback_note, save_feedback_note, update_definition
 from agent_service.api.agents_routes import PromoteIn, get_revisions, promote_agent
 from agent_service.api.observability_routes import get_run_trace
 from agent_service.models.pricing import estimate_cost
@@ -20,14 +19,6 @@ from agent_service.observability import trace_store, tracing
 from agent_service.observability.tracing import RunContext
 
 SCHEMA = [{"name": "acao", "type": "string", "required": True}]
-
-
-@pytest.fixture(autouse=True)
-def cache_limpo(monkeypatch):
-    """O cache do registry compara `updated_at`, que no SQLite dos testes tem
-    resolução de segundo: duas edições no mesmo segundo pareceriam uma só. No
-    Postgres o carimbo é em microssegundos."""
-    monkeypatch.setattr(registry, "get_definition", lambda t: (registry._cache.pop(t, None), _get_definition(t))[1])
 
 
 @pytest.fixture

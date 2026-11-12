@@ -405,6 +405,12 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   os valores do `enum`), e o resultado aparece como rótulo → valor. Na Análise e na tela do run,
   um valor de campo com `enum` aparece como selo, em alerta se estiver fora dos permitidos; o JSON
   cru fica atrás do botão **JSON**, com copiar. Ver [console](console.md#a-tela-da-execução).
+- **Uma consulta ao banco para achar o agente.** Cada `/chat`, `/chat/stream` e `/analyze` lia a
+  definição do agente, a nota de feedback e uma linha por tool (2 + N consultas); agora é uma só, que
+  traz a definição e os carimbos da nota e das tools, e o agente em cache é reaproveitado quando nada
+  mudou. Editar agente, tool ou nota continua valendo na requisição seguinte, em qualquer worker ou
+  réplica. O que é por processo (cache, vagas de execução, fila de espera) e o que isso implica com
+  mais de um worker está em [operação](operacao.md#mais-de-um-worker-ou-réplica).
 
 ### Corrigido
 

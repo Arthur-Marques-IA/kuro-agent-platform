@@ -219,6 +219,28 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `AGENT_SERVICE_PUBLIC_URL` (frontend) | — | endereço exibido nos exemplos de integração; vazio, vale o que o agent-service conhece (`KURO_PUBLIC_URL`, `KURO_API_DOMAIN`, profile `ip`) |
 | `KURO_API_URL` / `KURO_JSON` / `KURO_NO_INPUT` (CLI) | `http://127.0.0.1:58000` | endereço, saída JSON e modo não interativo |
 
+## Mais de um worker ou réplica
+
+Parte do estado do serviço vive na memória de cada processo, não no banco:
+
+- **Cache de agentes e tools.** O `Agent` montado e cada tool construída ficam guardados no
+  processo. A cada requisição, uma consulta só ao banco traz a definição do agente e os carimbos
+  (`updated_at`) da nota de feedback e das tools dele; se nada mudou, o agente em cache é usado,
+  senão ele é remontado, reaproveitando as tools que não mudaram. Como a comparação é sempre com o banco, uma edição feita por
+  qualquer processo vale na requisição seguinte de todos — não há invalidação a propagar. O custo
+  é que cada processo monta o seu agente na primeira chamada depois de subir ou de uma edição.
+- **Vagas de execução e fila de espera.** `MAX_CONCURRENT_RUNS` e `QUEUE_MAX_SIZE` são por
+  processo: com N workers (ou réplicas), o serviço aceita até N × `MAX_CONCURRENT_RUNS` execuções
+  ao mesmo tempo e N × `QUEUE_MAX_SIZE` chamadas esperando. Divida os valores por N se o limite
+  que importa é o do provedor de LLM ou o da máquina. O 503 de fila cheia é decidido por processo,
+  então uma réplica pode recusar enquanto outra ainda tem vaga — por isso o `Retry-After`.
+- **Tools Python simultâneas** (32 por processo) e a lista de modelos dos provedores (`providers
+  models`, cache de 15 min) também são por processo.
+
+O que precisa ser coerente entre processos fica no Postgres: idempotência, estado dos
+procedimentos (o 409 de sessão ocupada), versões da configuração e a [fila de jobs](#fila-de-jobs).
+O MCP pela URL é a exceção: precisa de um worker só (ver [HTTPS](#https-profile-tls)).
+
 ## Fila de jobs
 
 O trabalho em background (hoje, a sincronização de sites) passa por uma fila no próprio Postgres,
