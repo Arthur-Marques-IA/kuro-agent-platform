@@ -8,7 +8,7 @@ PR. Leia "Regras para quem executa" antes de pegar um pacote.
 > são relativos à raiz do repositório.
 >
 > **Estado em 2026-11-12: os 28 pacotes foram implementados e integrados.** O que cada um mudou
-> para quem integra ou opera está em `docs/notas-de-versao.md` (seção `## Não lançada`), e o
+> para quem integra ou opera está em `docs/notas-de-versao.md` (seção `## 0.3.0`), e o
 > roteiro para atualizar uma instalação em operação em `docs/migracao.md`. Este arquivo fica como
 > registro do plano; o que ficou em aberto está em "Pendências depois da execução", no fim.
 
