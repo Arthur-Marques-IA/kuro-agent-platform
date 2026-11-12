@@ -8,7 +8,8 @@ import { ApiError, errorMessage, requestJson } from "@/lib/http";
 import { runsToMessages } from "@/lib/sessions";
 import { clearTranscript, peekTranscript, stashTranscript } from "@/lib/transcript-cache";
 import { useLocalStorage } from "@/lib/use-local-storage";
-import type { ChatMessage, SessionRun } from "@/lib/types";
+import { applyTimeline } from "@/lib/chat-request";
+import type { ChatMessage, SessionRun, SessionTimeline } from "@/lib/types";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { EmptyState, Skeleton } from "@/components/ui/primitives";
 import { SidebarTrigger } from "@/components/workspace/app-shell";
@@ -82,18 +83,27 @@ function ExistingConversation({ sessionId }: { sessionId: string }) {
       return;
     }
     let cancelled = false;
-    requestJson<SessionRun[]>(
-      `/api/sessions/${encodeURIComponent(sessionId)}/runs?${new URLSearchParams({ user_id: userId })}`,
-      { fallbackError: "Falha ao carregar a conversa" }
-    )
-      .then((runs) => {
+    const query = new URLSearchParams({ user_id: userId });
+    // Turno estruturado: o `run_input` do AgentOS é o texto montado pelo servidor. A linha do
+    // tempo devolve a fala e os eventos separados; sem ela (404, 501) o histórico fica como vem.
+    const timeline = requestJson<SessionTimeline>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/timeline?${new URLSearchParams({ user_id: userId, limit: "200" })}`,
+      { fallbackError: "Falha ao ler a linha do tempo" }
+    ).catch(() => null);
+    Promise.all([
+      requestJson<SessionRun[]>(`/api/sessions/${encodeURIComponent(sessionId)}/runs?${query}`, {
+        fallbackError: "Falha ao carregar a conversa",
+      }),
+      timeline,
+    ])
+      .then(([runs, turns]) => {
         if (cancelled) return;
         setState(
           runs.length === 0
             ? { status: "not-found" }
             : {
                 status: "ready",
-                messages: runsToMessages(runs),
+                messages: applyTimeline(runsToMessages(runs), turns?.items ?? []),
                 agentType: runs.find((run) => run.agent_id)?.agent_id ?? null,
               }
         );

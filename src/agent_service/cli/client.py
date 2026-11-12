@@ -466,9 +466,11 @@ class Client:
         params = {"type": "agent", **({"user_id": user_id} if user_id else {})}
         return self._request("GET", f"/sessions/{session_id}/runs", params=params)
 
-    def session_transcript(self, session_id: str, user_id: str | None = None) -> dict[str, Any]:
-        params = {"user_id": user_id} if user_id else None
-        return self._request("GET", f"/observability/sessions/{session_id}/transcript", params=params)
+    def session_timeline(
+        self, session_id: str, user_id: str | None = None, *, limit: int | None = None, cursor: str | None = None
+    ) -> dict[str, Any]:
+        params = {k: v for k, v in {"user_id": user_id, "limit": limit, "cursor": cursor}.items() if v is not None}
+        return self._request("GET", f"/observability/sessions/{session_id}/timeline", params=params or None)
 
     def rename_session(self, session_id: str, name: str) -> dict[str, Any]:
         return self._request(

@@ -713,16 +713,56 @@ def test_sessions_list_uses_kuro_user_id_env(api, monkeypatch):
     assert calls[-1].url.params["user_id"] == "joana"
 
 
-def test_sessions_show_prints_transcript(api):
-    routes, _ = api
-    routes[("GET", "/sessions/cli-abc/runs")] = httpx.Response(
-        200,
-        json=[{"run_id": "r1", "run_input": "meu wifi caiu", "content": "vamos verificar",
-               "metrics": {"total_tokens": 120}}],
-    )
+TIMELINE = {
+    "session_id": "cli-abc", "user_id": "cli", "agent_types": ["r6"],
+    "started_at": "2026-11-11T12:00:00Z", "ended_at": "2026-11-11T12:05:02Z", "duration_ms": 302000.0,
+    "turns": 2, "error_count": 0, "input_tokens": 200, "output_tokens": 40, "total_tokens": 240,
+    "cost_usd": 0.002, "next_cursor": "2026-11-11T12:05:00+00:00|r2",
+    "items": [
+        {"run_id": "r1", "at": "2026-11-11T12:00:00Z", "agent_type": "r6", "agent_version": 10,
+         "status": "success", "status_message": None, "dry_run": False, "structured": False, "events": [],
+         "message": None, "raw_input": "DADOS: Maria " + "x" * 2000, "context": [], "steps": [], "sources": [],
+         "output": "oi, Maria", "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120,
+                                          "cost_usd": 0.001, "latency_ms": 2000.0}},
+        {"run_id": "r2", "at": "2026-11-11T12:05:00Z", "agent_type": "r6", "agent_version": 10,
+         "status": "success", "status_message": None, "dry_run": False, "structured": True,
+         "events": [{"role": "agent_sent", "content": "recebi seus dados", "speech": False},
+                    {"role": "contact", "content": "quero parcelar", "speech": True}],
+         "message": "quero parcelar", "raw_input": None,
+         "context": [{"key": "divida", "title": "Contexto da dívida", "content": "1 vencida", "volatile": False,
+                      "hash": "h", "changed": True, "previous_content": "nada vencido"}],
+         "steps": [{"tool": "regente_r6_decidir", "args": {"acao": "transferir"}, "ok": True,
+                    "result_preview": "HTTP 200", "side_effect": True},
+                   {"tool": "consulta", "args": {"cpf": "1"}, "ok": False, "failure": "unavailable",
+                    "error": "HTTP 503: fora", "side_effect": False}],
+         "sources": [], "output": "vou transferir",
+         "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120, "cost_usd": 0.001,
+                   "latency_ms": 2000.0}},
+    ],
+}
+
+
+def test_sessions_show_prints_the_timeline(api):
+    routes, calls = api
+    routes[("GET", "/observability/sessions/cli-abc/timeline")] = httpx.Response(200, json=TIMELINE)
     result = _run("sessions", "show", "cli-abc")
-    assert result.exit_code == 0
-    assert "vamos verificar" in result.output
+    assert result.exit_code == 0, result.output
+    out = result.output
+    assert "2 turno(s)" in out and "vou transferir" in out and "quero parcelar" in out
+    assert "recebi seus dados" in out and "Contexto da dívida" in out
+    assert "regente_r6_decidir(acao=transferir)" in out and "efeito colateral" in out
+    assert "HTTP 503: fora" in out and "--cursor" in out
+    assert "x" * 1000 not in out  # entrada não estruturada longa só pelo começo
+    assert calls[-1].url.params["user_id"] == "cli"
+
+
+def test_sessions_show_json_is_the_timeline(api):
+    routes, calls = api
+    routes[("GET", "/observability/sessions/cli-abc/timeline")] = httpx.Response(200, json=TIMELINE)
+    result = _run("--json", "sessions", "show", "cli-abc", "--all-users", "-n", "5", "--cursor", "c1")
+    assert json.loads(result.stdout) == TIMELINE
+    assert "user_id" not in calls[-1].url.params
+    assert calls[-1].url.params["limit"] == "5" and calls[-1].url.params["cursor"] == "c1"
 
 
 def test_sessions_delete_requires_yes_without_tty(api):

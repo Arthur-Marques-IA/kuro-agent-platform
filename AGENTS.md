@@ -72,6 +72,9 @@ kuro --json chat suporte -m "fecha o acordo" --dry-run   # teste: tools recebem 
 # `dry_run: true` no /chat e no /analyze (também `--dry-run` em analyze, eval e tools invoke):
 # as tools recebem o header e `dependencies.dry_run` (sem declarar em dependency_fields);
 # o run fica com metadata.dry_run=true. Quem implementa a tool decide o que simular.
+# Entrada estruturada (pela API): `events` [{role: contact|human_agent|agent_sent|system, content, at}]
+# e `context` [{key, title, content, volatile}] no /chat em vez de tudo em `message`; o run guarda
+# input_message/input_events/input_context (`runs show`). Procedural recusa (422). docs/integracao.md.
 
 # Anexos: imagem, áudio, vídeo ou arquivo (PDF, DOCX, CSV, TXT...) direto ao modelo
 kuro --json chat suporte -m "o que tem nessa foto?" --attach foto.png       # -a, repetível
@@ -180,7 +183,8 @@ kuro --json runs export -a r8 -o casos.jsonl    # runs com referência viram dat
 # Conversas guardadas (a transcrição em si)
 # O user_id é o mesmo do chat: `cli` por padrão, ou KURO_USER_ID.
 kuro --json sessions list --agent suporte
-kuro --json sessions show <session_id>          # transcrição: cada mensagem, a resposta e os tokens
+kuro --json sessions show <session_id>          # linha do tempo: por turno events, message, context (changed), steps, output, usage
+kuro --json sessions show <session_id> --all-users   # sem filtrar por user_id (conversa de uma integração); pagina com --cursor
 kuro --json sessions rename <session_id> "Cliente X"
 kuro --json sessions delete <session_id> --yes  # apaga a conversa (não tem volta); o registro em `kuro runs` continua
 

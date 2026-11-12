@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from agent_service.observability import tracing
 from agent_service.observability.overview import DEFAULT_TIMEZONE, Granularity, Overview, build_overview
+from agent_service.observability.transcript import SessionTimeline
 from agent_service.observability.trace_store import (
     RagFilter,
     RunPage,
@@ -307,6 +308,37 @@ def list_sessions(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+TIMELINE_LIMIT = 200
+
+
+@router.get("/sessions/{session_id}/timeline", response_model=SessionTimeline)
+def session_timeline(
+    session_id: str,
+    user_id: Annotated[str | None, Query(description="Só os runs deste user_id.")] = None,
+    limit: Annotated[int, Query(ge=1, le=TIMELINE_LIMIT, description="Turnos por página.")] = 100,
+    cursor: Annotated[str | None, Query(description="O `next_cursor` da página anterior.")] = None,
+) -> SessionTimeline:
+    """A linha do tempo da sessão, um turno por run, do mais antigo ao mais novo: os
+    eventos e a fala nova, os blocos de contexto (com `changed` e `previous_content`
+    contra o turno estruturado anterior), as tools, as fontes, a resposta e o uso — e,
+    no envelope, os totais da sessão inteira (agentes, início, fim, turnos, tokens, custo).
+
+    Run sem entrada estruturada vem com `structured: false` e o texto em `raw_input`.
+    Até `limit` turnos (máx. 200); `next_cursor` pede os seguintes. Só no trace store
+    local: com `TRACE_STORE_BACKEND=langfuse` responde 501."""
+    from agent_service.observability import run_store
+    from agent_service.observability.transcript import build_timeline
+
+    if not _is_local(_store()):
+        raise HTTPException(
+            status_code=501, detail="A linha do tempo só existe com o trace store local (TRACE_STORE_BACKEND=db)."
+        )
+    data = run_store.session_timeline(session_id, user_id=user_id, limit=limit, cursor=cursor)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Sessão {session_id!r} sem execuções registradas.")
+    return build_timeline(session_id, data)
+
+
 @router.get("/sessions/{session_id}/transcript")
 def session_transcript(
     session_id: str,
@@ -314,10 +346,10 @@ def session_transcript(
     timezone: str = DEFAULT_TIMEZONE,
     memories: bool = True,
 ) -> dict[str, Any]:
-    """A conversa compacta (`observability/transcript.py`): por turno a fala, o contexto
-    só quando mudou, as tools numa linha e a resposta; e o que o agente lembra — o
-    resumo da sessão e as memórias do contato. O `RunOutput` cru continua em
-    `/sessions/{id}/runs`."""
+    """O que o agente lembra da conversa — o resumo da sessão e as memórias do contato —
+    e uma linha por turno da sessão do Agno (a entrada inteira, as tools e a resposta).
+    A conversa separada em campos é a `/sessions/{id}/timeline`; o `RunOutput` cru
+    continua em `/sessions/{id}/runs`."""
     from agno.db.base import SessionType
 
     from agent_service.db import get_db

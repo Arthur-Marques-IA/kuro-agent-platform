@@ -2,7 +2,7 @@
 
 | Página | O que tem |
 |---|---|
-| **Playground** `/chat` | conversa em streaming com qualquer agente conversacional; URL por conversa, histórico reidratado; edição de `dependencies`; anexos; 👍/👎 — e o 👎 pergunta o que mudar e ensina o agente |
+| **Playground** `/chat` | conversa em streaming com qualquer agente conversacional; URL por conversa, histórico reidratado; edição de `dependencies` e de blocos de `context`; simular atendente humano (`events`); anexos; 👍/👎 — e o 👎 pergunta o que mudar e ensina o agente |
 | **Análise** `/analyze` | roda um agente analista: documento (ou anexo) entra, o objeto do `response_schema` sai, campo a campo (rótulo → valor, `enum` em selo; o JSON cru no botão **JSON**); os campos que o agente devolve aparecem numa tabela (tipo, obrigatório, descrição, valores permitidos) |
 | **Agentes** `/agents` | configuração (só os campos alterados vão no `PUT`; [o formulário](#o-formulário-do-agente)), tipo do agente, parâmetros de geração e tempo limite, editor da saída estruturada com valores permitidos (`enum`); **Versões** (configuração inteira e prompt com diff) e **Promover**; **Aprendizado** (as regras vindas de feedback, editáveis, com histórico e rollback); execuções, com a concordância do shadow nos analistas; conversas e a aba Integração com o contrato vindo do backend |
 | **Tools** `/tools` | lista agrupada por integração (prefixo do nome ou host da API; as de sistema recolhidas no fim), filtros em chip (tipo, efeito colateral, não classificada, desligada, sem agente), por linha a 1ª frase da descrição, método e host e os agentes que usam, e um detalhe com descrição inteira, URL e parâmetros; ligar/desligar pelo menu; criação e edição dos três tipos, com formulário próprio por tipo, campos de dentro de parâmetros `object`/`array`, botão **Testar** (com `dependencies`) e origem de cada parâmetro |
@@ -70,6 +70,39 @@ objeto como texto, para colar um inteiro; os dois modos ficam sincronizados. Cha
 declaradas aparecem em **Outros campos** (chave/valor, valor lido como JSON quando dá) e nunca são
 descartadas; agente sem campos declarados fica só com esse editor. No Playground o objeto continua
 pré-preenchido com valores fictícios e guardado por agente no navegador.
+
+## Entrada estruturada no Playground
+
+O Playground manda a mesma [entrada estruturada](integracao.md#entrada-estruturada) que uma
+integração, para testar um agente com o contexto e o histórico separados em campos:
+
+- **Blocos de contexto.** O painel **Contexto** tem duas abas: **dependencies** (o formulário acima,
+  valores tipados para as tools) e **Blocos de contexto** (texto para o modelo ler, enviado em
+  `context`). Cada bloco tem `key`, título, conteúdo e a marca `volatile` (o bloco que muda todo
+  turno, como o contexto temporal, e não conta como "o contexto mudou" na tela da sessão). Os blocos
+  ficam guardados por agente no navegador, como as `dependencies`, e vão em toda mensagem. Antes do
+  envio o console confere o que o servidor recusaria com 422: `key` e título preenchidos, `key`
+  única (até 64 caracteres), título até 200, no máximo 30 blocos. Um bloco inválido aparece em
+  vermelho no próprio campo, o botão **Contexto** fica "inválido" e a mensagem não sai. **Exemplo**
+  preenche dois blocos (dados do contato e contexto temporal).
+- **Simular atendente.** O botão **Atendente** do campo de mensagem troca o modo: o texto digitado
+  vira uma fala do atendente humano, mostrada como bolha de atendente (tracejada, "vai junto da
+  próxima mensagem", com × para descartar). Na próxima mensagem do contato essas falas vão em
+  `events` (`role: "human_agent"`, com `at` do momento em que foram registradas) e a mensagem
+  continua em `message`. "Tentar novamente" reenvia as falas que foram com aquela mensagem.
+- **A conversa reaberta** relê a linha do tempo da sessão: a bolha do contato mostra só a fala (o
+  `run_input` do AgentOS é o texto montado pelo servidor) e as falas do atendente voltam antes
+  dela. Uma conversa cujo primeiro turno foi estruturado é nomeada pela fala, não pelo texto
+  montado.
+- **Código** mostra a chamada com `context` e `events` quando a tela os usa (as falas pendentes ou,
+  sem elas, as que foram com a última mensagem), em cURL, JavaScript, Python e PHP.
+- Sem blocos nem falas de atendente o corpo é exatamente o de antes: nada de `events: []` ou
+  `context: []`.
+- **Agente procedural** recusa `events` e `context` (422): o painel mostra só as `dependencies`,
+  com o aviso, e o botão **Atendente** não aparece.
+
+Na tela da sessão em Logs, uma conversa do Playground com blocos e atendente aparece igual a uma
+vinda de integração.
 
 ## Logs: Panorama, Sessões e Execuções
 
@@ -143,10 +176,52 @@ ela se adapta ao tipo de run:
   - no **conversacional** e no **procedural**, registra o 👎 com comentário e oferece o
     **ensinar**, que mescla o comentário nas regras do agente lendo a conversa da sessão.
 
-Na **sessão** (`/logs/sessions/{id}`), os runs de analista (ex.: `grupo-18`, com triagem e redação)
-aparecem como cartões recolhidos com a fase, o status e o link para a execução; abertos, mostram a
-mesma entrada e saída. O procedural ganha o "feedback sobre a conversa inteira", como o
-conversacional.
+O título é a fala pura do contato (`input_message`; num run legado, o texto que chegou), e a
+migalha volta para **Logs › Execuções** (e para a sessão, quando o run tem uma). Num agente que
+conversa, o cartão **Entrada** mostra o que entrou como texto: os eventos do turno (quem, quando,
+documento, a fala nova) e os blocos de contexto, cada um no seu cartão. Run sem entrada estruturada
+mostra o texto inteiro com as quebras de linha. Nos spans, uma entrada com campos de texto de várias
+linhas sai um bloco por campo, não como JSON escapado.
+
+## A tela da sessão
+
+`/logs/sessions/{id}` lê a linha do tempo da sessão (`GET /observability/sessions/{id}/timeline`,
+ver [integracao.md](integracao.md#linha-do-tempo-da-sessão)): a tela não recorta texto, só lê os
+campos que a entrada estruturada do `/chat` gravou. Capturas em `docs/telas/sessao-*.png`.
+
+- **Cabeçalho:** o nome do contato (`contact_name`; sem ele, o `user_id`), o agente, o canal, o
+  início, a duração, os turnos e o custo da sessão inteira. O `session_id` fica ao lado, copiável.
+- **Conversa:** uma bolha por evento, com autor e horário. Contato à direita; agente à esquerda;
+  atendente humano à esquerda, em outra cor e com o rótulo; sistema numa linha discreta no meio.
+  O que foi enviado em nome do agente (`agent_sent`) igual à resposta anterior dele não aparece de
+  novo (espaços e quebras de linha não contam); se saiu diferente, aparece com o selo
+  **enviado diferente**. Documento (`kind: document`) vem recolhido com o nome do arquivo e abre
+  em markdown.
+- **Tools:** entre a fala e a resposta, uma linha por chamada — o nome legível (o verbo no fim do
+  nome, como `regente_r6_decidir` → "decidiu"; senão o rótulo cadastrado da tool), os argumentos
+  simples em ordem e o começo do resultado: `decidiu: transferir → Secretaria`. Selos para
+  **falhou** (o critério de `tool_failures`), **não encontrado** (404, neutro) e **efeito
+  colateral**. Clicar abre os argumentos e o resultado inteiros (lido do trace do run).
+- **Contexto:** em tela larga, um painel fixo ao lado; em tela estreita, o botão **Contexto** abre
+  uma gaveta. Um cartão por bloco, com o `title`. O painel acompanha o turno em foco (o que está no
+  meio da tela, ou o que foi clicado); turno sem blocos mostra o último turno anterior que tinha.
+  Bloco que mudou desde o turno anterior fica destacado (**mudou**, ou **novo**) e tem
+  **ver diferença**, linha a linha contra o `previous_content`. Bloco `volatile` nunca conta como
+  mudança.
+- **Entrada não estruturada:** run que chegou só com `message` (o legado, ou antes da entrada
+  estruturada) aparece como um cartão recolhido com o texto original e o aviso de que a integração
+  ainda manda tudo em `message`. Ele continua com as tools e a resposta.
+- **Analista:** os runs de analista (ex.: `grupo-18`, com triagem e redação) aparecem como cartões
+  recolhidos com o agente, o status e o link para a execução; abertos, mostram a entrada e a saída.
+- **Embaixo, em abas:** as execuções da sessão, o que o agente lembra (resumo da sessão e memórias
+  do contato) e os gráficos. O "feedback sobre a conversa inteira" fica no fim da conversa, no
+  conversacional e no procedural.
+- Mais de 100 turnos: **Carregar turnos mais novos** pede a página seguinte. Com
+  `TRACE_STORE_BACKEND=langfuse` a conversa não existe (501) e a tela mostra só as abas.
+
+Na lista de **Sessões**, cada linha mostra o nome do contato (quando há), a prévia da última fala e o
+canal; na de **Execuções**, a coluna da mensagem é a fala pura (`input_message`), com o texto antigo
+quando o run não é estruturado.
 
 ## O gráfico do panorama (Logs)
 

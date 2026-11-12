@@ -110,6 +110,70 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   "Chaves de API" virou "Credenciais de modelos". A lista "Conversas" da sidebar passa a se chamar
   "Conversas deste navegador", porque mostra só as do Playground deste navegador, e ganha o atalho
   **Todas** para as sessões dos Logs. Detalhes em [console.md](console.md#busca-global-ctrlk-e-a-barra-lateral).
+- **`kuro sessions show` e a tool MCP `session_show` passam a ler a linha do tempo da sessão.**
+  O `--json` de `kuro sessions show` deixa de ser a lista de runs do Agno (`run_input`, `content`,
+  `metrics`) e passa a ser o envelope de `GET /observability/sessions/{id}/timeline` (`items` com
+  um turno por run). O `session_show` do MCP deixa de devolver `resumo_da_sessao` e
+  `memorias_do_contato` (continuam em `GET /observability/sessions/{id}/transcript`); `raw=true`
+  segue devolvendo os runs crus do Agno. `kuro sessions show` filtra pelo `user_id` como antes
+  (`cli` ou `KURO_USER_ID`), agora pelo `user_id` gravado no run; `--all-users` tira o filtro.
+- **`GET /observability/sessions/{id}/transcript` não recorta mais a entrada.** Cada item perde
+  `fala`, `contexto`, `contexto_igual_ao_anterior` e `temporal` (que saíam de marcadores de texto
+  como `[FALA DO CONTATO]`) e traz a entrada inteira em `entrada`. O resumo da sessão e as memórias
+  do contato não mudam. A conversa separada em campos é a linha do tempo, abaixo.
+
+### Novo
+
+- **Linha do tempo da sessão: `GET /observability/sessions/{id}/timeline`.** Um turno por run, em
+  ordem cronológica, já separado: `events` (como gravados, com `kind`, `attachments` e `speech`),
+  `message` (a fala pura), `context` (cada bloco com `changed` contra o turno estruturado anterior e,
+  quando mudou, `previous_content`; bloco `volatile` nunca conta como mudado; no primeiro turno
+  estruturado nenhum conta), `steps` (cada tool: argumentos, `ok`, `failure`, `error`, prévia do
+  resultado e `side_effect`), `sources`, `output` e `usage`. No envelope, os totais da sessão
+  inteira: agentes, início, fim, duração, turnos, erros, tokens e custo. Run sem entrada
+  estruturada vem com `structured: false` e o texto inteiro em `raw_input`, sem recorte. Até 200
+  turnos por página (`limit`, padrão 100; `next_cursor` → `cursor`), filtro por `user_id`, escopo
+  admin como o resto de `/observability`; 404 para sessão sem runs e 501 com
+  `TRACE_STORE_BACKEND=langfuse`. Formato em [integracao.md](integracao.md#linha-do-tempo-da-sessão).
+- **Quem é o contato, na linha do tempo e na listagem de sessões.** `GET .../timeline` ganha
+  `contact_name` e `channel` no envelope; `GET /observability/sessions` ganha, em cada sessão,
+  `contact_name`, `channel` e `last_message` (prévia de até 160 caracteres da fala do run mais
+  recente: `input_message`, ou o `message` inteiro num run não estruturado). Todos opcionais e
+  `null` quando não há o dado (ou no backend Langfuse). O nome sai, em ordem, de uma `dependency`
+  `contact_name`/`nome_contato`/`nome`/`name`; de um bloco de `context` com uma dessas `key` (a
+  primeira linha); ou da linha `nome:` de um bloco `dados_contato`/`dados_aluno`/`dados_cliente`.
+  O canal, da `metadata` ou de uma `dependency` `channel`/`canal`. Para o console mostrar o nome,
+  mande um desses campos.
+- **Console: a sessão como conversa.** A tela da sessão lê a linha do tempo: uma bolha por evento
+  (contato, atendente humano, o que foi enviado em nome do agente, sistema), uma linha por tool com
+  selo de falha e de efeito colateral, o contexto do turno num painel ao lado (gaveta no celular)
+  com "ver diferença" contra o turno anterior, e o cabeçalho com o nome do contato, canal, duração,
+  turnos e custo. O que foi enviado igual à resposta do agente não se repete; o que saiu diferente
+  ganha o selo "enviado diferente". Run legado aparece como "entrada não estruturada", com o texto
+  original. As tabelas de execuções e de sessões mostram a fala pura (`input_message`), e a tela da
+  execução mostra a entrada em blocos, com a migalha em Logs. Detalhes em [console.md](console.md#a-tela-da-sessão).
+- **Console: o Playground com a mesma entrada estruturada.** O painel **Contexto** ganha a aba
+  **Blocos de contexto** (`key`, `title`, `content` e `volatile`, guardados por agente no navegador
+  como as `dependencies`, com key única e título obrigatório conferidos antes do envio) e o botão
+  **Atendente** do campo de mensagem registra falas de um atendente humano, que vão em `events`
+  (`human_agent`, com `at`) junto da próxima mensagem do contato e aparecem como bolha de atendente.
+  A conversa reaberta mostra a fala e o atendente separados (lidos da linha do tempo), e o
+  **Código** mostra a chamada com `context` e `events` quando usados. Sem blocos nem atendente o
+  corpo enviado é o de antes. Agente procedural não oferece os dois controles (o servidor os recusa
+  com 422). Detalhes em [console.md](console.md#entrada-estruturada-no-playground).
+
+- **Entrada estruturada no `/chat` e no `/chat/stream`.** Campos opcionais `events` (o que aconteceu
+  desde a última resposta do agente: `role` `contact` | `human_agent` | `agent_sent` | `system`,
+  `content`, `at`, `kind`, `attachments`) e `context` (blocos `{key, title, content, volatile}`), em
+  vez de tudo concatenado em `message`. O servidor monta o texto do modelo com um gabarito fixo.
+  `message` passa a ser opcional quando `events` traz um evento `contact`; sem nenhum dos dois, 422.
+  Limites: 30 blocos, 200 eventos e a soma dos textos em `MAX_INPUT_CHARS`. Agente procedural recusa
+  os dois campos (422). O run grava `input_message`, `input_events` e `input_context` (no detalhe do
+  run, `GET /observability/runs/{id}/trace` e `kuro runs show`; `input_message` também na
+  listagem), e `GET /agents/{t}/integration` traz `structured_request_example`. Uma chamada só com
+  `message` não muda em nada, e os runs anteriores ficam como entrada não estruturada, sem
+  retrocarga. Antes e depois de uma chamada do Regente e o guia de migração em
+  [integracao.md](integracao.md#entrada-estruturada).
 - **Conectar o MCP sem instalar o Kuro, em qualquer cliente.** Na sua máquina, só com o uv:
   `uv run https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py root@servidor`.
   O `kuro connect` virou um arquivo só, que usa apenas a biblioteca padrão do Python: começa em
@@ -580,6 +644,8 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 - A migração `0014` também roda sozinha: cria `document_revisions` e acrescenta o estado e a revisão
   em `chunk_feedback`. As marcações existentes ficam `open`, com a revisão desconhecida; os documentos
   já indexados ganham a revisão 1 na primeira vez que alguém a consulta, sem reindexar nada.
+- A migração `0016` também roda sozinha: acrescenta `input_message`, `input_events` e
+  `input_context` em `runs`. Os runs existentes ficam com as três nulas (entrada não estruturada).
 - `AGENT_SERVICE_PUBLIC_URL` do console deixou de ter `http://localhost:58000` fixo no compose:
   vazia, a aba Integração mostra a URL que o agent-service conhece. Para forçar outra, defina-a no
   `.env`.

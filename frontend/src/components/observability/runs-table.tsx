@@ -190,12 +190,14 @@ export function RunsTable({
 
 function RunRow({ run, showAgentColumn }: { run: RunSummary; showAgentColumn: boolean }) {
   const href = `/runs/${encodeURIComponent(run.run_id)}`;
+  // A fala pura (entrada estruturada); em run legado, o texto inteiro que chegou.
+  const message = run.input_message || run.message;
   return (
     <tr className="group relative transition-colors hover:bg-accent/50">
       <td className="max-w-0 px-4 py-2.5">
         {/* O link cobre a linha inteira; as células ficam como texto normal para leitores de tela. */}
-        <Link href={href} className="absolute inset-0" aria-label={`Abrir trace: ${run.message ?? run.run_id}`} />
-        <p className="truncate font-medium">{run.message || <span className="text-muted-foreground">(sem mensagem)</span>}</p>
+        <Link href={href} className="absolute inset-0" aria-label={`Abrir trace: ${message ?? run.run_id}`} />
+        <p className="truncate font-medium">{message || <span className="text-muted-foreground">(sem mensagem)</span>}</p>
         <p className="truncate text-xs text-muted-foreground">
           {run.user_id ?? "—"}
           {run.endpoint && <> · {run.endpoint}</>}

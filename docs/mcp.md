@@ -260,7 +260,11 @@ pede permissão antes de chamar.
   começa uma conversa nova e devolve o `session_id`; repasse-o para continuar e para
   `feedback_send`. O `user_id` do `chat` é `mcp` (o da CLI é `cli`); `sessions_list`,
   `session_show` e `session_delete` sem `user_id` olham as conversas de todos, e `sessions_list`
-  pagina (`page`, com `meta.total_pages`).
+  pagina (`page`, com `meta.total_pages`). `session_show` devolve a
+  [linha do tempo da sessão](integracao.md#linha-do-tempo-da-sessão): por turno os eventos, a fala, os
+  blocos de contexto com `changed`, as tools em `steps`, as fontes e a resposta, paginada por
+  `limit`/`cursor`; `raw=true` devolve os runs crus do Agno. O resumo da sessão e as memórias do
+  contato não vêm nela.
 - **Os testes ficam de fora das listas por padrão.** `runs_list`, `runs_overview` e
   `procedure_funnel` tiram os runs em `dry_run`, para a visão de produção não misturar testes.
   Como o `chat` daqui é `dry_run`, o run que ele acabou de criar se acha por `run_show(run_id)`,

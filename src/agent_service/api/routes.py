@@ -20,13 +20,15 @@ from agno.agent import Agent
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sse_starlette.sse import EventSourceResponse
 
 from agno.run.agent import RunEvent
 
 from agent_service.api import idempotency
+from agent_service.agents import structured_input
 from agent_service.agents.attachments import AttachmentError, AttachmentIn, build_media, describe_attachments
+from agent_service.agents.structured_input import MAX_CONTEXT_BLOCKS, MAX_EVENTS, ContextBlock, InputEvent
 from agent_service.agents.dependency_fields import DependencyValidationError, validate_dependencies
 from agent_service.agents.procedure_runner import (
     ProcedureBusyError,
@@ -113,7 +115,13 @@ async def _idempotent(
         return await handler()
     try:
         key = idempotency.check_key(key)
-        body_hash = idempotency.request_hash(request.model_dump(mode="json"))
+        body = request.model_dump(mode="json")
+        # Campos opcionais que vieram depois (a entrada estruturada): ausentes, ficam fora
+        # do hash, para uma repetição feita através de uma atualização bater com a primeira.
+        for late in ("events", "context"):
+            if late in body and body[late] is None:
+                del body[late]
+        body_hash = idempotency.request_hash(body)
         reservation = await run_in_threadpool(idempotency.reserve, endpoint, request.agent_type, key, body_hash)
     except idempotency.IdempotencyError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
@@ -170,7 +178,26 @@ class ChatRequest(BaseModel):
     agent_type: str = "conversational"
     user_id: str
     session_id: str
-    message: str
+    message: str | None = Field(
+        default=None,
+        description="A fala nova do contato. Obrigatória, a não ser que `events` traga ao menos um "
+        "evento role='contact' (aí a fala é o último deles). Com `events`, é o que veio depois deles.",
+    )
+    events: list[InputEvent] | None = Field(
+        default=None,
+        max_length=MAX_EVENTS,
+        description="Entrada estruturada: o que aconteceu desde a última resposta do agente, em ordem "
+        f"(até {MAX_EVENTS}). Cada item: role (contact | human_agent | agent_sent | system), content, at, "
+        "kind (text | document), attachments (só a descrição). Não repita turnos que o agente já viu: o "
+        "histórico da sessão já os traz.",
+    )
+    context: list[ContextBlock] | None = Field(
+        default=None,
+        max_length=MAX_CONTEXT_BLOCKS,
+        description=f"Entrada estruturada: blocos de texto para o modelo ler (até {MAX_CONTEXT_BLOCKS}), "
+        "cada um com key (estável e única), title, content e volatile. Diferente de `dependencies`, que "
+        "são valores tipados para tools e validação.",
+    )
     dependencies: dict[str, Any] | None = None
     """Metadados opcionais (ex: cpf, nome) injetados como contexto estruturado
     no prompt — ver a aba Integração dos agentes no frontend para exemplos."""
@@ -192,6 +219,15 @@ class ChatRequest(BaseModel):
     def _check_metadata(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         _normalize_metadata(value)
         return value
+
+    @model_validator(mode="after")
+    def _check_structure(self) -> "ChatRequest":
+        structured_input.check_structure(self.message, self.events, self.context)
+        return self
+
+    @property
+    def structured(self) -> bool:
+        return structured_input.is_structured(self.events, self.context)
 
 
 class Source(BaseModel):
@@ -251,6 +287,17 @@ def _resolve(request: ChatRequest, endpoint: str) -> tuple[Agent, RunContext]:
         # serviço, não da chamada.
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    if request.structured and (definition.get("kind") or "conversational") == "procedural":
+        # A extração do procedural lê a mensagem procurando os campos que a pessoa
+        # informou: com o contexto junto, pegaria o CPF dos dados do contato como se
+        # ela tivesse dito. Dado conhecido de antemão vai em `dependencies`, que já
+        # preenche as etapas de coleta.
+        raise HTTPException(
+            status_code=422,
+            detail=f"Agente {request.agent_type!r} é procedural e não aceita events nem context: mande a fala "
+            "em message e os dados que você já tem em dependencies.",
+        )
+
     try:
         dependencies = validate_dependencies(definition.get("dependency_fields"), request.dependencies)
     except DependencyValidationError as exc:
@@ -270,7 +317,6 @@ def _resolve(request: ChatRequest, endpoint: str) -> tuple[Agent, RunContext]:
         dry_run=request.dry_run,
         user_id=request.user_id,
         session_id=request.session_id,
-        message=request.message,
         dependencies=dependencies,
         attachments=tuple(describe_attachments(request.attachments)),
         images=tuple(media["images"]),
@@ -278,8 +324,39 @@ def _resolve(request: ChatRequest, endpoint: str) -> tuple[Agent, RunContext]:
         videos=tuple(media["videos"]),
         files=tuple(media["files"]),
         definition=definition,
+        **_input_fields(request),
     )
     return agent, run
+
+
+def _input_fields(request: ChatRequest) -> dict[str, Any]:
+    """`message` do run e as três colunas da entrada estruturada. Só com `message`
+    (o legado), o texto é o que veio, byte a byte, e as colunas ficam nulas — é
+    por elas que se distingue um run estruturado de um antigo."""
+    if not request.structured:
+        return {"message": request.message}
+    return {
+        "message": structured_input.build_model_text(request.message, request.events, request.context),
+        "input_message": structured_input.pure_message(request.message, request.events or []),
+        "input_events": structured_input.events_for_storage(request.message, request.events),
+        "input_context": structured_input.context_for_storage(request.context),
+    }
+
+
+def _check_chat_input(request: ChatRequest) -> None:
+    """O teto de `MAX_INPUT_CHARS` no `/chat`. Na entrada estruturada vale para a soma
+    dos textos (fala, eventos, títulos e blocos) e também no `/chat/stream`."""
+    if not request.structured:
+        _check_input_size(request.message or "", "message")
+        return
+    size = structured_input.text_size(request.message, request.events, request.context)
+    limit = get_settings().max_input_chars
+    if size > limit:
+        raise HTTPException(
+            status_code=422,
+            detail=f"message, events e context somam {size} caracteres e o limite é {limit} "
+            f"(MAX_INPUT_CHARS). Mande só o que mudou desde a última resposta, ou resuma os blocos.",
+        )
 
 
 def _build_media_or_422(attachments: list[AttachmentIn]) -> dict[str, list[Any]]:
@@ -364,7 +441,7 @@ def _check_input_size(text: str, field: str) -> None:
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, idempotency_key: IdempotencyKey = None) -> ChatResponse:
-    _check_input_size(request.message, "message")
+    _check_chat_input(request)
     return await _idempotent("chat", request, idempotency_key, lambda: _chat(request, idempotency_key))
 
 
@@ -569,6 +646,10 @@ async def chat_stream(request: ChatRequest, idempotency_key: IdempotencyKey = No
             status_code=422,
             detail=f"{idempotency.HEADER} não vale no /chat/stream: use o /chat para uma chamada que pode ser repetida.",
         )
+    if request.structured:
+        # Só na entrada estruturada: o legado do stream nunca teve o teto, e passar a
+        # recusar quem já chama mudaria o contrato.
+        _check_chat_input(request)
     agent, run = await run_in_threadpool(_resolve, request, "chat.stream")
     trace_id = run.trace_id
 

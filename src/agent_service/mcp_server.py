@@ -1210,13 +1210,19 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         raw: Annotated[
             bool, Field(description="O RunOutput cru do Agno (prompt, mensagens, tools e métricas de cada run).")
         ] = False,
+        limit: Annotated[int, Field(ge=1, le=200, description="Turnos por página.")] = 100,
+        cursor: Annotated[str | None, Field(description="O `next_cursor` da página anterior.")] = None,
     ) -> dict[str, Any]:
-        """Transcrição de uma conversa, compacta: por turno a fala do contato, o contexto
-        só quando mudou, cada tool numa linha e a resposta; mais o resumo da sessão e as
-        memórias do contato. `raw=true` devolve os runs crus do Agno."""
+        """A linha do tempo de uma conversa, um turno por run: os eventos e a fala nova
+        (`events`, `message`), os blocos de contexto com `changed` (e `previous_content`
+        quando mudou), cada tool em `steps` (ok, side_effect, prévia do resultado), as
+        fontes e a resposta; no topo, agentes, início, fim, turnos, tokens e custo. Turno
+        sem entrada estruturada vem com `structured: false` e o texto em `raw_input`.
+        Pagina com `next_cursor`. `raw=true` devolve os runs crus do Agno."""
         if raw:
             return _fit({"items": _call(client.session_runs, session_id, user_id)})
-        return _fit(_call(client.session_transcript, session_id, user_id), paginated=True)
+        timeline = _call(client.session_timeline, session_id, user_id, limit=limit, cursor=cursor)
+        return _fit(timeline, paginated=True)
 
     def _confirm_delete_session(session_id: str, ctx: Context) -> Elicit[Confirmacao]:
         return _ask(ctx, f"kuro sessions delete {session_id} --yes", f"Apagar a conversa {session_id!r}? Não tem volta (o registro em runs continua).")
