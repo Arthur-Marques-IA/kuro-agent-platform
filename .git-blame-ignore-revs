@@ -1,0 +1,9 @@
+# Commits que o `git blame` deve pular: só mudam formatação, não autoria.
+# Para usar localmente (uma vez por clone):
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# O GitHub lê este arquivo sozinho na visão de blame.
+# Se um commit daqui for regerado (ex.: a formatação em massa refeita depois de
+# integrar outras branches), troque o hash pelo do commit novo.
+
+# Formatação em massa: uv run ruff format (ruff 0.17.4, line-length = 120)
+8af25db688f6c85efe8686f2a1a5fe6b5807c0ca
