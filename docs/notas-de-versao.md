@@ -400,6 +400,11 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   incompatíveis** quando o serviço está abaixo da versão mínima que o console exige
   (`MIN_SERVICE_VERSION`, hoje `0.2.0`) ou não informa a versão. O `GET /api/health` do console
   passa a devolver `version` junto do `status`.
+- **Console: a saída de um analista campo a campo.** Na tela **Análise**, "Campos que este agente
+  devolve" vira uma tabela (nome, tipo, obrigatório, descrição, com `object` e `array` indentados e
+  os valores do `enum`), e o resultado aparece como rótulo → valor. Na Análise e na tela do run,
+  um valor de campo com `enum` aparece como selo, em alerta se estiver fora dos permitidos; o JSON
+  cru fica atrás do botão **JSON**, com copiar. Ver [console](console.md#a-tela-da-execução).
 
 ### Corrigido
 

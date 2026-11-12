@@ -3,7 +3,7 @@
 | Página | O que tem |
 |---|---|
 | **Playground** `/chat` | conversa em streaming com qualquer agente conversacional; URL por conversa, histórico reidratado; edição de `dependencies`; anexos; 👍/👎 — e o 👎 pergunta o que mudar e ensina o agente |
-| **Análise** `/analyze` | roda um agente analista: documento (ou anexo) entra, o objeto do `response_schema` sai |
+| **Análise** `/analyze` | roda um agente analista: documento (ou anexo) entra, o objeto do `response_schema` sai, campo a campo (rótulo → valor, `enum` em selo; o JSON cru no botão **JSON**); os campos que o agente devolve aparecem numa tabela (tipo, obrigatório, descrição, valores permitidos) |
 | **Agentes** `/agents` | configuração (só os campos alterados vão no `PUT`), tipo do agente, parâmetros de geração e tempo limite, editor da saída estruturada com valores permitidos (`enum`); **Versões** (configuração inteira e prompt com diff) e **Promover**; **Aprendizado** (as regras vindas de feedback, editáveis, com histórico e rollback); execuções, com a concordância do shadow nos analistas; conversas e a aba Integração com o contrato vindo do backend |
 | **Tools** `/tools` | lista agrupada por integração (prefixo do nome ou host da API; as de sistema recolhidas no fim), filtros em chip (tipo, efeito colateral, não classificada, desligada, sem agente), por linha a 1ª frase da descrição, método e host e os agentes que usam, e um detalhe com descrição inteira, URL e parâmetros; ligar/desligar pelo menu; criação e edição dos três tipos, com formulário próprio por tipo, campos de dentro de parâmetros `object`/`array`, botão **Testar** (com `dependencies`) e origem de cada parâmetro |
 | **Conhecimento** `/knowledge` | documentos com status, escolha do embedder na criação, texto, arquivo ou site em qualquer coleção (sites com progresso, páginas e ressincronização), teste de busca semântica com score e origem |
@@ -81,7 +81,8 @@ ela se adapta ao tipo de run:
 - **Analista (`/analyze`)**: a **Entrada** é o `document`, com as quebras de linha preservadas, e a
   **Saída** é a árvore dos campos do `result` (objetos e arrays aninhados, na ordem e com os rótulos
   do `response_schema`; o caminho de cada campo, como `parcelas[0].valor`, aparece ao passar o mouse
-  e é o mesmo do `kuro eval`). O título é o agente e a `fase` da metadata, não o documento.
+  e é o mesmo do `kuro eval`). Um campo com `enum` aparece como selo, em alerta quando o valor está
+  fora dos permitidos; o botão **JSON** mostra a saída crua. O título é o agente e a `fase` da metadata, não o documento.
 - **Procedural**: **Procedimento neste turno** mostra a etapa em que o turno terminou, o que já foi
   coletado, o que falta, os valores recusados e as ações — o estado daquele turno, não o atual.
   Runs gravados antes desta versão não têm o quadro.

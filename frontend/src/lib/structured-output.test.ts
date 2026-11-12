@@ -52,6 +52,54 @@ describe("outputTree", () => {
   });
 });
 
+describe("outputTree com enum", () => {
+  const schema: SchemaField[] = [
+    { name: "acao", type: "string", enum: ["pagar", "negar"] },
+    { name: "nivel", type: "integer", enum: [1, 2, 3] },
+    { name: "livre", type: "string" },
+    { name: "tags", type: "array", items: { type: "string", enum: ["a", "b"] } },
+    { name: "cliente", type: "object", fields: [{ name: "perfil", type: "string", enum: ["pf", "pj"] }] },
+    {
+      name: "parcelas",
+      type: "array",
+      items: { type: "object", fields: [{ name: "status", type: "string", enum: ["aberta", "paga"] }] },
+    },
+  ];
+
+  it("marca as folhas com valores permitidos e se o valor está entre eles", () => {
+    const tree = outputTree(
+      {
+        acao: "pagar",
+        nivel: 2,
+        livre: "x",
+        tags: ["a", "z"],
+        cliente: { perfil: "pj" },
+        parcelas: [{ status: "paga" }],
+      },
+      schema
+    );
+    const [acao, nivel, livre, tags, cliente, parcelas] = tree;
+    assert.deepEqual(acao.enum, ["pagar", "negar"]);
+    assert.equal(acao.enumMatch, true);
+    assert.equal(nivel.enumMatch, true);
+    assert.equal(livre.enum, undefined);
+    assert.equal(livre.enumMatch, undefined);
+    // O enum do item de um array de escalares vale para cada elemento.
+    assert.deepEqual(tags.children?.map((n) => [n.path, n.label, n.enumMatch]), [
+      ["tags[0]", "[0]", true],
+      ["tags[1]", "[1]", false],
+    ]);
+    assert.equal(cliente.children?.[0].enumMatch, true);
+    assert.deepEqual(parcelas.children?.[0].children?.[0].enum, ["aberta", "paga"]);
+    assert.equal(parcelas.children?.[0].children?.[0].enumMatch, true);
+  });
+
+  it("nulo não está entre os permitidos", () => {
+    const [acao] = outputTree({ acao: null }, schema);
+    assert.equal(acao.enumMatch, false);
+  });
+});
+
 describe("displayValue", () => {
   it("mostra nulo e booleano de forma legível", () => {
     assert.equal(displayValue(null), "—");
