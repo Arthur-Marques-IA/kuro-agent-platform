@@ -135,5 +135,25 @@ Tema claro, escuro ou do sistema.
 
 O navegador só fala com o Next.js. Os Route Handlers em `frontend/src/app/api/**`
 fazem proxy para o `agent-service` usando `AGENT_SERVICE_URL`, que só existe no
-servidor: sem CORS e sem expor o backend. Não há login no MVP: o `user_id` do
+servidor: sem CORS e sem expor o backend. O console não tem login próprio: o `user_id` do
 console fica no `localStorage` do navegador.
+
+### Login (basic_auth no profile `tls`)
+
+Como o servidor do console chama a API com a chave admin, quem abre o console tem acesso total.
+Na máquina local isso não muda nada: o console fica em `127.0.0.1:3000`. Publicado pelo profile
+`tls` (`KURO_CONSOLE_DOMAIN`), o Caddy pede usuário e senha antes de qualquer página ou rota
+`/api/**` do console, e se recusa a subir sem eles:
+
+```bash
+docker run --rm caddy:2-alpine caddy hash-password --plaintext 'uma-senha-forte'
+# no .env, o hash entre aspas simples (o $ do bcrypt não pode ser interpolado):
+#   CONSOLE_BASIC_AUTH_USER=admin
+#   CONSOLE_BASIC_AUTH_HASH='$2a$14$...'
+docker compose --profile ui --profile tls up -d
+```
+
+Sem as duas variáveis, o Caddy não publica nada e diz o que falta em
+`docker compose --profile tls logs caddy`. A API (`/chat`, `/analyze`, `/mcp`, `/health`) não
+passa por esse login: ela continua com a chave dela. Detalhes, inclusive o cuidado com o `$` do
+hash, em [Login do console](operacao.md#login-do-console-basic_auth).
