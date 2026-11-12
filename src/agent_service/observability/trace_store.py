@@ -36,7 +36,13 @@ RagFilter = Literal["searched", "empty", "flagged"]
 _LEVEL_BY_STATUS: dict[RunStatus, str] = {"success": "DEFAULT", "error": "ERROR", "interrupted": "WARNING"}
 _STATUS_BY_LEVEL: dict[str, RunStatus] = {"ERROR": "error", "WARNING": "interrupted"}
 # Metadata que o OpenTelemetry/Langfuse anexam a todo span — ruído para quem lê o trace.
-_NOISY_METADATA_PREFIXES = ("resourceAttributes.", "scope.", "attributes.langfuse.", "attributes.session.", "attributes.user.")
+_NOISY_METADATA_PREFIXES = (
+    "resourceAttributes.",
+    "scope.",
+    "attributes.langfuse.",
+    "attributes.session.",
+    "attributes.user.",
+)
 _OBSERVATIONS_PAGE = 1000
 _SCORES_PAGE = 100
 _MAX_SCORE_PAGES = 5
@@ -325,9 +331,18 @@ def _root_filters(query: RunQuery) -> list[dict[str, Any]]:
     if len(query.agent_types) == 1:
         filters.append({"type": "string", "column": "traceName", "operator": "=", "value": query.agent_types[0]})
     elif query.agent_types:
-        filters.append({"type": "stringOptions", "column": "traceName", "operator": "any of", "value": list(query.agent_types)})
+        filters.append(
+            {"type": "stringOptions", "column": "traceName", "operator": "any of", "value": list(query.agent_types)}
+        )
     if query.prompt_version is not None:
-        filters.append({"type": "string", "column": "version", "operator": "=", "value": f"{_VERSION_PREFIX}{query.prompt_version}"})
+        filters.append(
+            {
+                "type": "string",
+                "column": "version",
+                "operator": "=",
+                "value": f"{_VERSION_PREFIX}{query.prompt_version}",
+            }
+        )
     if query.status:
         filters.append({"type": "string", "column": "level", "operator": "=", "value": _LEVEL_BY_STATUS[query.status]})
     levels = [_LEVEL_BY_STATUS[status] for status in query.statuses]
@@ -376,7 +391,9 @@ class LangfuseTraceStore:
             raise TraceStoreError(f"Langfuse respondeu {response.status_code}: {response.text[:300]}")
         return response.json()
 
-    def _observations(self, filters: list[dict[str, Any]], *, fields: str, limit: int, cursor: str | None = None) -> dict[str, Any]:
+    def _observations(
+        self, filters: list[dict[str, Any]], *, fields: str, limit: int, cursor: str | None = None
+    ) -> dict[str, Any]:
         # `filter` tem precedência sobre os filtros por query param — tudo vai nele.
         return self._get(
             "/api/public/v2/observations",
@@ -411,9 +428,13 @@ class LangfuseTraceStore:
     def _scope_filters(self, tenant_id: str | None) -> list[dict[str, Any]]:
         filters: list[dict[str, Any]] = []
         if self._environment:
-            filters.append({"type": "stringOptions", "column": "environment", "operator": "any of", "value": [self._environment]})
+            filters.append(
+                {"type": "stringOptions", "column": "environment", "operator": "any of", "value": [self._environment]}
+            )
         if tenant_id:
-            filters.append({"type": "stringObject", "column": "metadata", "key": "tenant_id", "operator": "=", "value": tenant_id})
+            filters.append(
+                {"type": "stringObject", "column": "metadata", "key": "tenant_id", "operator": "=", "value": tenant_id}
+            )
         return filters
 
     # -- TraceStore --------------------------------------------------------
@@ -496,7 +517,9 @@ class LangfuseTraceStore:
 
         page = self._observations(filters, fields="basic,metadata,metrics", limit=_AGGREGATE_SCAN_LIMIT)
         data = page.get("data", [])
-        roots = [r for r in data if (r.get("metadata") or {}).get("run_id") and (not include_session or r.get("sessionId"))]
+        roots = [
+            r for r in data if (r.get("metadata") or {}).get("run_id") and (not include_session or r.get("sessionId"))
+        ]
         return roots, len(data)
 
     def _usage_by_trace(self, trace_ids: list[str]) -> dict[str, "_Usage"]:

@@ -172,7 +172,7 @@ def test_chave_trocada_devolve_erro_claro_sem_chamar_nem_vazar(tool_cifrada, red
     assert out["ok"] is False
     assert out["failure"] == "config"
     assert "CREDENTIALS_ENCRYPTION_KEY" in out["result"]
-    assert PREFIX not in out["result"] and cifrado[len(PREFIX):] not in out["result"]
+    assert PREFIX not in out["result"] and cifrado[len(PREFIX) :] not in out["result"]
     assert rede == []  # o destino não recebeu o cifrado como token
 
     # A leitura pela API não quebra e não mostra o cifrado.
@@ -229,7 +229,9 @@ def _banco_com_tool_legada(tmp_path) -> sa.Engine:
 
 def _config_de(engine: sa.Engine, nome: str = "velha") -> dict:
     with engine.connect() as conn:
-        raw = conn.execute(sa.text("SELECT config FROM tool_definitions WHERE tool_name = :n"), {"n": nome}).scalar_one()
+        raw = conn.execute(
+            sa.text("SELECT config FROM tool_definitions WHERE tool_name = :n"), {"n": nome}
+        ).scalar_one()
     return json.loads(raw)
 
 
@@ -241,7 +243,7 @@ def test_migracao_cifra_o_existente_e_o_downgrade_decifra(tmp_path):
     assert config["auth"]["token"].startswith(PREFIX)
     assert config["headers"]["X-Api-Key"].startswith(PREFIX)
     assert config["headers"]["Accept"] == "application/json"
-    assert crypto.decrypt_secret(config["auth"]["token"][len(PREFIX):]) == "segredo-real-123"
+    assert crypto.decrypt_secret(config["auth"]["token"][len(PREFIX) :]) == "segredo-real-123"
     assert _config_de(engine, "calc") == {"builtin_id": "calculator", "params": {}}
 
     _migrar(engine, "head")  # idempotente: não cifra de novo

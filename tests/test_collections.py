@@ -101,7 +101,9 @@ def test_unknown_collection_is_rejected_on_create_and_update(manuais):
             update_agent("agente_rag", AgentDefinitionUpdate(knowledge_collection="nao-existe"))
         assert exc.value.status_code == 422
         # E dá para desligar a base voltando o campo para None.
-        assert update_agent("agente_rag", AgentDefinitionUpdate(knowledge_collection=None))["knowledge_collection"] is None
+        assert (
+            update_agent("agente_rag", AgentDefinitionUpdate(knowledge_collection=None))["knowledge_collection"] is None
+        )
     finally:
         delete_agent("agente_rag")
 

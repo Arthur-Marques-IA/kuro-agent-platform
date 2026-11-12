@@ -55,9 +55,7 @@ class RateLimiter:
     """Janela deslizante: guarda o instante de cada chamada aceita, por chave, e
     descarta os que já saíram da janela. `clock` é injetável para os testes."""
 
-    def __init__(
-        self, limit: int, window: float = WINDOW_SECONDS, clock: Callable[[], float] = time.monotonic
-    ) -> None:
+    def __init__(self, limit: int, window: float = WINDOW_SECONDS, clock: Callable[[], float] = time.monotonic) -> None:
         self.limit = limit
         self.window = window
         self.clock = clock

@@ -102,7 +102,9 @@ def test_each_procedural_turn_records_its_own_state(procedural_agent, monkeypatc
     session = f"s-{uuid4().hex[:6]}"
 
     def turn(message):
-        return asyncio.run(chat(ChatRequest(agent_type=procedural_agent, user_id="u", session_id=session, message=message)))
+        return asyncio.run(
+            chat(ChatRequest(agent_type=procedural_agent, user_id="u", session_id=session, message=message))
+        )
 
     first, second, third = turn("sou a Ana"), turn("cpf 123"), turn("cpf 12345678901")
 

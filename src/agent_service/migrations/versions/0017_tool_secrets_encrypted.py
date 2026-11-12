@@ -117,7 +117,7 @@ def downgrade() -> None:
         for d, k in _slots(config):
             if d[k].startswith(_PREFIX):
                 try:
-                    d[k] = fernet.decrypt(d[k][len(_PREFIX):].encode()).decode()
+                    d[k] = fernet.decrypt(d[k][len(_PREFIX) :].encode()).decode()
                 except InvalidToken as exc:
                     raise RuntimeError(
                         f"Tool {row.tool_name!r}: segredo cifrado com outra CREDENTIALS_ENCRYPTION_KEY."

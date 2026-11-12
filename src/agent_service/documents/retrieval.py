@@ -26,7 +26,17 @@ logger = logging.getLogger(__name__)
 
 SEARCH_TOOL = "search_knowledge_base"
 
-SNIPPET_META = ("chunk", "chunk_size", "page", "section", "source_type", "source_url", "page_title", "crawled_at", "document_revision")
+SNIPPET_META = (
+    "chunk",
+    "chunk_size",
+    "page",
+    "section",
+    "source_type",
+    "source_url",
+    "page_title",
+    "crawled_at",
+    "document_revision",
+)
 """Campos do `meta_data` do trecho que vão para a referência (o resto é ruído de ingestão)."""
 
 _searches: ContextVar[list[dict[str, Any]] | None] = ContextVar("knowledge_searches", default=None)
@@ -121,7 +131,9 @@ def make_retriever(
     aguarda o que voltar; num `run` síncrono, não. Por isso o retriever devolve a
     corrotina quando há event loop nesta thread e roda ela até o fim quando não há."""
 
-    async def aretrieve(query: str, num_documents: int | None, filters: Any, run_context: Any) -> list[dict[str, Any]] | None:
+    async def aretrieve(
+        query: str, num_documents: int | None, filters: Any, run_context: Any
+    ) -> list[dict[str, Any]] | None:
         user_id = getattr(run_context, "user_id", None)
         current, config, version = knowledge, None, None
         if resolve is not None:

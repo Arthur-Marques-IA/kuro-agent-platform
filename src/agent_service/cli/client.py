@@ -140,7 +140,9 @@ class Client:
 
     def update_agent(self, agent_type: str, changes: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
         """PUT parcial: só as chaves enviadas mudam (a API usa `exclude_unset`)."""
-        return self._request("PUT", f"/agents/{agent_type}", json=changes, params={"dry_run": "true"} if dry_run else None)
+        return self._request(
+            "PUT", f"/agents/{agent_type}", json=changes, params={"dry_run": "true"} if dry_run else None
+        )
 
     def delete_agent(self, agent_type: str) -> None:
         self._request("DELETE", f"/agents/{agent_type}")
@@ -202,7 +204,9 @@ class Client:
         `run`, `message`, `usage`, `error` e `done`."""
         self._check_ca()
         try:
-            with self._http.stream("POST", "/chat/stream", json=body, timeout=httpx.Timeout(10.0, read=None)) as response:
+            with self._http.stream(
+                "POST", "/chat/stream", json=body, timeout=httpx.Timeout(10.0, read=None)
+            ) as response:
                 if response.status_code >= 400:
                     response.read()
                     raise ApiError(response.status_code, _detail(response))
@@ -393,7 +397,9 @@ class Client:
         return self._request("POST", "/observability/references", json=body)
 
     def agreement(self, **params: Any) -> dict[str, Any]:
-        return self._request("GET", "/observability/agreement", params={k: v for k, v in params.items() if v is not None})
+        return self._request(
+            "GET", "/observability/agreement", params={k: v for k, v in params.items() if v is not None}
+        )
 
     def export_cases(self, **params: Any) -> list[dict[str, Any]]:
         return self._request("GET", "/observability/export", params={k: v for k, v in params.items() if v is not None})
@@ -401,7 +407,9 @@ class Client:
     def overview(self, **params: Any) -> dict[str, Any]:
         """Panorama do dashboard: totais × período anterior, série, agentes, versões
         e tools falhando. Exige escopo admin."""
-        return self._request("GET", "/observability/overview", params={k: v for k, v in params.items() if v is not None})
+        return self._request(
+            "GET", "/observability/overview", params={k: v for k, v in params.items() if v is not None}
+        )
 
     def run_trace(self, run_id: str) -> dict[str, Any]:
         return self._request("GET", f"/observability/runs/{run_id}/trace")
@@ -429,7 +437,9 @@ class Client:
         return self._request("POST", "/observability/chunk-feedback", json=body)
 
     def list_chunk_feedback(self, **params: Any) -> list[dict[str, Any]]:
-        return self._request("GET", "/observability/chunk-feedback", params={k: v for k, v in params.items() if v is not None})
+        return self._request(
+            "GET", "/observability/chunk-feedback", params={k: v for k, v in params.items() if v is not None}
+        )
 
     def delete_chunk_feedback(self, feedback_id: str) -> None:
         self._request("DELETE", f"/observability/chunk-feedback/{feedback_id}")

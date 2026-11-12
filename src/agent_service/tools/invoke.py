@@ -86,7 +86,13 @@ async def invoke_tool(
     except ToolUnavailableError:
         raise
     except Exception as exc:  # noqa: BLE001 - erro de execução da tool, não de quem chamou
-        return {"ok": False, "result": None, "error": f"{type(exc).__name__}: {exc}", "failure": "exception", "http_status": None}
+        return {
+            "ok": False,
+            "result": None,
+            "error": f"{type(exc).__name__}: {exc}",
+            "failure": "exception",
+            "http_status": None,
+        }
 
     # A tool de API devolve o erro como texto: sem isto, um HTTP 500 aparecia como "Sucesso".
     failed = failures.lookup_failure(tool_name, result)

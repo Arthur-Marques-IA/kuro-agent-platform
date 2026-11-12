@@ -227,7 +227,15 @@ def check_ssh(ssh: Ssh, runner: Runner) -> None:
     # `accept-new` só neste teste: o primeiro acesso grava a chave do host (como o `ssh`
     # interativo perguntaria), e uma chave diferente da gravada continua sendo recusada.
     first = runner(
-        [*ssh.base()[:-1], "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=15", ssh.destination, "true"],
+        [
+            *ssh.base()[:-1],
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "ConnectTimeout=15",
+            ssh.destination,
+            "true",
+        ],
         None,
         30,
     )
@@ -242,14 +250,18 @@ def check_ssh(ssh: Ssh, runner: Runner) -> None:
             f"reinstalado, confira e rode `ssh-keygen -R <host>`; senão, não continue. ({err})",
             code=EXIT_UNAVAILABLE,
         )
-    raise StepFailed(f"não consegui entrar por SSH em {ssh.destination}: {err or f'saída {first.code}'}", EXIT_UNAVAILABLE)
+    raise StepFailed(
+        f"não consegui entrar por SSH em {ssh.destination}: {err or f'saída {first.code}'}", EXIT_UNAVAILABLE
+    )
 
 
 def find_container(ssh: Ssh, runner: Runner, wanted: str | None) -> str:
     if wanted:
         return wanted
     found = runner(
-        ssh.remote("docker", "ps", "--filter", f"label=com.docker.compose.service={COMPOSE_SERVICE}", "--format", "{{.Names}}"),
+        ssh.remote(
+            "docker", "ps", "--filter", f"label=com.docker.compose.service={COMPOSE_SERVICE}", "--format", "{{.Names}}"
+        ),
         None,
         30,
     )
@@ -305,8 +317,20 @@ PROTOCOL_VERSION = "2025-06-18"
 # parte do mesmo mínimo, para o que faltar aqui faltar também no cliente — foi assim que se achou
 # o PROGRAMDATA do ssh do Windows.
 INHERITED_ENV = (
-    ("APPDATA", "HOMEDRIVE", "HOMEPATH", "LOCALAPPDATA", "PATH", "PATHEXT", "PROCESSOR_ARCHITECTURE",
-     "SYSTEMDRIVE", "SYSTEMROOT", "TEMP", "USERNAME", "USERPROFILE")
+    (
+        "APPDATA",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LOCALAPPDATA",
+        "PATH",
+        "PATHEXT",
+        "PROCESSOR_ARCHITECTURE",
+        "SYSTEMDRIVE",
+        "SYSTEMROOT",
+        "TEMP",
+        "USERNAME",
+        "USERPROFILE",
+    )
     if sys.platform == "win32"
     else ("HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER")
 )
@@ -375,10 +399,18 @@ def probe(command: list[str], env: dict[str, str], timeout: float = 90) -> dict[
                 send({"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32601, "message": "não suportado"}})
 
     try:
-        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-            "clientInfo": {"name": "kuro-connect", "version": "1"},
-        }})
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {"name": "kuro-connect", "version": "1"},
+                },
+            }
+        )
         init = answer(1)
         if "error" in init:
             raise StepFailed(f"o MCP recusou a conexão: {init['error'].get('message')}")
@@ -453,10 +485,10 @@ def read_json_config(path: Path, key: str, name: str, entry: dict[str, Any]) -> 
     except ValueError as exc:
         raise StepFailed(
             f"{path} não é JSON puro (tem comentário ou vírgula sobrando?), e eu não reescrevo o arquivo para "
-            f"não perder nada. Ponha à mão, em \"{key}\": \"{name}\": {json.dumps(entry, ensure_ascii=False)}"
+            f'não perder nada. Ponha à mão, em "{key}": "{name}": {json.dumps(entry, ensure_ascii=False)}'
         ) from exc
     if not isinstance(data, dict) or not isinstance(data.get(key, {}), dict):
-        raise StepFailed(f"{path} não tem o formato esperado (um objeto com \"{key}\"): não mexi nele")
+        raise StepFailed(f'{path} não tem o formato esperado (um objeto com "{key}"): não mexi nele')
     return data
 
 
@@ -530,7 +562,9 @@ class ClaudeCode(ClientApp):
             if removed.code != 0:
                 removed = runner([claude, "mcp", "remove", name], None, 30)
             if removed.code != 0:
-                raise StepFailed(f"não consegui remover o registro antigo de {name!r}: {removed.err.strip() or removed.out.strip()}")
+                raise StepFailed(
+                    f"não consegui remover o registro antigo de {name!r}: {removed.err.strip() or removed.out.strip()}"
+                )
         env_flags = [flag for key, value in env.items() for flag in ("--env", f"{key}={value}")]
         added = runner([claude, "mcp", "add", name, "-s", self.scope, *env_flags, "--", *command], None, 30)
         if added.code != 0:
@@ -583,12 +617,19 @@ def client_apps(scope: str = "user") -> list[ClientApp]:
     return [
         ClaudeCode("claude-code", "Claude Code", "abra uma sessão nova (numa já aberta, `/mcp`)", scope=scope),
         JsonFileClient(
-            "claude-desktop", "Claude Desktop", "feche o Claude Desktop por completo (inclusive da bandeja) e abra de novo",
-            path=desktop / "claude_desktop_config.json", marker=desktop,
+            "claude-desktop",
+            "Claude Desktop",
+            "feche o Claude Desktop por completo (inclusive da bandeja) e abra de novo",
+            path=desktop / "claude_desktop_config.json",
+            marker=desktop,
         ),
         JsonFileClient("cursor", "Cursor", "reinicie o Cursor", path=cursor / "mcp.json", marker=cursor),
-        VsCode("vscode", "VS Code", "no VS Code, Command Palette → `MCP: List Servers` → kuro → Start",
-               path=_config_dir("Code") / "User" / "mcp.json"),
+        VsCode(
+            "vscode",
+            "VS Code",
+            "no VS Code, Command Palette → `MCP: List Servers` → kuro → Start",
+            path=_config_dir("Code") / "User" / "mcp.json",
+        ),
     ]
 
 
@@ -635,7 +676,8 @@ def install_key(ssh: Ssh, ui: Ui, passphrase: bool = False) -> None:
             raise StepFailed("o ssh-keygen falhou")
         if passphrase and subprocess.run(["ssh-add", str(key)]).returncode != 0:
             raise StepFailed(
-                f"a chave {key} foi criada, mas não consegui carregá-la no ssh-agent. " + AGENT_HELP.format(key=key)
+                f"a chave {key} foi criada, mas não consegui carregá-la no ssh-agent. "
+                + AGENT_HELP.format(key=key)
                 + " Depois, rode o kuro connect de novo."
             )
         pub = key.with_suffix(".pub")
@@ -714,7 +756,9 @@ def connect(opts: Options, ui: Ui, runner: Runner | None = None) -> dict[str, An
                     EXIT_UNAVAILABLE,
                 ) from exc
             if not ui.confirm(f"O SSH em {opts.destination} pede senha. Instalar uma chave SSH para entrar sem senha?"):
-                raise StepFailed("sem chave SSH o cliente MCP não consegue entrar no servidor", EXIT_UNAVAILABLE) from exc
+                raise StepFailed(
+                    "sem chave SSH o cliente MCP não consegue entrar no servidor", EXIT_UNAVAILABLE
+                ) from exc
             install_key(ssh, ui, opts.passphrase)
             check_ssh(ssh, runner)
         done(f"SSH em {opts.destination} sem senha")
@@ -746,9 +790,11 @@ def connect(opts: Options, ui: Ui, runner: Runner | None = None) -> dict[str, An
         if opts.print_only:
             return report
 
-        apps = [a for a in client_apps(opts.scope) if a.key in opts.clients] if opts.clients else [
-            a for a in client_apps(opts.scope) if a.present()
-        ]
+        apps = (
+            [a for a in client_apps(opts.scope) if a.key in opts.clients]
+            if opts.clients
+            else [a for a in client_apps(opts.scope) if a.present()]
+        )
         missing = [a.label for a in apps if opts.clients and not a.present()]
         if missing:
             raise StepFailed(f"não achei nesta máquina: {', '.join(missing)}", EXIT_USAGE)
@@ -768,7 +814,9 @@ def connect(opts: Options, ui: Ui, runner: Runner | None = None) -> dict[str, An
             if to_replace:
                 question += f" (troca o {opts.name!r} que já existe em {replacing})"
             if not ui.confirm(question):
-                raise StepFailed("nada registrado (escolha os clientes com --client, ou outro nome com --name)", EXIT_USAGE)
+                raise StepFailed(
+                    "nada registrado (escolha os clientes com --client, ou outro nome com --name)", EXIT_USAGE
+                )
         for app in apps:
             app.add(opts.name, command, env, runner, existing[app.key])
             report["registered"].append(app.key)
@@ -792,9 +840,14 @@ def summary(report: dict[str, Any], name: str, print_only: bool) -> list[tuple[s
         out.append(("title", "\nPronto. Para ativar:"))
         for key in report["registered"]:
             out.append(("", f"  • {labels[key]}: {report['activate'][key]}."))
-        out.append(("", f"Depois, peça ao assistente: \"use a tool health do {name}\"."))
+        out.append(("", f'Depois, peça ao assistente: "use a tool health do {name}".'))
     elif not print_only:
-        out.append(("warn", "Não achei nenhum cliente MCP nesta máquina (Claude Code, Claude Desktop, Cursor, VS Code); nada foi registrado."))
+        out.append(
+            (
+                "warn",
+                "Não achei nenhum cliente MCP nesta máquina (Claude Code, Claude Desktop, Cursor, VS Code); nada foi registrado.",
+            )
+        )
     out.append(("title", "\nPara outro cliente MCP, o .mcp.json:"))
     out.append(("code", json.dumps(report["mcp_json"], ensure_ascii=False, indent=2)))
     out.append(("title", "\nCodex:"))
@@ -811,16 +864,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("destination", help="o servidor, como no ssh: usuario@host ou um alias do ~/.ssh/config")
     parser.add_argument("-p", "--port", type=int, help="porta do SSH (padrão: 22 ou a do ~/.ssh/config)")
     parser.add_argument("-i", "--identity", help="arquivo da chave SSH")
-    parser.add_argument("-o", "--ssh-option", action="append", default=[], help="opção extra do ssh, como em `ssh -o` (repetível)")
+    parser.add_argument(
+        "-o", "--ssh-option", action="append", default=[], help="opção extra do ssh, como em `ssh -o` (repetível)"
+    )
     parser.add_argument("--container", help="container do agent-service (padrão: o único rodando)")
     parser.add_argument("--name", default="kuro", help="nome do servidor MCP nos clientes (padrão: kuro)")
-    parser.add_argument("-s", "--scope", default="user", choices=("user", "project", "local"), help="escopo no Claude Code")
-    parser.add_argument("--client", action="append", default=[], choices=CLIENT_KEYS,
-                        help="registra só neste cliente (repetível; padrão: todos os instalados)")
-    parser.add_argument("--print", dest="print_only", action="store_true", help="não registra: só testa e mostra a configuração")
+    parser.add_argument(
+        "-s", "--scope", default="user", choices=("user", "project", "local"), help="escopo no Claude Code"
+    )
+    parser.add_argument(
+        "--client",
+        action="append",
+        default=[],
+        choices=CLIENT_KEYS,
+        help="registra só neste cliente (repetível; padrão: todos os instalados)",
+    )
+    parser.add_argument(
+        "--print", dest="print_only", action="store_true", help="não registra: só testa e mostra a configuração"
+    )
     parser.add_argument("-y", "--yes", action="store_true", help="troca um registro com o mesmo nome sem perguntar")
-    parser.add_argument("--passphrase", action="store_true",
-                        help="se precisar criar a chave SSH, cria com senha de proteção e a carrega no ssh-agent")
+    parser.add_argument(
+        "--passphrase",
+        action="store_true",
+        help="se precisar criar a chave SSH, cria com senha de proteção e a carrega no ssh-agent",
+    )
     parser.add_argument("--json", action="store_true", help="saída em JSON (erros em JSON no stderr)")
     parser.add_argument("--no-input", action="store_true", help="nunca pergunta nada")
     args = parser.parse_args(argv)
@@ -829,8 +896,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8")
     interactive = not args.json and not args.no_input and sys.stdin.isatty() and sys.stdout.isatty()
     opts = Options(
-        args.destination, args.port, args.identity, args.ssh_option, args.container, args.name, args.scope,
-        args.client, args.print_only, args.yes, args.passphrase,
+        args.destination,
+        args.port,
+        args.identity,
+        args.ssh_option,
+        args.container,
+        args.name,
+        args.scope,
+        args.client,
+        args.print_only,
+        args.yes,
+        args.passphrase,
     )
     try:
         report = connect(opts, Ui(interactive, quiet=args.json))

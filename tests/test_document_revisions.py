@@ -124,7 +124,10 @@ def test_editar_mantem_o_id_cria_revisao_e_resolve_as_marcacoes_abertas(base):
 
     [marca] = list_chunk_feedback(content_id=content_id)
     assert (marca.status, marca.resolved_in_revision, marca.resolved_by, marca.resolution_note) == (
-        "resolved", 2, "ana", "link saiu"
+        "resolved",
+        2,
+        "ana",
+        "link saiu",
     )
     assert [r.revision for r in list_document_revisions(base.name, content_id)] == [2, 1]
     assert flagged_documents(collection=base.name) == []  # a lista mostra só as abertas
@@ -210,7 +213,12 @@ def test_retest_diz_se_o_documento_volta_na_busca(base):
         patch("agent_service.api.collections_routes.describe_hits", return_value=[hit]),
     ):
         [caso] = asyncio.run(retest_document(base.name, content_id))
-    assert (caso.query, caso.feedback_ids, caso.status, caso.found) == ("presença gravada", [marca.id], "resolved", True)
+    assert (caso.query, caso.feedback_ids, caso.status, caso.found) == (
+        "presença gravada",
+        [marca.id],
+        "resolved",
+        True,
+    )
     assert (caso.hits[0].rank, caso.hits[0].document_revision) == (2, 2)
 
 
@@ -253,8 +261,11 @@ def test_csv_continua_com_o_leitor_do_agno(base):
 def test_documento_sem_texto_guardado_abre_com_o_texto_dos_trechos(base):
     content_id = _add(base, "qualquer")
     with get_db().db_engine.begin() as conn:  # simula um documento de antes do histórico
-        conn.execute(revisions.document_revisions.update().where(
-            revisions.document_revisions.c.content_id == content_id).values(text=None))
+        conn.execute(
+            revisions.document_revisions.update()
+            .where(revisions.document_revisions.c.content_id == content_id)
+            .values(text=None)
+        )
     trechos = [("Página um.", {"page": 1, "chunk": 1}), ("Página dois.", {"page": 2, "chunk": 2})]
     with patch.object(collections, "_indexed_chunks", return_value=trechos):
         revisao = asyncio.run(get_document_revision(base.name, content_id, 1))
@@ -270,7 +281,11 @@ def test_reindex_recorta_mantendo_id_paginas_e_cria_revisao(base):
     with patch.object(collections, "_indexed_chunks", return_value=antigos):
         [item] = asyncio.run(reindex(base.name))
     assert (item.content_id, item.status, item.revision, item.chunks_before, item.chunks_after) == (
-        content_id, "rechunked", 2, 2, 1
+        content_id,
+        "rechunked",
+        2,
+        2,
+        1,
     )
     doc = base.knowledge.contents[content_id]
     [(texto, meta)] = doc.chunks

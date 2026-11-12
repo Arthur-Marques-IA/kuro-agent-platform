@@ -64,7 +64,10 @@ def _app_que_falha(exc: Exception) -> TestClient:
 @pytest.mark.parametrize(
     ("exc", "kind"),
     [
-        (crypto.EncryptionNotConfiguredError("CREDENTIALS_ENCRYPTION_KEY não configurada"), "encryption_not_configured"),
+        (
+            crypto.EncryptionNotConfiguredError("CREDENTIALS_ENCRYPTION_KEY não configurada"),
+            "encryption_not_configured",
+        ),
         (ProviderNotConfiguredError("openai: nenhuma chave"), "model_provider_not_configured"),
     ],
 )

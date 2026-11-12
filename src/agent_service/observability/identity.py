@@ -59,16 +59,12 @@ def _name_line(text: str) -> str | None:
     return None
 
 
-def contact_name(
-    dependencies: dict[str, Any] | None, context: list[dict[str, Any]] | None
-) -> str | None:
+def contact_name(dependencies: dict[str, Any] | None, context: list[dict[str, Any]] | None) -> str | None:
     deps = dependencies if isinstance(dependencies, dict) else {}
     for key in CONTACT_NAME_KEYS:
         if name := _clean(deps.get(key)):
             return name
-    blocks = {
-        b.get("key"): str(b.get("content") or "") for b in context or [] if isinstance(b, dict)
-    }
+    blocks = {b.get("key"): str(b.get("content") or "") for b in context or [] if isinstance(b, dict)}
     for key in CONTACT_NAME_KEYS:
         if key in blocks and (name := _first_line(blocks[key])):
             return name

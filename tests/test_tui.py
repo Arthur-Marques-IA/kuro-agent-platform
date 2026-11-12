@@ -40,10 +40,28 @@ RUN = {
 TRACE = {
     "run": RUN,
     "spans": [
-        {"id": "a", "parent_id": None, "type": "GENERATION", "name": "gemini", "started_at": "1", "level": "DEFAULT",
-         "latency_ms": 900, "input": "x", "output": "y"},
-        {"id": "b", "parent_id": "a", "type": "TOOL", "name": "ficha", "started_at": "2", "level": "ERROR",
-         "status_message": "HTTP 500", "input": {"cpf": "1"}, "output": None},
+        {
+            "id": "a",
+            "parent_id": None,
+            "type": "GENERATION",
+            "name": "gemini",
+            "started_at": "1",
+            "level": "DEFAULT",
+            "latency_ms": 900,
+            "input": "x",
+            "output": "y",
+        },
+        {
+            "id": "b",
+            "parent_id": "a",
+            "type": "TOOL",
+            "name": "ficha",
+            "started_at": "2",
+            "level": "ERROR",
+            "status_message": "HTTP 500",
+            "input": {"cpf": "1"},
+            "output": None,
+        },
     ],
     "scores": [{"name": "eval", "value": 1, "comment": "ok"}],
 }
@@ -62,14 +80,33 @@ STRUCTURED_TRACE = {
     "run": STRUCTURED_RUN,
     "input_events": [{"role": "contact", "content": "cadê meu pedido?", "speech": True}],
     "input_context": [
-        {"key": "cliente", "title": "Ficha do cliente", "content": "Ana, plano fibra 500", "volatile": False,
-         "hash": "a" * 64},
-        {"key": "status_rede", "title": "Status da rede", "content": "[ALERTA] instabilidade no bairro",
-         "volatile": True, "hash": "b" * 64},
+        {
+            "key": "cliente",
+            "title": "Ficha do cliente",
+            "content": "Ana, plano fibra 500",
+            "volatile": False,
+            "hash": "a" * 64,
+        },
+        {
+            "key": "status_rede",
+            "title": "Status da rede",
+            "content": "[ALERTA] instabilidade no bairro",
+            "volatile": True,
+            "hash": "b" * 64,
+        },
     ],
     "spans": [
-        {"id": "a", "parent_id": None, "type": "GENERATION", "name": "gemini", "started_at": "1", "level": "DEFAULT",
-         "latency_ms": 900, "input": LONG_INPUT, "output": {"texto": "ok"}},
+        {
+            "id": "a",
+            "parent_id": None,
+            "type": "GENERATION",
+            "name": "gemini",
+            "started_at": "1",
+            "level": "DEFAULT",
+            "latency_ms": 900,
+            "input": LONG_INPUT,
+            "output": {"texto": "ok"},
+        },
     ],
     "scores": [],
 }
@@ -80,27 +117,71 @@ TIMELINE = {
     "turns": 2,
     "total_tokens": 240,
     "items": [
-        {"run_id": "r0", "at": "2026-10-03T12:20:00Z", "agent_type": "suporte", "structured": False,
-         "raw_input": "oi, tudo bem?", "steps": [], "output": "Olá!", "usage": {"input_tokens": 10}},
-        {"run_id": "r1", "at": "2026-10-03T12:30:00Z", "agent_type": "suporte", "structured": True,
-         "events": [{"role": "human_agent", "content": "transferindo para o bot"},
-                    {"role": "contact", "content": "meu wifi caiu", "speech": True}],
-         "message": "meu wifi caiu",
-         "context": [{"key": "cliente", "title": "Ficha do cliente", "changed": True}],
-         "steps": [{"tool": "ficha", "args": {"cpf": "1"}, "ok": False, "failure": "http_5xx", "error": "HTTP 500"}],
-         "output": "Vamos ver.", "usage": {"input_tokens": 100, "output_tokens": 20}},
+        {
+            "run_id": "r0",
+            "at": "2026-10-03T12:20:00Z",
+            "agent_type": "suporte",
+            "structured": False,
+            "raw_input": "oi, tudo bem?",
+            "steps": [],
+            "output": "Olá!",
+            "usage": {"input_tokens": 10},
+        },
+        {
+            "run_id": "r1",
+            "at": "2026-10-03T12:30:00Z",
+            "agent_type": "suporte",
+            "structured": True,
+            "events": [
+                {"role": "human_agent", "content": "transferindo para o bot"},
+                {"role": "contact", "content": "meu wifi caiu", "speech": True},
+            ],
+            "message": "meu wifi caiu",
+            "context": [{"key": "cliente", "title": "Ficha do cliente", "changed": True}],
+            "steps": [{"tool": "ficha", "args": {"cpf": "1"}, "ok": False, "failure": "http_5xx", "error": "HTTP 500"}],
+            "output": "Vamos ver.",
+            "usage": {"input_tokens": 100, "output_tokens": 20},
+        },
     ],
 }
 
 OVERVIEW = {
-    "totals": {"runs": 10, "errors": 1, "tool_failure_runs": 2, "sessions": 4, "total_tokens": 5000,
-               "cost_usd": 0.5, "feedback_up": 3, "feedback_down": 1},
+    "totals": {
+        "runs": 10,
+        "errors": 1,
+        "tool_failure_runs": 2,
+        "sessions": 4,
+        "total_tokens": 5000,
+        "cost_usd": 0.5,
+        "feedback_up": 3,
+        "feedback_down": 1,
+    },
     "previous": {"runs": 5, "errors": 0, "tool_failure_runs": 2, "total_tokens": 2500, "cost_usd": 0.25},
-    "agents": [{"agent_type": "suporte", "last_run_at": "2026-10-03T12:30:00Z",
-                "totals": {"runs": 10, "errors": 1, "tool_failure_runs": 2, "total_tokens": 5000, "cost_usd": 0.5,
-                           "feedback_up": 3, "feedback_down": 1}}],
-    "tool_failures": [{"tool_name": "ficha", "failure": "http_5xx", "count": 2, "agent_types": ["suporte"],
-                       "http_status": [500], "last_at": "2026-10-03T12:30:00Z"}],
+    "agents": [
+        {
+            "agent_type": "suporte",
+            "last_run_at": "2026-10-03T12:30:00Z",
+            "totals": {
+                "runs": 10,
+                "errors": 1,
+                "tool_failure_runs": 2,
+                "total_tokens": 5000,
+                "cost_usd": 0.5,
+                "feedback_up": 3,
+                "feedback_down": 1,
+            },
+        }
+    ],
+    "tool_failures": [
+        {
+            "tool_name": "ficha",
+            "failure": "http_5xx",
+            "count": 2,
+            "agent_types": ["suporte"],
+            "http_status": [500],
+            "last_at": "2026-10-03T12:30:00Z",
+        }
+    ],
 }
 
 

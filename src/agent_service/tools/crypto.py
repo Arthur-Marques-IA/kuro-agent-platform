@@ -102,7 +102,7 @@ def decrypt_config(config: dict[str, Any]) -> dict[str, Any]:
         if not is_encrypted(d[k]):
             continue
         try:
-            d[k] = decrypt_secret(d[k][len(PREFIX):])
+            d[k] = decrypt_secret(d[k][len(PREFIX) :])
         except EncryptionNotConfiguredError as exc:
             raise ToolSecretError(
                 f"o segredo em {where} está cifrado e não pôde ser decifrado — a CREDENTIALS_ENCRYPTION_KEY "
@@ -120,7 +120,7 @@ def decrypt_for_hash(config: dict[str, Any]) -> dict[str, Any]:
     for d, k, _ in _secret_slots(out):
         if is_encrypted(d[k]):
             try:
-                d[k] = decrypt_secret(d[k][len(PREFIX):])
+                d[k] = decrypt_secret(d[k][len(PREFIX) :])
             except EncryptionNotConfiguredError:
                 pass
     return out

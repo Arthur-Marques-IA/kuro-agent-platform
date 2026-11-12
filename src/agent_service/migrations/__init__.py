@@ -73,7 +73,9 @@ def migration_lock(engine: Engine) -> Iterator[None]:
     try:
         got = connection.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": MIGRATION_LOCK_KEY}).scalar()
         if not got:
-            logger.info("Esperando outra instância terminar de migrar o banco (pg_advisory_lock %d)...", MIGRATION_LOCK_KEY)
+            logger.info(
+                "Esperando outra instância terminar de migrar o banco (pg_advisory_lock %d)...", MIGRATION_LOCK_KEY
+            )
             connection.execute(text("SELECT pg_advisory_lock(:k)"), {"k": MIGRATION_LOCK_KEY})
             logger.info("Lock de migração obtido.")
         try:

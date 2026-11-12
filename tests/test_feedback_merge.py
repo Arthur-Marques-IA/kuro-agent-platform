@@ -141,7 +141,7 @@ def test_delete_zera_nota_e_historico(agente):
 
 
 def test_negacao_nao_e_duplicata():
-    """"Não informe o saldo sem confirmar o CPF" e a versão sem o "não" batem
+    """ "Não informe o saldo sem confirmar o CPF" e a versão sem o "não" batem
     0,96 de semelhança e dizem o oposto. Fundi-las engoliria o feedback novo."""
     atuais = _regras("Não informe o saldo sem confirmar o CPF do cliente")
     plano = MergePlan(operacoes=[RuleOp(op="add", texto="Informe o saldo sem confirmar o CPF do cliente")])

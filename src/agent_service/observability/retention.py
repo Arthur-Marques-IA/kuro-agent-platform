@@ -114,10 +114,7 @@ def anonymize_batch(before: datetime, limit: int = BATCH_SIZE) -> int:
     with get_db().db_engine.begin() as conn:
         ids = list(
             conn.execute(
-                select(runs.c.run_id)
-                .where(runs.c.started_at < before, ~done)
-                .order_by(runs.c.started_at)
-                .limit(limit)
+                select(runs.c.run_id).where(runs.c.started_at < before, ~done).order_by(runs.c.started_at).limit(limit)
             ).scalars()
         )
         if not ids:
@@ -130,9 +127,7 @@ def anonymize_batch(before: datetime, limit: int = BATCH_SIZE) -> int:
         # `null()`: as colunas JSON de `run_spans` gravariam o JSON `null` com um None do Python.
         conn.execute(update(run_spans).where(run_spans.c.run_id.in_(ids)).values(input=null(), output=null()))
         conn.execute(
-            update(run_spans)
-            .where(run_spans.c.run_id.in_(ids), run_spans.c.type == "TOOL")
-            .values(status_message=None)
+            update(run_spans).where(run_spans.c.run_id.in_(ids), run_spans.c.type == "TOOL").values(status_message=None)
         )
         for span_id, meta in conn.execute(
             select(run_spans.c.id, run_spans.c.metadata).where(run_spans.c.run_id.in_(ids))

@@ -33,8 +33,14 @@ CONFIG = {
     "method": "GET",
     "url": "https://exemplo.test/clientes/{cpf}",
     "parameters": [
-        {"name": "cpf", "type": "string", "location": "path", "required": True,
-         "source": "dependency", "dependency": "cpf"},
+        {
+            "name": "cpf",
+            "type": "string",
+            "location": "path",
+            "required": True,
+            "source": "dependency",
+            "dependency": "cpf",
+        },
         {"name": "assunto", "type": "string", "location": "query", "required": True},
         {"name": "origem", "type": "string", "location": "query", "source": "const", "value": "agente"},
     ],
@@ -115,16 +121,24 @@ def test_invalid_parameter_sources_are_rejected(param, erro):
 def test_header_from_dependency_can_have_a_real_header_name():
     """`Idempotency-Key`, `X-Request-Id`: headers HTTP de verdade têm hífen. Vale
     para o que o modelo não preenche; o que ele preenche vira propriedade do schema."""
-    config = validate_api_config({
-        "method": "POST",
-        "url": "https://x.test/chamados",
-        "parameters": [
-            {"name": "Idempotency-Key", "type": "string", "location": "header", "required": True,
-             "source": "dependency", "dependency": "idempotency_key"},
-            {"name": "X-Origem", "type": "string", "location": "header", "source": "const", "value": "kuro"},
-            {"name": "assunto", "type": "string", "location": "body", "required": True},
-        ],
-    })
+    config = validate_api_config(
+        {
+            "method": "POST",
+            "url": "https://x.test/chamados",
+            "parameters": [
+                {
+                    "name": "Idempotency-Key",
+                    "type": "string",
+                    "location": "header",
+                    "required": True,
+                    "source": "dependency",
+                    "dependency": "idempotency_key",
+                },
+                {"name": "X-Origem", "type": "string", "location": "header", "source": "const", "value": "kuro"},
+                {"name": "assunto", "type": "string", "location": "body", "required": True},
+            ],
+        }
+    )
     # Preenchida pelo servidor (etapa action ou header Idempotency-Key): não se declara.
     assert required_dependencies(config) == []
     fn = build_api_function(tool_name="chamado", description=None, config=config)
@@ -151,12 +165,14 @@ def test_hyphen_only_in_headers_the_model_does_not_fill(param):
 
 def test_parameter_cannot_hijack_the_api_key_header():
     with pytest.raises(ApiToolConfigError, match="header de autenticação"):
-        validate_api_config({
-            "method": "GET",
-            "url": "https://x.test",
-            "parameters": [{"name": "X_Key", "type": "string", "location": "header"}],
-            "auth": {"type": "api_key", "header": "x_key", "value": "segredo"},
-        })
+        validate_api_config(
+            {
+                "method": "GET",
+                "url": "https://x.test",
+                "parameters": [{"name": "X_Key", "type": "string", "location": "header"}],
+                "auth": {"type": "api_key", "header": "x_key", "value": "segredo"},
+            }
+        )
 
 
 # -- execução --------------------------------------------------------------------
@@ -164,9 +180,7 @@ def test_parameter_cannot_hijack_the_api_key_header():
 
 def test_dependency_value_reaches_the_api_without_passing_through_the_model(ficha_tool):
     with RedeFalsa({"ok": True}) as rede:
-        result = invocar(
-            ficha_tool, ToolInvokeIn(arguments={"assunto": "fatura"}, dependencies={"cpf": "12345678900"})
-        )
+        result = invocar(ficha_tool, ToolInvokeIn(arguments={"assunto": "fatura"}, dependencies={"cpf": "12345678900"}))
     assert result["ok"] is True
     enviada = rede.requests[-1]
     assert str(enviada.url).startswith("https://exemplo.test/clientes/12345678900")
@@ -237,8 +251,10 @@ def test_editing_a_tool_reaches_agents_already_built(ficha_tool):
         antes = get_agent("agente_ficha").tools[0].parameters["properties"]
         assert antes.keys() == {"assunto"}
 
-        novo = {**CONFIG, "parameters": [*CONFIG["parameters"],
-                                         {"name": "canal", "type": "string", "location": "query"}]}
+        novo = {
+            **CONFIG,
+            "parameters": [*CONFIG["parameters"], {"name": "canal", "type": "string", "location": "query"}],
+        }
         # A invalidação compara `updated_at`, e no SQLite dos testes ele tem
         # resolução de 1 segundo (no Postgres, microssegundos).
         time.sleep(1.1)
@@ -255,9 +271,20 @@ def test_tool_cannot_start_requiring_a_dependency_its_agents_do_not_declare(fich
 
     create_agent(_agent_body(dependency_fields=[{"name": "cpf", "type": "string", "required": True}]))
     try:
-        novo = {**CONFIG, "parameters": [*CONFIG["parameters"],
-                                         {"name": "conta", "type": "string", "location": "query", "required": True,
-                                          "source": "dependency", "dependency": "conta_id"}]}
+        novo = {
+            **CONFIG,
+            "parameters": [
+                *CONFIG["parameters"],
+                {
+                    "name": "conta",
+                    "type": "string",
+                    "location": "query",
+                    "required": True,
+                    "source": "dependency",
+                    "dependency": "conta_id",
+                },
+            ],
+        }
         with pytest.raises(HTTPException) as exc:
             update_tool("ficha_cliente", ToolUpdateIn(config=novo))
         assert exc.value.status_code == 409
@@ -273,8 +300,14 @@ CONFIG_DRY_RUN = {
     "url": "https://exemplo.test/acordos",
     "parameters": [
         {"name": "valor", "type": "number", "location": "body", "required": True},
-        {"name": "simular", "type": "boolean", "location": "body", "required": True,
-         "source": "dependency", "dependency": "dry_run"},
+        {
+            "name": "simular",
+            "type": "boolean",
+            "location": "body",
+            "required": True,
+            "source": "dependency",
+            "dependency": "dry_run",
+        },
     ],
 }
 

@@ -141,7 +141,9 @@ def ensure_version(agent_type: str, config: dict[str, Any]) -> tuple[int, str]:
                     or 0
                 ) + 1
                 conn.execute(
-                    insert(agent_versions).values(agent_type=agent_type, version=version, config_hash=digest, config=config)
+                    insert(agent_versions).values(
+                        agent_type=agent_type, version=version, config_hash=digest, config=config
+                    )
                 )
                 return version, digest
         except IntegrityError:

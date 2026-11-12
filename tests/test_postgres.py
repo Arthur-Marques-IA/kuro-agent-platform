@@ -52,8 +52,19 @@ HEAD = ScriptDirectory.from_config(_config()).get_current_head()
 TABELAS_DO_CODIGO = [
     m.metadata
     for m in (
-        agents_store, agent_versions, procedure_store, idempotency, documents_store, revisions,
-        sources_store, collection_versions, jobs, models_store, chunk_feedback, run_store, tools_store,
+        agents_store,
+        agent_versions,
+        procedure_store,
+        idempotency,
+        documents_store,
+        revisions,
+        sources_store,
+        collection_versions,
+        jobs,
+        models_store,
+        chunk_feedback,
+        run_store,
+        tools_store,
     )
 ]
 """As tabelas como o código as declara — o banco migrado precisa ter todas as colunas."""
@@ -143,7 +154,7 @@ def test_migracoes_do_zero_ate_head_e_de_volta(banco_postgres_vazio):
     fernet = Fernet(os.environ["CREDENTIALS_ENCRYPTION_KEY"].encode())
     for valor, original in ((cifrada["auth"]["token"], "segredo-123"), (cifrada["headers"]["X-Api-Key"], "chave-456")):
         assert valor.startswith("enc:v1:")
-        assert fernet.decrypt(valor[len("enc:v1:"):].encode()).decode() == original
+        assert fernet.decrypt(valor[len("enc:v1:") :].encode()).decode() == original
     assert cifrada["headers"]["Accept"] == "application/json"
     _alembic(engine, command.downgrade, "0016")
     assert _config_da_tool(engine, "legada") == config
@@ -233,10 +244,7 @@ def test_notify_sai_so_no_commit_com_o_kind(kind):
 def _ouvintes() -> int:
     with jobs._engine().connect() as conn:
         return conn.execute(
-            sa.text(
-                "SELECT count(*) FROM pg_stat_activity"
-                " WHERE datname = current_database() AND query = :q"
-            ),
+            sa.text("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND query = :q"),
             {"q": f"LISTEN {jobs.NOTIFY_CHANNEL}"},
         ).scalar_one()
 
@@ -371,9 +379,18 @@ T0 = datetime(2026, 11, 11, 12, 0, 0, 123456, tzinfo=timezone.utc)
 def _run(sid: str, started: datetime, *, structured: bool = True, context: list | None = None) -> str:
     run_id = f"r-{uuid4().hex[:12]}"
     fields: dict[str, Any] = dict(
-        run_id=run_id, trace_id=run_id, agent_type="pg-teste", agent_name="PG", prompt_version=1,
-        endpoint="chat", user_id="u-pg", session_id=sid, message="texto montado", started_at=started,
-        ended_at=started + timedelta(seconds=2), output="ok",
+        run_id=run_id,
+        trace_id=run_id,
+        agent_type="pg-teste",
+        agent_name="PG",
+        prompt_version=1,
+        endpoint="chat",
+        user_id="u-pg",
+        session_id=sid,
+        message="texto montado",
+        started_at=started,
+        ended_at=started + timedelta(seconds=2),
+        output="ok",
     )
     if structured:
         fields.update(
@@ -434,11 +451,15 @@ def test_chamada_legada_grava_sql_null_e_nao_json_null():
             )
         }
         # O filtro de "run não estruturado" é `IS NULL`: um JSON 'null' gravado escaparia dele.
-        nao_estruturados = conn.execute(
-            sa.select(run_store.runs.c.run_id).where(
-                run_store.runs.c.session_id == sid, run_store.runs.c.input_events.is_(None)
+        nao_estruturados = (
+            conn.execute(
+                sa.select(run_store.runs.c.run_id).where(
+                    run_store.runs.c.session_id == sid, run_store.runs.c.input_events.is_(None)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     assert (linhas[legado].ev, linhas[legado].ctx, linhas[legado].msg) == (True, True, True)
     assert (linhas[estruturado].ev, linhas[estruturado].ctx) == (False, False)
     assert linhas[estruturado].ctx_texto == "[]"

@@ -155,9 +155,7 @@ def list_sessions(
 ) -> None:
     """Conversas de um user_id, da mais recente para a mais antiga."""
     st = state(ctx)
-    result = call(
-        st, st.client.list_sessions, user_id=user_id, component_id=agent, limit=limit, page=page
-    )
+    result = call(st, st.client.list_sessions, user_id=user_id, component_id=agent, limit=limit, page=page)
     emit(st, result, _render_list)
 
 

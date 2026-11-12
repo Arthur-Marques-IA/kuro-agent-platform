@@ -40,12 +40,16 @@ def _render_runs(page: dict[str, Any]) -> None:
 
 def _render_trace(trace: dict[str, Any]) -> None:
     run = trace["run"]
-    console.print(f"[bold]{run['agent_type']}[/] [dim]run {run['run_id']} · {run['status']} · {run['total_tokens']} tokens[/]")
+    console.print(
+        f"[bold]{run['agent_type']}[/] [dim]run {run['run_id']} · {run['status']} · {run['total_tokens']} tokens[/]"
+    )
     if run.get("input_message") is not None:
         # Entrada estruturada: a fala, os eventos e os blocos em vez do texto montado.
         for block in trace.get("input_context") or []:
             volatil = " [dim](volátil)[/]" if block.get("volatile") else ""
-            console.print(f"[blue]{block['title']}[/]{volatil} [dim]{block['key']} · {block['hash'][:12]}[/]", highlight=False)
+            console.print(
+                f"[blue]{block['title']}[/]{volatil} [dim]{block['key']} · {block['hash'][:12]}[/]", highlight=False
+            )
         events = trace.get("input_events") or []
         for event in events:
             quando = f" [dim]{event['at']}[/]" if event.get("at") else ""
@@ -61,7 +65,11 @@ def _render_trace(trace: dict[str, Any]) -> None:
     if run.get("agent_version"):
         console.print(f"[dim]agente v{run['agent_version']} ({run.get('config_hash')})[/]", highlight=False)
     if run.get("knowledge_collection"):
-        versao = f" v{run['collection_version']} ({run.get('collection_config_hash')})" if run.get("collection_version") else ""
+        versao = (
+            f" v{run['collection_version']} ({run.get('collection_config_hash')})"
+            if run.get("collection_version")
+            else ""
+        )
         console.print(f"[dim]base {run['knowledge_collection']}{versao}[/]", highlight=False)
 
     spans = trace["spans"]
@@ -72,7 +80,9 @@ def _render_trace(trace: dict[str, Any]) -> None:
         parent = nodes.get(span.get("parent_id")) if span.get("parent_id") in ids else root
         latency = f" {span['latency_ms']:.0f}ms" if span.get("latency_ms") else ""
         level = f" [red]{span['level']}[/]" if span["level"] not in ("DEFAULT", "DEBUG") else ""
-        nodes[span["id"]] = (parent or root).add(f"{span['type'].lower()} [bold]{span['name']}[/][dim]{latency}[/]{level}")
+        nodes[span["id"]] = (parent or root).add(
+            f"{span['type'].lower()} [bold]{span['name']}[/][dim]{latency}[/]{level}"
+        )
     console.print(root)
     for score in trace.get("scores") or []:
         console.print(f"score {score['name']} = {score['value']} [dim]{score.get('comment') or ''}[/]")
@@ -81,8 +91,19 @@ def _render_trace(trace: dict[str, Any]) -> None:
 @app.callback(invoke_without_command=True)
 def runs(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:  # defaults explícitos: chamar direto não resolve os typer.Option
-        list_runs(ctx, agent=None, status=None, session_id=None, user_id=None, limit=20, cursor=None, meta=[], version=None,
-                  collection=None, collection_version=None)
+        list_runs(
+            ctx,
+            agent=None,
+            status=None,
+            session_id=None,
+            user_id=None,
+            limit=20,
+            cursor=None,
+            meta=[],
+            version=None,
+            collection=None,
+            collection_version=None,
+        )
 
 
 @app.command("list")
@@ -94,13 +115,22 @@ def list_runs(
     user_id: str | None = typer.Option(None, "--user-id"),
     limit: int = typer.Option(20, "--limit", "-n", min=1, max=100),
     cursor: str | None = typer.Option(None, "--cursor"),
-    meta: list[str] = typer.Option([], "--meta", "-m", help="Filtro por metadata chave=valor (repetível), ex.: conversation_id=123."),
-    version: int | None = typer.Option(None, "--version", help="Só runs desta versão da configuração (agent_version)."),
-    collection: str | None = typer.Option(None, "--collection", help="Só runs de agentes que consultavam esta collection."),
-    collection_version: int | None = typer.Option(
-        None, "--collection-version", min=1, help="Só runs com esta versão da busca da collection (kuro collections versions)."
+    meta: list[str] = typer.Option(
+        [], "--meta", "-m", help="Filtro por metadata chave=valor (repetível), ex.: conversation_id=123."
     ),
-    complexity: list[int] = typer.Option([], "--complexity", "-c", min=1, max=3, help="Só este nível de complexidade (repetível): 1, 2 ou 3."),
+    version: int | None = typer.Option(None, "--version", help="Só runs desta versão da configuração (agent_version)."),
+    collection: str | None = typer.Option(
+        None, "--collection", help="Só runs de agentes que consultavam esta collection."
+    ),
+    collection_version: int | None = typer.Option(
+        None,
+        "--collection-version",
+        min=1,
+        help="Só runs com esta versão da busca da collection (kuro collections versions).",
+    ),
+    complexity: list[int] = typer.Option(
+        [], "--complexity", "-c", min=1, max=3, help="Só este nível de complexidade (repetível): 1, 2 ou 3."
+    ),
     tool_failed: bool = typer.Option(False, "--tool-failed", help="Só runs com alguma tool falhando."),
     side_effect: bool = typer.Option(False, "--side-effect", help="Só runs que chamaram tool com efeito colateral."),
     min_chars: int | None = typer.Option(None, "--min-chars", min=1, help="Esconde mensagens mais curtas que isto."),
@@ -276,7 +306,11 @@ def score(
     """Registra uma avaliação para um run."""
     st = state(ctx)
     body = {"run_id": run_id, "name": name, "value": value, "comment": comment}
-    emit(st, call(st, st.client.score, body), lambda s: console.print(f"[green]✓[/] {s['name']}={s['value']} em {s['run_id']}"))
+    emit(
+        st,
+        call(st, st.client.score, body),
+        lambda s: console.print(f"[green]✓[/] {s['name']}={s['value']} em {s['run_id']}"),
+    )
 
 
 # -- feedback por trecho recuperado (RAG) ---------------------------------------------
@@ -288,9 +322,13 @@ _CHUNK_LABELS = ("relevant", "irrelevant", "wrong")
 def chunk_feedback(
     ctx: typer.Context,
     run_id: str,
-    chunk_id: str = typer.Argument(..., help="`chunk_id` do trecho (em `kuro runs show <run_id> --json`, metadata.references)."),
+    chunk_id: str = typer.Argument(
+        ..., help="`chunk_id` do trecho (em `kuro runs show <run_id> --json`, metadata.references)."
+    ),
     label: str = typer.Argument(..., help="relevant | irrelevant | wrong (conteúdo errado/desatualizado)."),
-    span_id: str | None = typer.Option(None, "--span", help="A span da busca; sem isto, a primeira busca do run com o trecho."),
+    span_id: str | None = typer.Option(
+        None, "--span", help="A span da busca; sem isto, a primeira busca do run com o trecho."
+    ),
     comment: str | None = typer.Option(None, "--comment"),
     created_by: str = typer.Option("cli", "--by", envvar="KURO_USER_ID", help="Quem marcou."),
 ) -> None:
@@ -299,7 +337,14 @@ def chunk_feedback(
     st = state(ctx)
     if label not in _CHUNK_LABELS:
         fail(st, f"rótulo inválido: {label!r} (use {', '.join(_CHUNK_LABELS)})", EXIT_USAGE)
-    body = {"run_id": run_id, "chunk_id": chunk_id, "label": label, "span_id": span_id, "comment": comment, "created_by": created_by}
+    body = {
+        "run_id": run_id,
+        "chunk_id": chunk_id,
+        "label": label,
+        "span_id": span_id,
+        "comment": comment,
+        "created_by": created_by,
+    }
     emit(
         st,
         call(st, st.client.chunk_feedback, body),
@@ -397,7 +442,9 @@ def _render_flagged(rows: list[dict[str, Any]]) -> None:
     if not rows:
         console.print("[dim]nenhum documento marcado[/]")
     for r in rows:
-        console.print(f"[bold]{r['count']}×[/] {r.get('document') or r.get('content_id')} [dim]({r.get('collection') or '—'})[/]")
+        console.print(
+            f"[bold]{r['count']}×[/] {r.get('document') or r.get('content_id')} [dim]({r.get('collection') or '—'})[/]"
+        )
         console.print(f"   [dim]runs: {', '.join(r['run_ids'][:5])}[/]", highlight=False)
 
 
@@ -434,7 +481,11 @@ def chunk_export(
                 fh.write(lines)
         except OSError as exc:
             fail(st, f"não consegui gravar {output}: {exc}", EXIT_USAGE)
-        emit(st, {"output": output, "cases": len(cases)}, lambda r: console.print(f"[green]✓[/] {r['cases']} perguntas em {r['output']}"))
+        emit(
+            st,
+            {"output": output, "cases": len(cases)},
+            lambda r: console.print(f"[green]✓[/] {r['cases']} perguntas em {r['output']}"),
+        )
         return
     import sys
 
@@ -455,7 +506,11 @@ def reference(
     próprio sistema integrado (`POST /observability/references`)."""
     st = state(ctx)
     body = {"run_id": run_id, "reference": read_json_file(st, file), "source": source}
-    emit(st, call(st, st.client.save_reference, body), lambda r: console.print(f"[green]✓[/] referência gravada em {r['run_id']}"))
+    emit(
+        st,
+        call(st, st.client.save_reference, body),
+        lambda r: console.print(f"[green]✓[/] referência gravada em {r['run_id']}"),
+    )
 
 
 def _render_agreement(r: dict[str, Any]) -> None:
@@ -514,9 +569,12 @@ def export(
                 fh.write(lines)
         except OSError as exc:
             fail(st, f"não consegui gravar {output}: {exc}", EXIT_USAGE)
-        emit(st, {"output": output, "cases": len(cases)}, lambda r: console.print(f"[green]✓[/] {r['cases']} casos em {r['output']}"))
+        emit(
+            st,
+            {"output": output, "cases": len(cases)},
+            lambda r: console.print(f"[green]✓[/] {r['cases']} casos em {r['output']}"),
+        )
         return
     import sys
 
     sys.stdout.write(lines)
-

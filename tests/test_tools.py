@@ -19,7 +19,12 @@ from agent_service.config import get_settings
 from agent_service.tools import api_tool, registry, store
 from agent_service.tools.api_tool import ApiToolConfigError, build_api_function, validate_api_config
 from agent_service.tools.crypto import decrypt_config
-from agent_service.tools.catalog import BuiltinConfigError, get_builtin_spec, list_builtin_catalog, validate_builtin_config
+from agent_service.tools.catalog import (
+    BuiltinConfigError,
+    get_builtin_spec,
+    list_builtin_catalog,
+    validate_builtin_config,
+)
 from agent_service.tools.python_tool import (
     PythonToolConfigError,
     PythonToolDisabledError,
@@ -51,11 +56,14 @@ def test_builtin_catalog_has_the_curated_entries():
     assert {"pubmed", "openweather", "file_generation"} <= ids
 
 
-@pytest.mark.parametrize("builtin_id, params", [
-    ("pubmed", {}),
-    ("openweather", {"api_key": "chave-de-teste"}),
-    ("file_generation", {}),
-])
+@pytest.mark.parametrize(
+    "builtin_id, params",
+    [
+        ("pubmed", {}),
+        ("openweather", {"api_key": "chave-de-teste"}),
+        ("file_generation", {}),
+    ],
+)
 def test_novas_builtins_constroem_sem_dependencia_extra(builtin_id, params):
     """O catálogo é curado: uma entrada que só constrói com um pacote a mais
     apareceria pronta e falharia na hora de usar."""
@@ -229,7 +237,9 @@ def test_api_function_reports_http_errors_without_raising():
 
 
 def test_validate_python_config_accepts_simple_function():
-    validated = validate_python_config({"code": "def handler(x: int) -> int:\n    return x * 2\n", "entrypoint": "handler"})
+    validated = validate_python_config(
+        {"code": "def handler(x: int) -> int:\n    return x * 2\n", "entrypoint": "handler"}
+    )
     assert validated["entrypoint"] == "handler"
 
 
@@ -269,7 +279,9 @@ def test_validate_python_config_recusa_atributo_privado_de_modulo(code):
 @pytest.mark.parametrize("code", _FUGAS_POR_ATRIBUTO_PRIVADO)
 def test_create_tool_python_com_atributo_privado_da_422(code):
     with pytest.raises(HTTPException) as exc:
-        create_tool(ToolIn(tool_name="py_fuga", kind="python", label="Fuga", config={"code": code, "entrypoint": "handler"}))
+        create_tool(
+            ToolIn(tool_name="py_fuga", kind="python", label="Fuga", config={"code": code, "entrypoint": "handler"})
+        )
     assert exc.value.status_code == 422
 
 
@@ -343,7 +355,10 @@ def test_tool_python_com_imports_legitimos():
 
 def test_validate_python_config_allows_listed_modules():
     validate_python_config(
-        {"code": "import math, json, re\ndef handler(x: float) -> float:\n    return math.sqrt(x)\n", "entrypoint": "handler"}
+        {
+            "code": "import math, json, re\ndef handler(x: float) -> float:\n    return math.sqrt(x)\n",
+            "entrypoint": "handler",
+        }
     )
 
 
@@ -396,13 +411,26 @@ def test_registry_unknown_tool_raises():
 
 
 def test_registry_disabled_tool_raises_build_error():
-    store.create_tool(tool_name="disabled_tool", kind="builtin", label="x", description=None, config={"builtin_id": "calculator", "params": {}}, enabled=False)
+    store.create_tool(
+        tool_name="disabled_tool",
+        kind="builtin",
+        label="x",
+        description=None,
+        config={"builtin_id": "calculator", "params": {}},
+        enabled=False,
+    )
     with pytest.raises(ToolBuildError, match="desativada"):
         registry.resolve_tools(["disabled_tool"])
 
 
 def test_registry_caches_until_updated_at_changes():
-    store.create_tool(tool_name="cache_tool", kind="builtin", label="x", description=None, config={"builtin_id": "calculator", "params": {}})
+    store.create_tool(
+        tool_name="cache_tool",
+        kind="builtin",
+        label="x",
+        description=None,
+        config={"builtin_id": "calculator", "params": {}},
+    )
     [first] = registry.resolve_tools(["cache_tool"])
     [second] = registry.resolve_tools(["cache_tool"])
     assert first is second
@@ -535,7 +563,9 @@ def test_update_tool_masks_and_preserves_secret_when_echoed_back():
 
     update_tool(
         "secret_api",
-        ToolUpdateIn(config={"method": "GET", "url": "https://x.com/b", "auth": {"type": "bearer", "token": masked_token}}),
+        ToolUpdateIn(
+            config={"method": "GET", "url": "https://x.com/b", "auth": {"type": "bearer", "token": masked_token}}
+        ),
     )
 
     raw = store.get_tool("secret_api")
@@ -553,7 +583,11 @@ def test_secret_headers_are_masked_and_preserved_when_echoed_back():
             config={
                 "method": "GET",
                 "url": "https://x.com/a",
-                "headers": {"X-Regente-Token": "real-secret", "Authorization": "Bearer abc", "Accept": "application/json"},
+                "headers": {
+                    "X-Regente-Token": "real-secret",
+                    "Authorization": "Bearer abc",
+                    "Accept": "application/json",
+                },
             },
         )
     )
@@ -586,7 +620,13 @@ def test_delete_tool_blocked_when_seeded_or_in_use():
         delete_tool("calculator")  # semeada
     assert exc.value.status_code == 403
 
-    store.create_tool(tool_name="in_use_tool", kind="builtin", label="x", description=None, config={"builtin_id": "calculator", "params": {}})
+    store.create_tool(
+        tool_name="in_use_tool",
+        kind="builtin",
+        label="x",
+        description=None,
+        config={"builtin_id": "calculator", "params": {}},
+    )
     create_definition(agent_type="uses-tool", name="Usa Tool", instructions=["oi"], tools=["in_use_tool"])
     try:
         with pytest.raises(HTTPException) as exc:
@@ -600,7 +640,11 @@ def test_delete_tool_blocked_when_seeded_or_in_use():
 
 
 def test_get_tool_reports_build_error_for_missing_optional_dependency():
-    create_tool(ToolIn(tool_name="web_search_probe", kind="builtin", label="x", config={"builtin_id": "web_search", "params": {}}))
+    create_tool(
+        ToolIn(
+            tool_name="web_search_probe", kind="builtin", label="x", config={"builtin_id": "web_search", "params": {}}
+        )
+    )
     detail = get_tool("web_search_probe")
     assert detail.get("build_error")  # ddgs não instalado neste ambiente de teste
 
@@ -640,8 +684,11 @@ def test_tool_python_travada_nao_impede_as_outras():
     travada = compile_python_tool(
         tool_name="trava",
         config=validate_python_config(
-            {"code": "import time\ndef handler() -> int:\n    time.sleep(2)\n    return 1\n",
-             "entrypoint": "handler", "timeout_seconds": 0.1}
+            {
+                "code": "import time\ndef handler() -> int:\n    time.sleep(2)\n    return 1\n",
+                "entrypoint": "handler",
+                "timeout_seconds": 0.1,
+            }
         ),
         enabled=True,
     )
@@ -704,10 +751,13 @@ def test_schema_da_tool_sai_com_items_e_properties():
         {
             **BASE_API,
             "parameters": [
-                {"name": "ids", "type": "array", "location": "body", "required": True,
-                 "items": {"type": "integer"}},
-                {"name": "filtros", "type": "object", "location": "body",
-                 "fields": [{"name": "status", "type": "string", "required": True}]},
+                {"name": "ids", "type": "array", "location": "body", "required": True, "items": {"type": "integer"}},
+                {
+                    "name": "filtros",
+                    "type": "object",
+                    "location": "body",
+                    "fields": [{"name": "status", "type": "string", "required": True}],
+                },
             ],
         }
     )
@@ -726,8 +776,13 @@ def test_composto_de_dependency_ou_const_nao_precisa_de_sub_schema():
         {
             **BASE_API,
             "parameters": [
-                {"name": "perfil", "type": "object", "location": "body",
-                 "source": "dependency", "dependency": "perfil"},
+                {
+                    "name": "perfil",
+                    "type": "object",
+                    "location": "body",
+                    "source": "dependency",
+                    "dependency": "perfil",
+                },
                 {"name": "flags", "type": "array", "location": "body", "source": "const", "value": [1, 2]},
             ],
         }
@@ -741,11 +796,16 @@ def test_config_de_tool_com_composto_sobrevive_ao_get_e_apply():
     lida já vem normalizada, e revalidá-la não pode fazer o `fields`/`items`
     derivar a cada edição."""
     config = {
-        "method": "POST", "url": "https://exemplo.test/busca",
+        "method": "POST",
+        "url": "https://exemplo.test/busca",
         "parameters": [
             {"name": "ids", "type": "array", "location": "body", "items": {"type": "integer"}},
-            {"name": "filtros", "type": "object", "location": "body",
-             "fields": [{"name": "status", "type": "string", "required": True}]},
+            {
+                "name": "filtros",
+                "type": "object",
+                "location": "body",
+                "fields": [{"name": "status", "type": "string", "required": True}],
+            },
         ],
     }
     criada = create_tool(ToolIn(tool_name="rt_tool", kind="api", label="RT", config=config))
@@ -760,9 +820,10 @@ def test_config_de_tool_com_composto_sobrevive_ao_get_e_apply():
 
 def test_validar_nao_altera_o_config_de_quem_chamou():
     """A normalização do composto acontece numa cópia."""
-    original = {**BASE_API, "parameters": [
-        {"name": "ids", "type": "array", "location": "body", "items": {"type": "integer"}}
-    ]}
+    original = {
+        **BASE_API,
+        "parameters": [{"name": "ids", "type": "array", "location": "body", "items": {"type": "integer"}}],
+    }
     antes = copy.deepcopy(original)
     validate_api_config(original)
     assert original == antes

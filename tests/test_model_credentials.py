@@ -199,7 +199,10 @@ def test_credential_reports_agents_using_it(monkeypatch):
     out = create_model_credential(ModelCredentialCreateIn(provider="openai", label="Padrão", api_key="sk-x"))
     monkeypatch.setattr(
         "agent_service.api.model_credentials_routes.list_definitions",
-        lambda: [{"name": "Agente Um", "model_credential_id": out.id}, {"name": "Agente Dois", "model_credential_id": None}],
+        lambda: [
+            {"name": "Agente Um", "model_credential_id": out.id},
+            {"name": "Agente Dois", "model_credential_id": None},
+        ],
     )
     credentials = list_model_credentials()
     assert credentials[0].agents_using == ["Agente Um"]

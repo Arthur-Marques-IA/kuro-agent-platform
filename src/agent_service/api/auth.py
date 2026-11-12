@@ -108,7 +108,7 @@ OPEN_REFUSED_MESSAGE = (
     "kuro: recusei subir sem autenticação. Nenhuma chave de API está configurada, e assim "
     "qualquer um que alcance a porta leria as conversas, trocaria prompts e leria as "
     "credenciais de modelo. Defina ADMIN_API_KEY e RUNTIME_API_KEY no .env (gere cada uma com "
-    "`python -c \"import secrets; print(secrets.token_urlsafe(32))\"`) e suba de novo. "
+    '`python -c "import secrets; print(secrets.token_urlsafe(32))"`) e suba de novo. '
     "Só na sua máquina, para rodar aberto de propósito: ALLOW_OPEN=1."
 )
 

@@ -36,8 +36,16 @@ def test_prompt_cache_valor_invalido():
 
 def test_span_do_modelo_registra_tokens_de_cache():
     entry = SimpleNamespace(
-        provider="Google", id="gemini-2.5-flash", input_tokens=6000, output_tokens=100, total_tokens=6100,
-        reasoning_tokens=0, cost=None, duration=1.0, cache_read_tokens=4096, cache_write_tokens=0,
+        provider="Google",
+        id="gemini-2.5-flash",
+        input_tokens=6000,
+        output_tokens=100,
+        total_tokens=6100,
+        reasoning_tokens=0,
+        cost=None,
+        duration=1.0,
+        cache_read_tokens=4096,
+        cache_write_tokens=0,
     )
     [span] = _model_spans(SimpleNamespace(details={"model": [entry]}), started_at=None)
     assert span.metadata == {"cache_read_tokens": 4096}

@@ -17,9 +17,7 @@ DEFAULT_ATTACHMENT_PROMPT = "Analise o(s) anexo(s)."
 def analyze(
     ctx: typer.Context,
     agent_type: str = typer.Argument(..., help="agent_type do agente analista (kind='analysis')."),
-    text: str | None = typer.Option(
-        None, "--text", "-m", help="O documento como texto, direto na linha de comando."
-    ),
+    text: str | None = typer.Option(None, "--text", "-m", help="O documento como texto, direto na linha de comando."),
     file: str | None = typer.Option(
         None, "--file", "-f", help="Arquivo com o documento (qualquer texto, inclusive .json). Sem isto: lê de stdin."
     ),

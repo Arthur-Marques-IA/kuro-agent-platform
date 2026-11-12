@@ -92,8 +92,15 @@ async def test_lists_tools_with_annotations_and_hides_confirmation_from_schema(a
     assert set(tools["agent_promote"].input_schema["properties"]) == {"source", "to"}
     assert tools["agents_list"].annotations.read_only_hint is True
     # `destructive_hint=False` significa "só acrescenta": quem sobrescreve ou apaga é True.
-    for name in ("agent_delete", "agent_promote", "agent_set", "agent_apply", "tool_apply", "feedback_send",
-                 "run_chunk_feedback"):
+    for name in (
+        "agent_delete",
+        "agent_promote",
+        "agent_set",
+        "agent_apply",
+        "tool_apply",
+        "feedback_send",
+        "run_chunk_feedback",
+    ):
         assert tools[name].annotations.destructive_hint is True, name
     for name in ("run_score", "collection_add"):
         assert tools[name].annotations.destructive_hint is False, name
@@ -190,7 +197,9 @@ async def test_rollback_never_writes_without_asking_even_if_prompt_changed(api, 
     """O resolver viu o prompt igual e não perguntou; até o corpo rodar, alguém mudou o
     prompt. Gravar agora seria restaurar sem confirmação — tem de recusar."""
     server, routes, calls = api
-    routes[("GET", "/agents/suporte/versions")] = httpx.Response(200, json=[{"version": 1, "instructions": ["Seja breve."]}])
+    routes[("GET", "/agents/suporte/versions")] = httpx.Response(
+        200, json=[{"version": 1, "instructions": ["Seja breve."]}]
+    )
     reads = {"n": 0}
 
     def agent(request):
@@ -212,9 +221,13 @@ async def test_rollback_never_writes_without_asking_even_if_prompt_changed(api, 
 @MODES
 async def test_rollback_asks_then_restores(api, mode):
     server, routes, calls = api
-    routes[("GET", "/agents/suporte/versions")] = httpx.Response(200, json=[{"version": 1, "instructions": ["Antigo."]}])
+    routes[("GET", "/agents/suporte/versions")] = httpx.Response(
+        200, json=[{"version": 1, "instructions": ["Antigo."]}]
+    )
     routes[("GET", "/agents/suporte")] = httpx.Response(200, json=AGENT)
-    routes[("PUT", "/agents/suporte")] = httpx.Response(200, json={**AGENT, "instructions": ["Antigo."], "prompt_version": 3})
+    routes[("PUT", "/agents/suporte")] = httpx.Response(
+        200, json={**AGENT, "instructions": ["Antigo."], "prompt_version": 3}
+    )
     callback, asked = _answer("accept")
     async with McpClient(server, mode=mode, elicitation_callback=callback) as mcp:
         result = await mcp.call_tool("agent_rollback", {"agent_type": "suporte", "version": 1})
@@ -310,7 +323,9 @@ async def test_run_show_clips_long_text(api):
 
 async def test_eval_with_inline_cases_returns_only_failures(api):
     server, routes, calls = api
-    routes[("GET", "/agents/extrator")] = httpx.Response(200, json={**AGENT, "agent_type": "extrator", "kind": "analysis"})
+    routes[("GET", "/agents/extrator")] = httpx.Response(
+        200, json={**AGENT, "agent_type": "extrator", "kind": "analysis"}
+    )
     routes[("POST", "/analyze")] = httpx.Response(200, json={"run_id": "r1", "result": {"acao": "responder"}})
     routes[("POST", "/observability/scores")] = httpx.Response(200, json={})
     cases = [
@@ -484,7 +499,12 @@ async def test_credentials_test_calls_the_saved_key_test(api):
     )
     async with McpClient(server) as mcp:
         data = _data(await mcp.call_tool("credentials_test", {"credential_id": "c1"}))
-    assert data == {"credential_id": "c1", "ok": False, "message": "401 do provedor", "tested_at": "2026-10-14T10:00:00Z"}
+    assert data == {
+        "credential_id": "c1",
+        "ok": False,
+        "message": "401 do provedor",
+        "tested_at": "2026-10-14T10:00:00Z",
+    }
     assert _mutations(calls) == ["POST /model-credentials/c1/test"]
 
 
@@ -505,7 +525,9 @@ async def test_collection_create_and_set_refuses_embedder_change(api):
 async def test_chat_and_analyze_send_attachments_and_metadata(api):
     server, routes, calls = api
     routes[("GET", "/agents/suporte")] = httpx.Response(200, json=AGENT)
-    routes[("GET", "/agents/extrator")] = httpx.Response(200, json={**AGENT, "agent_type": "extrator", "kind": "analysis"})
+    routes[("GET", "/agents/extrator")] = httpx.Response(
+        200, json={**AGENT, "agent_type": "extrator", "kind": "analysis"}
+    )
     routes[("POST", "/chat/stream")] = httpx.Response(
         200, content=_sse(("run", {"run_id": "r1"}), ("done", {})), headers={"content-type": "text/event-stream"}
     )
@@ -514,16 +536,25 @@ async def test_chat_and_analyze_send_attachments_and_metadata(api):
     async with McpClient(server) as mcp:
         await mcp.call_tool(
             "chat",
-            {"agent_type": "suporte", "message": "veja", "dependencies": {"cpf": "1"}, "attachments": [anexo],
-             "metadata": {"conversation_id": "98231"}},
+            {
+                "agent_type": "suporte",
+                "message": "veja",
+                "dependencies": {"cpf": "1"},
+                "attachments": [anexo],
+                "metadata": {"conversation_id": "98231"},
+            },
         )
         await mcp.call_tool(
             "analyze",
             {"agent_type": "extrator", "attachments": [anexo], "dependencies": {"cpf": "1"}, "user_id": "u1"},
         )
         both = await mcp.call_tool(
-            "analyze", {"agent_type": "extrator", "attachments": [{**anexo, "content_base64": "AAA="}],
-                        "dependencies": {"cpf": "1"}},
+            "analyze",
+            {
+                "agent_type": "extrator",
+                "attachments": [{**anexo, "content_base64": "AAA="}],
+                "dependencies": {"cpf": "1"},
+            },
         )
     chat_body = json.loads(next(r.content for r in calls if r.url.path == "/chat/stream"))
     assert chat_body["attachments"] == [anexo] and chat_body["metadata"] == {"conversation_id": "98231"}
@@ -573,7 +604,9 @@ async def test_sessions_list_shows_every_user_and_paginates(api):
 
 async def test_runs_sessions_groups_by_conversation(api):
     server, routes, calls = api
-    routes[("GET", "/observability/sessions")] = httpx.Response(200, json={"items": [{"session_id": "s1"}], "scanned": 1})
+    routes[("GET", "/observability/sessions")] = httpx.Response(
+        200, json={"items": [{"session_id": "s1"}], "scanned": 1}
+    )
     async with McpClient(server) as mcp:
         data = _data(await mcp.call_tool("runs_sessions", {"agent_type": "r8", "limit": 999}))
     assert data["items"] == [{"session_id": "s1"}]

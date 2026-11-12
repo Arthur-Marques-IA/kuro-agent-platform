@@ -199,7 +199,9 @@ def _check_ast(code: str, entrypoint_name: str) -> None:
 
     top_level_defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
     for node in tree.body:
-        is_docstring = isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        is_docstring = (
+            isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        )
         is_simple_constant = isinstance(node, (ast.Assign, ast.AnnAssign)) and _is_literal(getattr(node, "value", None))
         if not (isinstance(node, _ALLOWED_TOP_LEVEL) or is_docstring or is_simple_constant):
             raise PythonToolConfigError(
@@ -345,9 +347,7 @@ def _mark_dry_run(request: Any) -> None:
         request.headers[DRY_RUN_HEADER] = "true"
 
 
-def _safe_import(
-    name: str, _globals: Any = None, _locals: Any = None, fromlist: Any = (), level: int = 0
-) -> Any:
+def _safe_import(name: str, _globals: Any = None, _locals: Any = None, fromlist: Any = (), level: int = 0) -> Any:
     """O `__import__` da tool: nunca o módulo real, sempre `_module_proxy`.
 
     Segue a semântica do `__import__`: `import a.b` devolve `a` (com `b` como
@@ -426,7 +426,10 @@ def compile_python_tool(*, tool_name: str, config: dict[str, Any], enabled: bool
             "agent_service.tools.python_tool."
         )
 
-    namespace: dict[str, Any] = {"__builtins__": _safe_builtins(), "__name__": f"agent_service.tools.python.{tool_name}"}
+    namespace: dict[str, Any] = {
+        "__builtins__": _safe_builtins(),
+        "__name__": f"agent_service.tools.python.{tool_name}",
+    }
     try:
         exec(compile(config["code"], filename=f"<tool:{tool_name}>", mode="exec"), namespace)
     except Exception as exc:  # noqa: BLE001 - reportado como erro de configuração da tool

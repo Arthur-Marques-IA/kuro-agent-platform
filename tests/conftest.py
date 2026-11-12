@@ -98,6 +98,7 @@ def dns_deterministico(monkeypatch):
     hosts reais — e `exemplo.test` nem resolve. Todo host passa a ser público;
     o teste que quer ver o bloqueio acontecendo substitui isto por conta dele.
     """
+
     def resolve(host, port, *args, **kwargs):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (_IP_PUBLICO, port))]
 

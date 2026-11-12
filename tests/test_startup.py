@@ -56,7 +56,13 @@ def ordem(monkeypatch):
 
         return chamada
 
-    for nome in ("upgrade_database", "seed_default_collection", "seed_default_tools", "seed_default_agents", "build_app"):
+    for nome in (
+        "upgrade_database",
+        "seed_default_collection",
+        "seed_default_tools",
+        "seed_default_agents",
+        "build_app",
+    ):
         monkeypatch.setattr(main, nome, espia(nome, getattr(main, nome)))
     monkeypatch.setattr(auth, "check_startup_auth", espia("check_startup_auth", auth.check_startup_auth))
     monkeypatch.setattr(main, "warm_up_model_listing", lambda: chamadas.append("warm_up"))

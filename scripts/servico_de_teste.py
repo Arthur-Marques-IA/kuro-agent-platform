@@ -157,7 +157,9 @@ class ModeloDeTeste(Model):
     async def ainvoke(self, messages: list[Message], assistant_message: Message, **kwargs: Any) -> ModelResponse:
         return self._resposta(messages)
 
-    def invoke_stream(self, messages: list[Message], assistant_message: Message, **kwargs: Any) -> Iterator[ModelResponse]:
+    def invoke_stream(
+        self, messages: list[Message], assistant_message: Message, **kwargs: Any
+    ) -> Iterator[ModelResponse]:
         yield self._resposta(messages)
 
     async def ainvoke_stream(

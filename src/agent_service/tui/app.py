@@ -194,7 +194,7 @@ def _full_lines(value: Any, width: int) -> list[str]:
     width = max(width, 20)
     lines: list[str] = []
     for line in text.splitlines() or [""]:
-        lines.extend(line[i: i + width] for i in range(0, max(len(line), 1), width))
+        lines.extend(line[i : i + width] for i in range(0, max(len(line), 1), width))
     return lines
 
 
@@ -209,7 +209,7 @@ def spark(values: list[float], width: int = 22) -> str:
         return ""
     if len(values) > width:
         size = len(values) / width
-        values = [max(values[int(i * size): max(int((i + 1) * size), int(i * size) + 1)]) for i in range(width)]
+        values = [max(values[int(i * size) : max(int((i + 1) * size), int(i * size) + 1)]) for i in range(width)]
     top = max(values)
     if top <= 0:
         return SPARK[0] * len(values)
@@ -303,7 +303,9 @@ class Masthead(Horizontal):
         self.query_one(".conn", Static).update(app.connection())
         on_ = app.animate
         self.query_one(AnimToggle).update(
-            Text.assemble(("◉ " if on_ else "○ ", BRAND if on_ else MUTED), f"animações {'ligadas' if on_ else 'desligadas'}")
+            Text.assemble(
+                ("◉ " if on_ else "○ ", BRAND if on_ else MUTED), f"animações {'ligadas' if on_ else 'desligadas'}"
+            )
         )
 
 
@@ -445,9 +447,12 @@ class RunScreen(Screen):
             if span.get("latency_ms"):
                 filled = max(filled, 1)
             label = Text.assemble(
-                (icon, BAD if failed else color), " ",
-                (span["name"], f"bold {BAD}" if failed else "bold"), "  ",
-                ("━" * filled, BAD if failed else color), ("─" * (12 - filled), "#2a3442"),
+                (icon, BAD if failed else color),
+                " ",
+                (span["name"], f"bold {BAD}" if failed else "bold"),
+                "  ",
+                ("━" * filled, BAD if failed else color),
+                ("─" * (12 - filled), "#2a3442"),
                 (f" {_ms(span.get('latency_ms'))}", MUTED),
             )
             node = (parent or tree.root).add(label, expand=failed)
@@ -521,8 +526,7 @@ class RunScreen(Screen):
             return
         session_id = self.trace["run"].get("session_id")
         if not session_id:
-            self.notify("esta execução não tem sessão (sem session_id): não há conversa para abrir",
-                        severity="warning")
+            self.notify("esta execução não tem sessão (sem session_id): não há conversa para abrir", severity="warning")
             return
         self.app.push_screen(SessionScreen(self.client, session_id, self.run_id))
 
@@ -554,8 +558,11 @@ class ContextScreen(Screen):
                 yield Static(
                     Text.assemble(
                         ("Este run não tem contexto estruturado.\n", "bold"),
-                        ("A entrada chegou num texto só (run antigo, ou o sistema chamador não manda "
-                         "`events` e `context`): ela está inteira na caixa mensagem do trace.", MUTED),
+                        (
+                            "A entrada chegou num texto só (run antigo, ou o sistema chamador não manda "
+                            "`events` e `context`): ela está inteira na caixa mensagem do trace.",
+                            MUTED,
+                        ),
                     ),
                     id="context-empty",
                     classes="box",
@@ -570,8 +577,10 @@ class ContextScreen(Screen):
                     classes="box",
                 )
             for block in blocks:
-                box = Static(Text(block.get("content") or "—", style="" if block.get("content") else MUTED),
-                             classes="box context-block")
+                box = Static(
+                    Text(block.get("content") or "—", style="" if block.get("content") else MUTED),
+                    classes="box context-block",
+                )
                 box.border_title = block.get("title") or block.get("key") or "?"
                 marks = [block.get("key") or ""]
                 if block.get("volatile"):
@@ -704,7 +713,8 @@ class SessionScreen(Screen):
     def show(self, timeline: dict[str, Any]) -> None:
         turns = timeline.get("items") or []
         parts: list[Any] = [
-            ("sessão ", MUTED), (str(timeline.get("session_id") or self.session_id), "bold"),
+            ("sessão ", MUTED),
+            (str(timeline.get("session_id") or self.session_id), "bold"),
             (f"   {', '.join(timeline.get('agent_types') or []) or '—'}", ""),
             (f" · {timeline.get('turns', len(turns))} turno(s) · {_int(timeline.get('total_tokens'))} tokens", MUTED),
         ]
@@ -719,7 +729,11 @@ class SessionScreen(Screen):
         elif not found:
             head.append(
                 f"\nEste run não está entre os {len(turns)} turnos lidos"
-                + (" (a sessão tem mais; veja `kuro sessions show --all-users`)." if timeline.get("next_cursor") else "."),
+                + (
+                    " (a sessão tem mais; veja `kuro sessions show --all-users`)."
+                    if timeline.get("next_cursor")
+                    else "."
+                ),
                 style=WARN,
             )
         elif timeline.get("next_cursor"):
@@ -805,11 +819,13 @@ class RunsPane(TabPane):
             return
         self.set_status(Text(describe_error(exc), style=BAD))
         if not self.shown:  # nada na tela: explica em vez de mostrar uma tabela vazia
-            self.show_empty(Text.assemble(
-                ("Sem execuções para mostrar.\n", "bold"),
-                (describe_error(exc), BAD),
-                (f"\n\nO painel tenta de novo sozinho a cada {self.interval:g}s (r tenta agora).", MUTED),
-            ))
+            self.show_empty(
+                Text.assemble(
+                    ("Sem execuções para mostrar.\n", "bold"),
+                    (describe_error(exc), BAD),
+                    (f"\n\nO painel tenta de novo sozinho a cada {self.interval:g}s (r tenta agora).", MUTED),
+                )
+            )
         self.app.feed_failed(exc)
 
     def show_empty(self, message: Text | None) -> None:
@@ -856,8 +872,9 @@ class RunsPane(TabPane):
             self.show_empty(Text("Nenhuma execução com esses filtros.", style=MUTED))
         else:
             self.show_empty(
-                Text("Nenhuma execução ainda: elas aparecem aqui assim que alguém chamar /chat ou /analyze.",
-                     style=MUTED)
+                Text(
+                    "Nenhuma execução ainda: elas aparecem aqui assim que alguém chamar /chat ou /analyze.", style=MUTED
+                )
             )
         since = f" desde {_when(runs[-1]['started_at'])}" if runs else ""
         hint = "pausado, p retoma" if self.app.paused else f"atualiza a cada {self.interval:g}s · enter abre o trace"
@@ -871,11 +888,20 @@ class RunsPane(TabPane):
         tools = sum(1 for r in runs if r["status"] == "success" and (r.get("tool_failures") or 0) > 0)
         cost = sum(r.get("cost_usd") or 0 for r in runs)
         return Text.assemble(
-            ("● ", OK), (f"{len(runs) - errors - tools} ok", "bold"), "  ",
-            ("● ", BAD if errors else MUTED), (f"{errors} erro{'s' if errors != 1 else ''}", "bold"), "  ",
-            ("▲ ", WARN if tools else MUTED), (f"{tools} tool falhou", "bold"), "  ",
-            ("p95 ", MUTED), (_ms(_p95([r.get("latency_ms") or 0 for r in runs])), "bold"), "  ",
-            (_compact(sum(r["total_tokens"] or 0 for r in runs)), "bold"), (" tokens  ", MUTED),
+            ("● ", OK),
+            (f"{len(runs) - errors - tools} ok", "bold"),
+            "  ",
+            ("● ", BAD if errors else MUTED),
+            (f"{errors} erro{'s' if errors != 1 else ''}", "bold"),
+            "  ",
+            ("▲ ", WARN if tools else MUTED),
+            (f"{tools} tool falhou", "bold"),
+            "  ",
+            ("p95 ", MUTED),
+            (_ms(_p95([r.get("latency_ms") or 0 for r in runs])), "bold"),
+            "  ",
+            (_compact(sum(r["total_tokens"] or 0 for r in runs)), "bold"),
+            (" tokens  ", MUTED),
             (_cost(cost), "bold"),
         )
 
@@ -938,11 +964,15 @@ class OverviewPane(TabPane):
             with Grid(id="cards"):
                 for key, _ in CARDS:
                     yield Static(id=f"card-{key}", classes="card")
-            yield Static(Text.assemble(("Agentes", "bold"), ("   execuções ao longo do período na tendência", MUTED)),
-                         classes="section")
+            yield Static(
+                Text.assemble(("Agentes", "bold"), ("   execuções ao longo do período na tendência", MUTED)),
+                classes="section",
+            )
             yield Table(id="agents", cursor_type="row", zebra_stripes=True, classes="panel")
-            yield Static(Text.assemble(("Tools falhando", "bold"), ("   respostas que deram certo com tool quebrada", MUTED)),
-                         classes="section")
+            yield Static(
+                Text.assemble(("Tools falhando", "bold"), ("   respostas que deram certo com tool quebrada", MUTED)),
+                classes="section",
+            )
             yield Table(id="tool-failures", cursor_type="row", zebra_stripes=True, classes="panel")
             yield Static(Text("✓ nenhuma tool falhou no período", style=OK), id="failures-empty")
 
@@ -1012,26 +1042,37 @@ class OverviewPane(TabPane):
 
         runs = totals["runs"]
         error_rate = rate(totals)
-        self.card("runs", _int(runs), _change(runs, previous.get("runs"), worse_up=None),
-                  [b["runs"] for b in buckets])
+        self.card("runs", _int(runs), _change(runs, previous.get("runs"), worse_up=None), [b["runs"] for b in buckets])
         self.card(
             "errors",
             f"{error_rate or 0:.1%} · {totals['errors']}",
             _change(error_rate, rate(previous), worse_up=True, points=True),
             [b["errors"] / b["runs"] if b["runs"] else 0 for b in buckets],
         )
-        self.card("tools", _int(totals["tool_failure_runs"]),
-                  _change(totals["tool_failure_runs"], previous.get("tool_failure_runs"), worse_up=True),
-                  [b.get("tool_failure_runs") or 0 for b in buckets])
-        self.card("p95", _ms(totals.get("p95_latency_ms")),
-                  _change(totals.get("p95_latency_ms"), previous.get("p95_latency_ms"), worse_up=True),
-                  [b.get("p95_latency_ms") or 0 for b in buckets])
-        self.card("tokens", _compact(totals["total_tokens"]),
-                  _change(totals["total_tokens"], previous.get("total_tokens"), worse_up=None),
-                  [b.get("total_tokens") or 0 for b in buckets])
-        self.card("cost", _cost(totals.get("cost_usd")),
-                  _change(totals.get("cost_usd"), previous.get("cost_usd"), worse_up=True),
-                  [b.get("cost_usd") or 0 for b in buckets])
+        self.card(
+            "tools",
+            _int(totals["tool_failure_runs"]),
+            _change(totals["tool_failure_runs"], previous.get("tool_failure_runs"), worse_up=True),
+            [b.get("tool_failure_runs") or 0 for b in buckets],
+        )
+        self.card(
+            "p95",
+            _ms(totals.get("p95_latency_ms")),
+            _change(totals.get("p95_latency_ms"), previous.get("p95_latency_ms"), worse_up=True),
+            [b.get("p95_latency_ms") or 0 for b in buckets],
+        )
+        self.card(
+            "tokens",
+            _compact(totals["total_tokens"]),
+            _change(totals["total_tokens"], previous.get("total_tokens"), worse_up=None),
+            [b.get("total_tokens") or 0 for b in buckets],
+        )
+        self.card(
+            "cost",
+            _cost(totals.get("cost_usd")),
+            _change(totals.get("cost_usd"), previous.get("cost_usd"), worse_up=True),
+            [b.get("cost_usd") or 0 for b in buckets],
+        )
 
         agents = self.query_one("#agents", DataTable)
         agents.clear()
@@ -1041,7 +1082,9 @@ class OverviewPane(TabPane):
                 Text(row["agent_type"], style="bold"),
                 Text(_int(t["runs"]), justify="right"),
                 Text(spark(row.get("trend") or [], width=16), style=BRAND),
-                Text(f"{t['errors']} ({rate(t) or 0:.0%})" if t["errors"] else "0", style=BAD if t["errors"] else MUTED),
+                Text(
+                    f"{t['errors']} ({rate(t) or 0:.0%})" if t["errors"] else "0", style=BAD if t["errors"] else MUTED
+                ),
                 Text(str(t["tool_failure_runs"]), style=WARN if t["tool_failure_runs"] else MUTED),
                 Text(_ms(t.get("p95_latency_ms")), justify="right"),
                 Text(_compact(t["total_tokens"]), justify="right"),
@@ -1224,9 +1267,7 @@ class KuroDash(App):
             return Text.assemble(("● pausado", f"bold {MUTED}"), ("  tecle p para retomar", MUTED))
         if not self.updated_at:
             return Text("● conectando…", style=MUTED)
-        return Text.assemble(
-            ("● conectado", f"bold {OK}"), (f"  atualizado {self.updated_at}", MUTED)
-        )
+        return Text.assemble(("● conectado", f"bold {OK}"), (f"  atualizado {self.updated_at}", MUTED))
 
     @property
     def main(self) -> Screen:

@@ -319,7 +319,9 @@ _PADROES_ANTIGOS = {("memory_backend", "common")}
 → `apply`) não configurou nada."""
 
 
-def _validate_kind(kind: str, response_schema: list[dict[str, Any]], stages: list[dict[str, Any]] | None = None) -> None:
+def _validate_kind(
+    kind: str, response_schema: list[dict[str, Any]], stages: list[dict[str, Any]] | None = None
+) -> None:
     if kind == "analysis" and not response_schema:
         raise HTTPException(status_code=422, detail="kind='analysis' precisa de response_schema (ao menos 1 campo)")
     if kind != "analysis" and response_schema:
@@ -341,9 +343,7 @@ def _normalize_stages(stages: list[dict[str, Any]] | None) -> list[dict[str, Any
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def _validate_procedure_tools(
-    stages: list[dict[str, Any]], tools: list[str], declared_dependencies: set[str]
-) -> None:
+def _validate_procedure_tools(stages: list[dict[str, Any]], tools: list[str], declared_dependencies: set[str]) -> None:
     """O que só dá para conferir com as tools em mãos.
 
     - Cada etapa `action` aponta para uma tool que existe, está ativa e recebe o
@@ -368,10 +368,13 @@ def _validate_procedure_tools(
         if row is None:
             raise HTTPException(status_code=422, detail=f"Etapa {stage['id']!r}: tool desconhecida {stage['tool']!r}")
         if not row["enabled"]:
-            raise HTTPException(status_code=422, detail=f"Etapa {stage['id']!r}: a tool {stage['tool']!r} está desativada")
+            raise HTTPException(
+                status_code=422, detail=f"Etapa {stage['id']!r}: a tool {stage['tool']!r} está desativada"
+            )
         if row["kind"] == "builtin" and not stage.get("function"):
             raise HTTPException(
-                status_code=422, detail=f"Etapa {stage['id']!r}: tool builtin precisa de `function` (a função da toolkit)"
+                status_code=422,
+                detail=f"Etapa {stage['id']!r}: tool builtin precisa de `function` (a função da toolkit)",
             )
         if row["kind"] != "api":
             continue
@@ -739,9 +742,7 @@ def _transcript(agent_type: str, session_id: str, run_id: str | None = None) -> 
     if run_id is not None:
         position = next((i for i, t in enumerate(turns) if t["run_id"] == run_id), None)
         if position is None:
-            raise HTTPException(
-                status_code=422, detail=f"O run {run_id!r} não é desta sessão com {agent_type!r}."
-            )
+            raise HTTPException(status_code=422, detail=f"O run {run_id!r} não é desta sessão com {agent_type!r}.")
         turns = turns[: position + 1]
     turns = turns[-_TRANSCRIPT_TURNS:]
     if turns:
@@ -765,9 +766,7 @@ def _transcript(agent_type: str, session_id: str, run_id: str | None = None) -> 
         messages = []
     lines = [f"{m.role}: {m.content}" for m in messages if m.content]
     if not lines:
-        raise HTTPException(
-            status_code=422, detail=f"Sessão {session_id!r} não tem histórico para {agent_type!r}."
-        )
+        raise HTTPException(status_code=422, detail=f"Sessão {session_id!r} não tem histórico para {agent_type!r}.")
     return "\n".join(lines)
 
 
@@ -800,15 +799,9 @@ def replace_feedback(agent_type: str, body: FeedbackRulesIn) -> dict[str, Any]:
     """Substitui as regras à mão, sem passar pelo modelo — é a saída quando um
     merge sai errado, e o que a UI usa para editar ou apagar uma regra só."""
     _feedback_target(agent_type)
-    regras = [
-        {"id": r.id or uuid.uuid4().hex[:8], "texto": r.texto.strip()}
-        for r in body.rules
-        if r.texto.strip()
-    ]
+    regras = [{"id": r.id or uuid.uuid4().hex[:8], "texto": r.texto.strip()} for r in body.rules if r.texto.strip()]
     if not regras:
-        raise HTTPException(
-            status_code=422, detail="Sem regras. Para zerar a nota use DELETE /agents/{tipo}/feedback."
-        )
+        raise HTTPException(status_code=422, detail="Sem regras. Para zerar a nota use DELETE /agents/{tipo}/feedback.")
     return save_feedback_note(agent_type, regras, origin="manual")
 
 
@@ -888,7 +881,12 @@ def get_procedure_funnel(agent_type: str, include_dry_run: bool = False) -> dict
     rows = procedure_funnel(agent_type, include_dry_run=include_dry_run)
     by_stage = {(r["stage"], r["status"]): r["sessions"] for r in rows}
     stages = [
-        {"id": stage["id"], "type": stage["type"], "goal": stage["goal"], "sessions": by_stage.get((stage["id"], "active"), 0)}
+        {
+            "id": stage["id"],
+            "type": stage["type"],
+            "goal": stage["goal"],
+            "sessions": by_stage.get((stage["id"], "active"), 0),
+        }
         for stage in definition.get("stages") or []
     ]
     known = {s["id"] for s in stages}

@@ -18,7 +18,6 @@ class Settings(BaseSettings):
     # Banco de dados (memória comum, sessões, tracing, knowledge)
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/agent_service"
 
-
     # Provedor de modelo padrão
     default_model_provider: str = "google"
     default_model_id: str = "gemini-2.5-flash"

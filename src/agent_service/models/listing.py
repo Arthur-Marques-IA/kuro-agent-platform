@@ -34,10 +34,33 @@ from agent_service.models.catalog import ProviderProbeError
 CACHE_SECONDS = 15 * 60
 
 _OPENAI_CHAT = re.compile(r"^(gpt-|o\d|chatgpt-)")
-_OPENAI_NOT_CHAT = ("audio", "realtime", "transcribe", "tts", "image", "search", "instruct", "embedding", "moderation", "codex")
+_OPENAI_NOT_CHAT = (
+    "audio",
+    "realtime",
+    "transcribe",
+    "tts",
+    "image",
+    "search",
+    "instruct",
+    "embedding",
+    "moderation",
+    "codex",
+)
 _PREVIEW = re.compile(r"(^|[-_.\s])(preview|exp|experimental|beta|alpha)($|[-_.\s\d])", re.IGNORECASE)
 _ALIAS = re.compile(r"(^|[-_.])latest$", re.IGNORECASE)
-_GOOGLE_NOT_CHAT = ("transcribe", "embedding", "tts", "image", "live", "native-audio", "aqa", "imagen", "veo", "robotics", "computer-use")
+_GOOGLE_NOT_CHAT = (
+    "transcribe",
+    "embedding",
+    "tts",
+    "image",
+    "live",
+    "native-audio",
+    "aqa",
+    "imagen",
+    "veo",
+    "robotics",
+    "computer-use",
+)
 
 
 @dataclass(frozen=True)
@@ -139,7 +162,9 @@ def list_models(
     return _fetch(key, lister, api_key, base_url)
 
 
-def _fetch(key: tuple[str, str | None], lister: Any, api_key: str | None, base_url: str | None) -> tuple[list[ModelInfo], float]:
+def _fetch(
+    key: tuple[str, str | None], lister: Any, api_key: str | None, base_url: str | None
+) -> tuple[list[ModelInfo], float]:
     models = lister(api_key, base_url)
     # Mais novos primeiro quando há data; senão ordem alfabética decrescente, que
     # nos nomes versionados ("gemini-3...", "gemini-2.5...") dá o mesmo efeito.

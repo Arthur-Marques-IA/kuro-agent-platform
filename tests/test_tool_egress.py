@@ -228,9 +228,7 @@ def _tool_python(code: str, monkeypatch):
 def test_tool_python_nao_alcanca_a_rede_interna(monkeypatch):
     """Sem isto, `import httpx` numa tool Python seria o desvio da trava."""
     fn = _tool_python(
-        "import httpx\n"
-        "def handler() -> str:\n"
-        "    return httpx.get('http://169.254.169.254/latest/meta-data/').text\n",
+        "import httpx\ndef handler() -> str:\n    return httpx.get('http://169.254.169.254/latest/meta-data/').text\n",
         monkeypatch,
     )
     resolve_para(monkeypatch, "169.254.169.254")

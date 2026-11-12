@@ -73,9 +73,7 @@ class InputEvent(BaseModel):
         "instituição de fato enviou em nome do agente) ou system (aviso do sistema)."
     )
     content: str = Field(default="", description="O texto do evento.")
-    at: datetime | None = Field(
-        default=None, description="Quando aconteceu (ISO 8601). Com fuso, é guardado em UTC."
-    )
+    at: datetime | None = Field(default=None, description="Quando aconteceu (ISO 8601). Com fuso, é guardado em UTC.")
     kind: EventKind = Field(default="text", description="text ou document (o contato mandou um documento).")
     attachments: list[EventAttachment] = Field(
         default_factory=list,
@@ -193,9 +191,7 @@ def _event_text(event: InputEvent) -> str:
     return "\n".join(lines)
 
 
-def build_model_text(
-    message: str | None, events: list[InputEvent] | None, context: list[ContextBlock] | None
-) -> str:
+def build_model_text(message: str | None, events: list[InputEvent] | None, context: list[ContextBlock] | None) -> str:
     """O texto que o modelo lê (e que fica em `runs.message`). Seções vazias somem."""
     events = list(events or [])
     context = list(context or [])

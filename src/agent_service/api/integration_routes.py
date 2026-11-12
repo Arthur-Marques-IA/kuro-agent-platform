@@ -150,13 +150,25 @@ _CONTEXT = (
 
 CHAT_FIELDS = [
     RequestField(name="agent_type", type="string", required=True, description="Slug do agente."),
-    RequestField(name="user_id", type="string", required=True,
-                 description="Identificador estável do usuário final: base do histórico e das memórias."),
-    RequestField(name="session_id", type="string", required=True,
-                 description="A conversa. Repita entre mensagens para manter o histórico; outro valor começa do zero."),
-    RequestField(name="message", type="string", required=False,
-                 description="A fala nova do usuário. Obrigatória, a não ser que events traga um evento "
-                 "role=contact (aí a fala é o último deles)."),
+    RequestField(
+        name="user_id",
+        type="string",
+        required=True,
+        description="Identificador estável do usuário final: base do histórico e das memórias.",
+    ),
+    RequestField(
+        name="session_id",
+        type="string",
+        required=True,
+        description="A conversa. Repita entre mensagens para manter o histórico; outro valor começa do zero.",
+    ),
+    RequestField(
+        name="message",
+        type="string",
+        required=False,
+        description="A fala nova do usuário. Obrigatória, a não ser que events traga um evento "
+        "role=contact (aí a fala é o último deles).",
+    ),
     RequestField(name="events", type="array", required=False, description=_EVENTS),
     RequestField(name="context", type="array", required=False, description=_CONTEXT),
     RequestField(name="dependencies", type="object", required=False, description=_DEPENDENCIES),
@@ -168,7 +180,11 @@ CHAT_FIELDS = [
 _STRUCTURED_EXAMPLE: dict[str, Any] = {
     "message": "boa tarde, me envia novamente o comprovante",
     "events": [
-        {"role": "agent_sent", "content": "Maria, recebi seus dados. Segue o comprovante.", "at": "2026-11-11T12:36:10Z"},
+        {
+            "role": "agent_sent",
+            "content": "Maria, recebi seus dados. Segue o comprovante.",
+            "at": "2026-11-11T12:36:10Z",
+        },
         {"role": "contact", "content": "Para finalizar o diploma. Obrigada.", "at": "2026-11-11T12:37:01Z"},
     ],
     "context": [
@@ -179,11 +195,19 @@ _STRUCTURED_EXAMPLE: dict[str, Any] = {
 
 ANALYZE_FIELDS = [
     RequestField(name="agent_type", type="string", required=True, description="Slug do agente analista."),
-    RequestField(name="document", type="string", required=True,
-                 description="O texto a analisar (até MAX_INPUT_CHARS caracteres)."),
+    RequestField(
+        name="document",
+        type="string",
+        required=True,
+        description="O texto a analisar (até MAX_INPUT_CHARS caracteres).",
+    ),
     RequestField(name="dependencies", type="object", required=False, description=_DEPENDENCIES),
-    RequestField(name="session_id", type="string", required=False,
-                 description="Agrupa os runs por conversa (ex.: o id da conversa no seu sistema). Não cria histórico."),
+    RequestField(
+        name="session_id",
+        type="string",
+        required=False,
+        description="Agrupa os runs por conversa (ex.: o id da conversa no seu sistema). Não cria histórico.",
+    ),
     RequestField(name="user_id", type="string", required=False, description="Quem está por trás do documento."),
     RequestField(name="metadata", type="object", required=False, description=_METADATA),
     RequestField(name="dry_run", type="boolean", required=False, description=_DRY_RUN),
@@ -201,32 +225,58 @@ STREAM_EVENTS = [
 ]
 
 ERRORS = [
-    ErrorContract(status="401 / 403", meaning="Chave ausente ou de escopo errado",
-                  action="Erro de configuração: alertar, não repetir"),
+    ErrorContract(
+        status="401 / 403",
+        meaning="Chave ausente ou de escopo errado",
+        action="Erro de configuração: alertar, não repetir",
+    ),
     ErrorContract(status="404", meaning="agent_type não existe", action="Erro de configuração: alertar, não repetir"),
-    ErrorContract(status="409",
-                  meaning="Procedural: outra mensagem da mesma sessão ainda em andamento; ou a mesma "
-                  "Idempotency-Key ainda em andamento",
-                  action="Esperar a resposta dela e reenviar (com a mesma Idempotency-Key)"),
-    ErrorContract(status="422", meaning="Requisição inválida: dependency faltando ou de tipo errado, texto grande demais",
-                  action="Bug de quem chama: não repetir, alertar"),
-    ErrorContract(status="429 com Retry-After",
-                  meaning="A chave passou de RATE_LIMIT_PER_MINUTE chamadas no último minuto (error: rate_limited)",
-                  action="Fallback agora, repetir depois do Retry-After"),
-    ErrorContract(status="502", meaning="Falha do provedor de modelo ou saída fora do schema",
-                  action="Fallback; pode tentar de novo depois"),
-    ErrorContract(status="503 com Retry-After", meaning="Sem vaga de execução (fila cheia) ou banco fora",
-                  action="Fallback agora, repetir depois do Retry-After"),
-    ErrorContract(status="503 com error",
-                  meaning="Configuração do Kuro: model_provider_not_configured ou encryption_not_configured",
-                  action="Fallback e alertar quem opera o Kuro: repetir não resolve"),
-    ErrorContract(status="504", meaning="A execução passou do timeout_seconds do agente",
-                  action="Fallback; o run fica registrado com o motivo"),
+    ErrorContract(
+        status="409",
+        meaning="Procedural: outra mensagem da mesma sessão ainda em andamento; ou a mesma "
+        "Idempotency-Key ainda em andamento",
+        action="Esperar a resposta dela e reenviar (com a mesma Idempotency-Key)",
+    ),
+    ErrorContract(
+        status="422",
+        meaning="Requisição inválida: dependency faltando ou de tipo errado, texto grande demais",
+        action="Bug de quem chama: não repetir, alertar",
+    ),
+    ErrorContract(
+        status="429 com Retry-After",
+        meaning="A chave passou de RATE_LIMIT_PER_MINUTE chamadas no último minuto (error: rate_limited)",
+        action="Fallback agora, repetir depois do Retry-After",
+    ),
+    ErrorContract(
+        status="502",
+        meaning="Falha do provedor de modelo ou saída fora do schema",
+        action="Fallback; pode tentar de novo depois",
+    ),
+    ErrorContract(
+        status="503 com Retry-After",
+        meaning="Sem vaga de execução (fila cheia) ou banco fora",
+        action="Fallback agora, repetir depois do Retry-After",
+    ),
+    ErrorContract(
+        status="503 com error",
+        meaning="Configuração do Kuro: model_provider_not_configured ou encryption_not_configured",
+        action="Fallback e alertar quem opera o Kuro: repetir não resolve",
+    ),
+    ErrorContract(
+        status="504",
+        meaning="A execução passou do timeout_seconds do agente",
+        action="Fallback; o run fica registrado com o motivo",
+    ),
 ]
 
 _EXAMPLE_SOURCE = {
-    "title": "Manual do produto", "document": "manual.pdf", "source_url": None,
-    "content_id": "c0ffee", "collection": "manuais", "score": 0.82, "chunk_ids": ["c0ffee_3"],
+    "title": "Manual do produto",
+    "document": "manual.pdf",
+    "source_url": None,
+    "content_id": "c0ffee",
+    "collection": "manuais",
+    "score": 0.82,
+    "chunk_ids": ["c0ffee_3"],
 }
 
 
@@ -235,18 +285,31 @@ def _response_example(
 ) -> dict[str, Any]:
     """A forma da resposta, com os campos que a doc manda guardar (`run_id`, `agent_version`,
     `config_hash`). Os valores são ilustrativos."""
-    comum = {"run_id": "run_8f2c1d", "trace_id": "4bf92f35", "agent_version": agent_version,
-             "config_hash": "a1b2c3d4e5f6"}
+    comum = {
+        "run_id": "run_8f2c1d",
+        "trace_id": "4bf92f35",
+        "agent_version": agent_version,
+        "config_hash": "a1b2c3d4e5f6",
+    }
     if kind == "analysis":
         result = {f["name"]: _example_for(f) for f in response_schema}
         return {"agent_type": agent_type, "result": result, **comum, "sources": []}
     resposta: dict[str, Any] = {
-        "agent_type": agent_type, "session_id": "sessao-123", "content": "Olá! Como posso ajudar?", **comum,
+        "agent_type": agent_type,
+        "session_id": "sessao-123",
+        "content": "Olá! Como posso ajudar?",
+        **comum,
         "sources": [] if kind == "procedural" else [_EXAMPLE_SOURCE],
     }
     if kind == "procedural":
-        resposta["state"] = {"stage": "…", "collected": {}, "missing": ["…"], "invalid": {}, "done": False,
-                             "result": None}
+        resposta["state"] = {
+            "stage": "…",
+            "collected": {},
+            "missing": ["…"],
+            "invalid": {},
+            "done": False,
+            "result": None,
+        }
     return resposta
 
 
@@ -337,12 +400,7 @@ def get_integration_contract(
     # cURL sairia com o literal `$KURO_RUNTIME_API_KEY` no header — 401 para
     # quem copiasse e colasse, que é o oposto do que este endpoint existe para fazer.
     auth_header = '  -H "Authorization: Bearer $KURO_RUNTIME_API_KEY" \\\n' if auth_enabled() else ""
-    curl = (
-        f"curl -X POST {base}{endpoint} \\\n"
-        f"  -H 'Content-Type: application/json' \\\n"
-        f"{auth_header}"
-        f"  -d '{corpo}'"
-    )
+    curl = f"curl -X POST {base}{endpoint} \\\n  -H 'Content-Type: application/json' \\\n{auth_header}  -d '{corpo}'"
 
     agent_version = definition.get("agent_version")
     return IntegrationContract(

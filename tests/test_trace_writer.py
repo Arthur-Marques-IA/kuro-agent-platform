@@ -43,7 +43,11 @@ def test_fila_cheia_descarta_e_conta_sem_levantar(caplog):
     assert writer.flush(5)
     assert feitos == [1, 2]
     assert writer.stats() | {"max_pending": 0} == {
-        "pending": 0, "max_pending": 0, "written": 3, "dropped": 2, "failed": 0
+        "pending": 0,
+        "max_pending": 0,
+        "written": 3,
+        "dropped": 2,
+        "failed": 0,
     }
     writer.shutdown(1)
 

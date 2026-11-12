@@ -43,8 +43,12 @@ def upgrade() -> None:
     op.create_index("ix_jobs_status_run_after", "jobs", ["status", "run_after"])
     op.create_index("ix_jobs_created_at", "jobs", ["created_at"])
     op.create_index(
-        "uq_jobs_dedupe_active", "jobs", ["dedupe_key"], unique=True,
-        postgresql_where=_ACTIVE, sqlite_where=_ACTIVE,
+        "uq_jobs_dedupe_active",
+        "jobs",
+        ["dedupe_key"],
+        unique=True,
+        postgresql_where=_ACTIVE,
+        sqlite_where=_ACTIVE,
     )
 
 

@@ -49,9 +49,10 @@ def validate_response_schema(specs: list[dict[str, Any]] | None) -> list[dict[st
 def _model_name(*parts: str) -> str:
     """Nome único por caminho, só para facilitar debug — aparece no schema e nos
     erros de validação, e não tem efeito em runtime."""
-    return "".join(
-        "".join(p.capitalize() for p in part.replace("-", "_").split("_")) for part in parts if part
-    ) or "Analysis"
+    return (
+        "".join("".join(p.capitalize() for p in part.replace("-", "_").split("_")) for part in parts if part)
+        or "Analysis"
+    )
 
 
 def _leaf_type(field: dict[str, Any]) -> Any:

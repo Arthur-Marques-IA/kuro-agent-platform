@@ -59,8 +59,11 @@ def _grava(started_at: datetime, *, agent_type: str, dependencies=None, metadata
             message="meu cpf é 123",
             started_at=started_at,
             ended_at=started_at + timedelta(seconds=1),
-            input={"message": "meu cpf é 123", "dependencies": dependencies or {"cpf": "123"},
-                   "attachments": [{"filename": "rg.png", "mime_type": "image/png", "kind": "image"}]},
+            input={
+                "message": "meu cpf é 123",
+                "dependencies": dependencies or {"cpf": "123"},
+                "attachments": [{"filename": "rg.png", "mime_type": "image/png", "kind": "image"}],
+            },
             output="resposta com dados",
             input_tokens=10,
             output_tokens=5,
@@ -90,20 +93,44 @@ def _grava(started_at: datetime, *, agent_type: str, dependencies=None, metadata
                     started_at=started_at,
                     input={"query": "garantia cpf 123"},
                     output="trecho",
-                    metadata={"references": {"query": "garantia cpf 123", "results": [
-                        {"rank": 1, "document": "manual", "chunk_id": "k1", "content": "texto do trecho"}]}},
+                    metadata={
+                        "references": {
+                            "query": "garantia cpf 123",
+                            "results": [
+                                {"rank": 1, "document": "manual", "chunk_id": "k1", "content": "texto do trecho"}
+                            ],
+                        }
+                    },
                 ),
             ],
         )
     )
     with get_db().db_engine.begin() as conn:
-        conn.execute(insert(run_scores).values(id=uuid4().hex, run_id=run_id, name="feedback", value=1.0,
-                                               data_type="BOOLEAN", comment="o cliente disse o cpf",
-                                               user_id="op", timestamp=started_at))
+        conn.execute(
+            insert(run_scores).values(
+                id=uuid4().hex,
+                run_id=run_id,
+                name="feedback",
+                value=1.0,
+                data_type="BOOLEAN",
+                comment="o cliente disse o cpf",
+                user_id="op",
+                timestamp=started_at,
+            )
+        )
         conn.execute(insert(run_references).values(run_id=run_id, reference={"acao": "x"}, source="legacy"))
-        conn.execute(insert(chunk_feedback).values(id=uuid4().hex, run_id=run_id, span_id=f"{run_id}:2",
-                                                   query="garantia cpf 123", chunk_id="k1", label="relevant",
-                                                   created_at=started_at, status="open"))
+        conn.execute(
+            insert(chunk_feedback).values(
+                id=uuid4().hex,
+                run_id=run_id,
+                span_id=f"{run_id}:2",
+                query="garantia cpf 123",
+                chunk_id="k1",
+                label="relevant",
+                created_at=started_at,
+                status="open",
+            )
+        )
     return run_id
 
 
@@ -147,14 +174,28 @@ def test_redacao_na_gravacao_de_dependencies_args_resultado_e_metadata(chaves):
     tool_args = {"filtro": {"cpf": "123"}, "assunto": "fatura"}
     resultado = json.dumps({"cliente": {"cpf": "123", "nome": "Ana"}})
     spans = [
-        SpanRecord(type="TOOL", name="ficha", started_at=RECENTE, level="ERROR", status_message=resultado,
-                   input=tool_args, output=resultado, metadata={"cpf": "123", "failure": "http"}),
-        SpanRecord(type="SPAN", name="procedure_state", started_at=RECENTE,
-                   output={"collected": {"cpf": "123", "nome": "Ana"}}),
+        SpanRecord(
+            type="TOOL",
+            name="ficha",
+            started_at=RECENTE,
+            level="ERROR",
+            status_message=resultado,
+            input=tool_args,
+            output=resultado,
+            metadata={"cpf": "123", "failure": "http"},
+        ),
+        SpanRecord(
+            type="SPAN", name="procedure_state", started_at=RECENTE, output={"collected": {"cpf": "123", "nome": "Ana"}}
+        ),
     ]
     entrada_original = copy.deepcopy((dependencies, tool_args))
-    run_id = _grava(RECENTE, agent_type="ret-redacao", dependencies=dependencies,
-                    metadata={"conversation_id": "c1", "CPF": "123"}, spans=spans)
+    run_id = _grava(
+        RECENTE,
+        agent_type="ret-redacao",
+        dependencies=dependencies,
+        metadata={"conversation_id": "c1", "CPF": "123"},
+        spans=spans,
+    )
 
     linhas = {s.name: s for s in _linhas(run_spans, run_id)}
     assert linhas["/chat"].input["dependencies"] == {"cpf": "[redigido]", "conta": {"telefone": "[redigido]", "id": 7}}
@@ -179,9 +220,19 @@ def test_mascara_do_langfuse(chaves):
     assert redaction.langfuse_mask(data={"dependencies": {"cpf": "1"}}) == {"dependencies": {"cpf": "[redigido]"}}
     ident = OtelSpanIdentifier(trace_id="0" * 32, span_id="1" * 16)
     span = OtelSpanData(
-        trace_id=ident.trace_id, span_id=ident.span_id, parent_span_id=None, name="tool", instrumentation_scope_name="agno",
-        instrumentation_scope_version=None, resource_attributes={},
-        attributes={"input.value": json.dumps({"cpf": "1", "x": 2}), "tool.cpf": "1", "output.value": "texto cpf 1", "n": 3},
+        trace_id=ident.trace_id,
+        span_id=ident.span_id,
+        parent_span_id=None,
+        name="tool",
+        instrumentation_scope_name="agno",
+        instrumentation_scope_version=None,
+        resource_attributes={},
+        attributes={
+            "input.value": json.dumps({"cpf": "1", "x": 2}),
+            "tool.cpf": "1",
+            "output.value": "texto cpf 1",
+            "n": 3,
+        },
     )
     resultado = redaction.langfuse_mask_otel_spans(params=MaskOtelSpansParams(spans={ident: span}))
     patch = resultado.span_patches[ident]
@@ -239,8 +290,12 @@ def test_anonymize_apaga_conteudo_e_mantem_estatisticas():
     linha = _linhas(runs, antigo)[0]
     assert (linha.message, linha.output, linha.input_message, linha.input_events, linha.input_context) == (None,) * 5
     assert (linha.input_tokens, linha.output_tokens, linha.total_tokens, linha.cost_usd) == (10, 5, 15, 0.01)
-    assert (linha.status, linha.agent_type, linha.agent_version, linha.session_id) == ("success", "ret-anon", 3,
-                                                                                      linha.session_id)
+    assert (linha.status, linha.agent_type, linha.agent_version, linha.session_id) == (
+        "success",
+        "ret-anon",
+        3,
+        linha.session_id,
+    )
     assert linha.started_at is not None and linha.latency_ms is not None
     assert linha.tool_calls == 2 and linha.tool_failures == 1
 
@@ -292,7 +347,9 @@ def test_job_pela_fila_roda_uma_vez_e_se_reagenda(monkeypatch):
     assert _linhas(runs, antigo) == [] and _linhas(runs, recente)
     proximo = jobs.active_job(retention.DEDUPE_KEY)
     assert proximo is not None and proximo["status"] == "queued"
-    run_after = proximo["run_after"] if proximo["run_after"].tzinfo else proximo["run_after"].replace(tzinfo=timezone.utc)
+    run_after = (
+        proximo["run_after"] if proximo["run_after"].tzinfo else proximo["run_after"].replace(tzinfo=timezone.utc)
+    )
     assert run_after > datetime.now(timezone.utc) + timedelta(hours=5)
 
     # Desligada depois: o agendado sai da fila.

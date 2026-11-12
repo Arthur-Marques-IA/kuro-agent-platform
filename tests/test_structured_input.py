@@ -88,8 +88,12 @@ def test_so_events_a_fala_e_o_ultimo_contact_e_o_que_vem_depois_fica_depois():
         events=[
             {"role": "contact", "content": "oi"},
             {"role": "human_agent", "content": "Olá, Maria.", "at": "2026-11-11T09:00:00-03:00"},
-            {"role": "contact", "content": "segue o documento", "kind": "document",
-             "attachments": [{"filename": "rg.pdf", "mime_type": "application/pdf"}]},
+            {
+                "role": "contact",
+                "content": "segue o documento",
+                "kind": "document",
+                "attachments": [{"filename": "rg.pdf", "mime_type": "application/pdf"}],
+            },
             {"role": "system", "content": "Atendimento devolvido ao agente."},
         ]
     )
@@ -147,21 +151,31 @@ def test_limites_de_blocos_e_eventos():
 
 def test_key_repetida_e_role_invalido():
     with pytest.raises(ValidationError, match="repetida"):
-        _request(message="oi", context=[{"key": "a", "title": "A", "content": "x"}, {"key": "a", "title": "B", "content": "y"}])
+        _request(
+            message="oi",
+            context=[{"key": "a", "title": "A", "content": "x"}, {"key": "a", "title": "B", "content": "y"}],
+        )
     with pytest.raises(ValidationError, match="role"):
         _request(message="oi", events=[{"role": "aluno", "content": "x"}])
 
 
 def test_anexo_de_evento_nao_aceita_conteudo():
     with pytest.raises(ValidationError, match="attachments do corpo"):
-        _request(message="oi", events=[{"role": "contact", "content": "x",
-                                        "attachments": [{"content_base64": "AAAA", "filename": "a.pdf"}]}])
+        _request(
+            message="oi",
+            events=[
+                {"role": "contact", "content": "x", "attachments": [{"content_base64": "AAAA", "filename": "a.pdf"}]}
+            ],
+        )
 
 
 def test_soma_acima_de_max_input_chars_e_422_no_chat_e_no_stream(monkeypatch):
     monkeypatch.setattr(get_settings(), "max_input_chars", 100)
-    r = _request(message="oi", context=[{"key": "a", "title": "A", "content": "x" * 60}],
-                 events=[{"role": "contact", "content": "y" * 40}])
+    r = _request(
+        message="oi",
+        context=[{"key": "a", "title": "A", "content": "x" * 60}],
+        events=[{"role": "contact", "content": "y" * 40}],
+    )
     for rota in (chat, chat_stream):
         with pytest.raises(HTTPException) as exc:
             asyncio.run(rota(r))
@@ -208,8 +222,14 @@ class AgenteQueGuarda:
 @pytest.fixture
 def agente(monkeypatch):
     agent = AgenteQueGuarda()
-    definicao = {"kind": "conversational", "name": "Estruturado", "prompt_version": 1, "agent_version": 1,
-                 "config_hash": "h", "dependency_fields": []}
+    definicao = {
+        "kind": "conversational",
+        "name": "Estruturado",
+        "prompt_version": 1,
+        "agent_version": 1,
+        "config_hash": "h",
+        "dependency_fields": [],
+    }
     monkeypatch.setattr(routes, "get_agent_with_definition", lambda agent_type: (agent, definicao))
     agent.definicao = definicao
     return agent
@@ -220,8 +240,12 @@ def _colunas(run_id: str) -> tuple:
 
     with get_db().db_engine.connect() as conn:
         return conn.execute(
-            sa.select(run_store.runs.c.message, run_store.runs.c.input_message, run_store.runs.c.input_events,
-                      run_store.runs.c.input_context).where(run_store.runs.c.run_id == run_id)
+            sa.select(
+                run_store.runs.c.message,
+                run_store.runs.c.input_message,
+                run_store.runs.c.input_events,
+                run_store.runs.c.input_context,
+            ).where(run_store.runs.c.run_id == run_id)
         ).one()
 
 
@@ -234,9 +258,12 @@ def test_regressao_so_message_se_comporta_como_antes(agente):
     from agent_service.db import get_db
 
     with get_db().db_engine.connect() as conn:
-        nulas = conn.execute(sa.text(
-            "SELECT input_message IS NULL, input_events IS NULL, input_context IS NULL FROM runs WHERE run_id = :r"
-        ), {"r": resposta.run_id}).one()
+        nulas = conn.execute(
+            sa.text(
+                "SELECT input_message IS NULL, input_events IS NULL, input_context IS NULL FROM runs WHERE run_id = :r"
+            ),
+            {"r": resposta.run_id},
+        ).one()
     assert tuple(nulas) == (1, 1, 1), "SQL NULL, não o JSON null: é o filtro de run não estruturado"
     trace = get_run_trace(resposta.run_id)
     assert trace.run.message == mensagem
@@ -253,16 +280,37 @@ def test_chat_estruturado_grava_as_tres_colunas_e_o_texto_montado(agente):
     assert message == SNAPSHOT_REGENTE, "runs.message guarda o texto que o modelo leu"
     assert input_message == "boa tarde, me envia novamente o comprovante"
     assert input_events == [
-        {"role": "agent_sent", "content": "Maria, recebi seus dados...", "at": "2026-11-11T12:36:10Z",
-         "kind": "text", "attachments": [], "speech": False},
-        {"role": "contact", "content": "Para finalizar o diploma. Obrigada.", "at": "2026-11-11T12:37:01Z",
-         "kind": "text", "attachments": [], "speech": False},
-        {"role": "contact", "content": "boa tarde, me envia novamente o comprovante", "at": "2026-11-11T12:37:15Z",
-         "kind": "text", "attachments": [], "speech": True},
+        {
+            "role": "agent_sent",
+            "content": "Maria, recebi seus dados...",
+            "at": "2026-11-11T12:36:10Z",
+            "kind": "text",
+            "attachments": [],
+            "speech": False,
+        },
+        {
+            "role": "contact",
+            "content": "Para finalizar o diploma. Obrigada.",
+            "at": "2026-11-11T12:37:01Z",
+            "kind": "text",
+            "attachments": [],
+            "speech": False,
+        },
+        {
+            "role": "contact",
+            "content": "boa tarde, me envia novamente o comprovante",
+            "at": "2026-11-11T12:37:15Z",
+            "kind": "text",
+            "attachments": [],
+            "speech": True,
+        },
     ]
     assert input_context[1] == {
-        "key": "dados_aluno", "title": "Dados do aluno", "content": "Nome: Maria\nCurso: Pedagogia",
-        "volatile": False, "hash": structured_input.content_hash("Nome: Maria\nCurso: Pedagogia"),
+        "key": "dados_aluno",
+        "title": "Dados do aluno",
+        "content": "Nome: Maria\nCurso: Pedagogia",
+        "volatile": False,
+        "hash": structured_input.content_hash("Nome: Maria\nCurso: Pedagogia"),
     }
     assert input_context[4]["volatile"] is True and len(input_context[4]["hash"]) == 64
 
@@ -377,10 +425,12 @@ def test_migracao_0016_sobe_e_desce_sem_perder_runs(tmp_path):
     with engine.begin() as conn:
         config.attributes["connection"] = conn
         command.upgrade(config, "0015")
-        conn.execute(sa.text(
-            "INSERT INTO runs (run_id, trace_id, tenant_id, agent_type, status, message, input_tokens, output_tokens, "
-            "total_tokens, started_at) VALUES ('r1', 't1', 'default', 'r6', 'success', 'texto antigo', 0, 0, 0, '2026-11-01')"
-        ))
+        conn.execute(
+            sa.text(
+                "INSERT INTO runs (run_id, trace_id, tenant_id, agent_type, status, message, input_tokens, output_tokens, "
+                "total_tokens, started_at) VALUES ('r1', 't1', 'default', 'r6', 'success', 'texto antigo', 0, 0, 0, '2026-11-01')"
+            )
+        )
         command.upgrade(config, "0016")
     assert {"input_message", "input_events", "input_context"} <= colunas()
     with engine.connect() as conn:

@@ -142,7 +142,9 @@ def validate_language(language: str, engine: Any) -> None:
     """O dicionário existe neste Postgres? O nome vai para o SQL do full-text,
     então o formato é conferido mesmo onde não dá para consultar `pg_ts_config`."""
     if not _LANGUAGE_RE.match(language):
-        raise SearchConfigError(f"language deve ser o nome de um dicionário do Postgres (ex.: portuguese), veio {language!r}")
+        raise SearchConfigError(
+            f"language deve ser o nome de um dicionário do Postgres (ex.: portuguese), veio {language!r}"
+        )
     if engine.dialect.name != "postgresql":
         return
     with engine.connect() as conn:

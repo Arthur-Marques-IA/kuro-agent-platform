@@ -42,7 +42,9 @@ def _build(row: dict[str, Any]) -> Any:
         if kind == "builtin":
             spec = get_builtin_spec(config.get("builtin_id", ""))
             if spec is None:
-                raise ToolBuildError(f"Tool {row['tool_name']!r}: builtin_id {config.get('builtin_id')!r} não existe mais no catálogo.")
+                raise ToolBuildError(
+                    f"Tool {row['tool_name']!r}: builtin_id {config.get('builtin_id')!r} não existe mais no catálogo."
+                )
             return spec.factory(config.get("params", {}), row["tool_name"])
         if kind == "api":
             return build_api_function(tool_name=row["tool_name"], description=row.get("description"), config=config)

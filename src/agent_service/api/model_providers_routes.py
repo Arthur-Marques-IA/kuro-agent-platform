@@ -125,7 +125,11 @@ def list_provider_models(provider: str, credential_id: str | None = None, refres
         raise HTTPException(status_code=422, detail=f"{spec.label}: nenhuma chave cadastrada em /model-credentials")
     try:
         models, fetched_at = list_models(
-            provider, api_key=api_key, base_url=base_url, cache_key=credential["id"] if credential else None, refresh=refresh
+            provider,
+            api_key=api_key,
+            base_url=base_url,
+            cache_key=credential["id"] if credential else None,
+            refresh=refresh,
         )
     except ProviderProbeError as exc:
         raise HTTPException(status_code=502, detail=f"{spec.label} não listou os modelos: {exc}") from exc

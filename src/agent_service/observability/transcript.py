@@ -157,9 +157,7 @@ def _block_hash(block: dict[str, Any]) -> str:
     return hashlib.sha256(str(block.get("content") or "").encode("utf-8")).hexdigest()
 
 
-def _context(
-    blocks: list[dict[str, Any]], previous: dict[str, dict[str, Any]] | None
-) -> list[TimelineContextBlock]:
+def _context(blocks: list[dict[str, Any]], previous: dict[str, dict[str, Any]] | None) -> list[TimelineContextBlock]:
     out = []
     for block in blocks:
         digest = _block_hash(block)

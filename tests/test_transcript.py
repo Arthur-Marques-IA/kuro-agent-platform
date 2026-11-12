@@ -64,8 +64,16 @@ def _record(session_id, minute, *, structured=True, context=(), events=None, mes
             input_message=message,
             input_events=events
             if events is not None
-            else [{"role": "contact", "content": message, "at": started.isoformat(), "kind": "text",
-                   "attachments": [], "speech": True}],
+            else [
+                {
+                    "role": "contact",
+                    "content": message,
+                    "at": started.isoformat(),
+                    "kind": "text",
+                    "attachments": [],
+                    "speech": True,
+                }
+            ],
             input_context=list(context),
         )
     run_store._write_run(RunRecord(**fields))
@@ -90,8 +98,12 @@ def _tool(name, args, output, minute, *, failure=None, status_message=None):
 def test_turno_estruturado_contexto_mudou_volatil_e_tools():
     tool = f"decidir-{uuid4().hex[:6]}"
     tool_store.create_tool(
-        tool_name=tool, kind="api", label="Decidir", description=None,
-        config={"url": "https://exemplo.test", "method": "POST", "params": []}, side_effect=True,
+        tool_name=tool,
+        kind="api",
+        label="Decidir",
+        description=None,
+        config={"url": "https://exemplo.test", "method": "POST", "params": []},
+        side_effect=True,
     )
     sid = f"s-{uuid4().hex[:8]}"
     first = [
@@ -106,19 +118,43 @@ def test_turno_estruturado_contexto_mudou_volatil_e_tools():
         _block("anotacoes", "pediu 2ª via"),
     ]
     events = [
-        {"role": "agent_sent", "content": "Maria, recebi seus dados", "at": "2026-11-11T12:04:00Z",
-         "kind": "text", "attachments": [], "speech": False},
-        {"role": "contact", "content": "segue o comprovante", "at": "2026-11-11T12:05:00Z", "kind": "document",
-         "attachments": [{"filename": "comp.pdf", "mime_type": "application/pdf"}], "speech": False},
-        {"role": "contact", "content": "quero parcelar", "at": "2026-11-11T12:05:30Z", "kind": "text",
-         "attachments": [], "speech": True},
+        {
+            "role": "agent_sent",
+            "content": "Maria, recebi seus dados",
+            "at": "2026-11-11T12:04:00Z",
+            "kind": "text",
+            "attachments": [],
+            "speech": False,
+        },
+        {
+            "role": "contact",
+            "content": "segue o comprovante",
+            "at": "2026-11-11T12:05:00Z",
+            "kind": "document",
+            "attachments": [{"filename": "comp.pdf", "mime_type": "application/pdf"}],
+            "speech": False,
+        },
+        {
+            "role": "contact",
+            "content": "quero parcelar",
+            "at": "2026-11-11T12:05:30Z",
+            "kind": "text",
+            "attachments": [],
+            "speech": True,
+        },
     ]
     r1 = _record(sid, 0, context=first, message="oi")
     r2 = _record(
-        sid, 5, context=second, events=events, message="quero parcelar",
+        sid,
+        5,
+        context=second,
+        events=events,
+        message="quero parcelar",
         spans=[
             _tool(tool, {"acao": "transferir", "departamento": "Secretaria"}, 'HTTP 200: {"ok": true}', 5),
-            _tool("consulta", {"cpf": "1"}, "HTTP 503: fora", 5, failure="unavailable", status_message="HTTP 503: fora"),
+            _tool(
+                "consulta", {"cpf": "1"}, "HTTP 503: fora", 5, failure="unavailable", status_message="HTTP 503: fora"
+            ),
             _tool("ficha", {"id": "9"}, "HTTP 404: nada", 5, failure="not_found", status_message="HTTP 404: nada"),
         ],
     )
@@ -147,16 +183,27 @@ def test_turno_estruturado_contexto_mudou_volatil_e_tools():
     assert t2["events"] == events and t2["message"] == "quero parcelar"
     ok, falhou, nao_achou = t2["steps"]
     assert ok == {
-        "tool": tool, "args": {"acao": "transferir", "departamento": "Secretaria"}, "ok": True, "failure": None,
-        "http_status": None, "error": None, "result_preview": 'HTTP 200: {"ok": true}', "side_effect": True,
+        "tool": tool,
+        "args": {"acao": "transferir", "departamento": "Secretaria"},
+        "ok": True,
+        "failure": None,
+        "http_status": None,
+        "error": None,
+        "result_preview": 'HTTP 200: {"ok": true}',
+        "side_effect": True,
         "latency_ms": 150.0,
     }
     assert not falhou["ok"] and falhou["failure"] == "unavailable" and falhou["error"] == "HTTP 503: fora"
     assert not falhou["side_effect"]
     assert nao_achou["ok"] and nao_achou["failure"] == "not_found"
     assert t2["output"] == "resposta" and t2["sources"] == []
-    assert t2["usage"] == {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120, "cost_usd": 0.001,
-                           "latency_ms": 2000.0}
+    assert t2["usage"] == {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "total_tokens": 120,
+        "cost_usd": 0.001,
+        "latency_ms": 2000.0,
+    }
     assert t2["agent_version"] == 10 and t2["status"] == "success" and not t2["dry_run"]
 
 
@@ -196,9 +243,18 @@ def test_paginacao_compara_o_primeiro_turno_da_pagina_com_o_anterior():
 def test_fontes_saem_das_buscas_na_base():
     sid = f"s-{uuid4().hex[:8]}"
     busca = SpanRecord(
-        type="TOOL", name="search_knowledge_base", started_at=T0, input={"query": "prazo"}, output="trechos",
-        metadata={"references": {"query": "prazo", "collection": "manuais", "results": [
-            {"content_id": "c1", "document": "Manual", "score": 0.9, "chunk_id": "k1"}]}},
+        type="TOOL",
+        name="search_knowledge_base",
+        started_at=T0,
+        input={"query": "prazo"},
+        output="trechos",
+        metadata={
+            "references": {
+                "query": "prazo",
+                "collection": "manuais",
+                "results": [{"content_id": "c1", "document": "Manual", "score": 0.9, "chunk_id": "k1"}],
+            }
+        },
     )
     _record(sid, 0, spans=[busca])
     (turn,) = session_timeline(sid).model_dump(mode="json")["items"]
@@ -263,7 +319,10 @@ def test_timeline_e_listagem_trazem_nome_canal_e_ultima_fala():
     agent = f"r6-{uuid4().hex[:6]}"
     _record(sid, 0, agent_type=agent, message="oi")
     _record(
-        sid, 3, agent_type=agent, message="quero  parcelar\na dívida",
+        sid,
+        3,
+        agent_type=agent,
+        message="quero  parcelar\na dívida",
         context=[_block("dados_aluno", "Nome: Maria\nCurso: Pedagogia")],
         input={"message": "...", "dependencies": {"cpf": "1"}},
         metadata={"canal": "whatsapp"},
@@ -294,7 +353,12 @@ def _agno_run(run_id, at, message, *, tools=(), content="ok", system="você é o
         "input": {"input_content": message},
         "run_input": message,
         "content": content,
-        "metrics": {"input_tokens": 100, "output_tokens": 20, "duration": 2.71, "details": {"model": [{"id": "gemini"}]}},
+        "metrics": {
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "duration": 2.71,
+            "details": {"model": [{"id": "gemini"}]},
+        },
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": message}],
         "tools": list(tools),
     }

@@ -307,9 +307,7 @@ def _cache_metadata(entry: Any) -> dict[str, int]:
     Claude com `model_params.prompt_cache`). É o jeito de ver se o prefixo — as
     instructions e as tools — está mesmo sendo reaproveitado entre chamadas."""
     return {
-        name: value
-        for name in ("cache_read_tokens", "cache_write_tokens")
-        if (value := getattr(entry, name, 0) or 0)
+        name: value for name in ("cache_read_tokens", "cache_write_tokens") if (value := getattr(entry, name, 0) or 0)
     }
 
 
@@ -428,7 +426,9 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
                     record.spans.extend(_model_spans(metrics, record.started_at))
                     # Custo do Agno quando ele informa; senão, a soma estimada por modelo.
                     span_costs = [s.cost_usd for s in record.spans if s.type == "GENERATION" and s.cost_usd is not None]
-                    record.cost_usd = metrics.cost if metrics.cost is not None else (sum(span_costs) if span_costs else None)
+                    record.cost_usd = (
+                        metrics.cost if metrics.cost is not None else (sum(span_costs) if span_costs else None)
+                    )
             elif event.event == RunEvent.run_error.value:
                 record.status = "error"
                 record.status_message = event.content or RUN_FAILED
@@ -617,7 +617,9 @@ async def _produce(client: "Langfuse", agent: Agent, run: RunContext, queue: asy
                 input={
                     "message": run.message,
                     "dependencies": run.dependencies,
-                    **({"attachments": list(run.attachments) or run.attachment_counts} if run.attachment_counts else {}),
+                    **(
+                        {"attachments": list(run.attachments) or run.attachment_counts} if run.attachment_counts else {}
+                    ),
                 },
             ) as root,
         ):

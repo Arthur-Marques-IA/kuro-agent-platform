@@ -421,9 +421,7 @@ class DocumentPage(BaseModel):
 
 
 @router.get("/{collection_name}/documents", response_model=DocumentPage)
-async def list_collection_documents(
-    collection_name: str, limit: int = 50, page: int = 1
-) -> dict[str, Any]:
+async def list_collection_documents(collection_name: str, limit: int = 50, page: int = 1) -> dict[str, Any]:
     """O que está indexado nesta coleção, com o status do processamento.
 
     Paginado porque o console lista isso numa tabela — e porque a tabela de
@@ -448,9 +446,7 @@ async def delete_collection_document(collection_name: str, content_id: str) -> N
     resposta errada que o agente estava citando."""
     _row_or_404(collection_name)
     if not await remove_document(collection_name, content_id):
-        raise HTTPException(
-            status_code=404, detail=f"Documento {content_id!r} não encontrado em {collection_name!r}"
-        )
+        raise HTTPException(status_code=404, detail=f"Documento {content_id!r} não encontrado em {collection_name!r}")
     # Página de um site: sem o registro dela, o próximo sync acharia a página
     # "igual" e não a indexaria de novo — ficaria contada como indexada sem estar.
     # Apagando o registro, ela volta no próximo sync (para tirar de vez, use
@@ -583,7 +579,9 @@ async def replace_collection_document_file(
     file: UploadFile = File(..., description="A versão corrigida do arquivo"),
     note: str | None = Form(default=None),
     created_by: str | None = Form(default=None),
-    resolves: str | None = Form(default=None, description="Ids separados por vírgula; vazio = nenhuma; sem o campo = todas as abertas"),
+    resolves: str | None = Form(
+        default=None, description="Ids separados por vírgula; vazio = nenhuma; sem o campo = todas as abertas"
+    ),
 ) -> ReplaceOut:
     """O mesmo que o `PUT` de texto, com um arquivo (PDF, DOCX, CSV, TXT...)."""
     conteudo = await file.read()

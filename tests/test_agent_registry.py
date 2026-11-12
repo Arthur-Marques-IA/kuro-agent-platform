@@ -36,7 +36,9 @@ def _carimba_tool(tool_name: str) -> None:
     tabela = tool_store.tool_definitions
     with get_db().db_engine.begin() as conn:
         conn.execute(
-            update(tabela).where(tabela.c.tool_name == tool_name).values(updated_at=datetime.now() + timedelta(minutes=1))
+            update(tabela)
+            .where(tabela.c.tool_name == tool_name)
+            .values(updated_at=datetime.now() + timedelta(minutes=1))
         )
 
 
@@ -46,7 +48,11 @@ def agente_com_tools():
     tools = [f"t1_{sufixo}", f"t2_{sufixo}", f"t3_{sufixo}"]
     for nome in tools:
         tool_store.create_tool(
-            tool_name=nome, kind="builtin", label=nome, description=None, config={"builtin_id": "calculator", "params": {}}
+            tool_name=nome,
+            kind="builtin",
+            label=nome,
+            description=None,
+            config={"builtin_id": "calculator", "params": {}},
         )
     agent_type = f"cache-{sufixo}"
     create_definition(agent_type=agent_type, name="Cache", instructions=["Seja breve."], tools=tools)

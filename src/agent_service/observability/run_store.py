@@ -498,8 +498,7 @@ class TraceWriter:
         left = self.pending()
         if left:
             logger.warning(
-                "Encerramento: %d gravação(ões) de trace ficaram para trás após %.1fs "
-                "(TRACE_WRITE_SHUTDOWN_SECONDS)",
+                "Encerramento: %d gravação(ões) de trace ficaram para trás após %.1fs (TRACE_WRITE_SHUTDOWN_SECONDS)",
                 left,
                 timeout,
             )
@@ -541,7 +540,13 @@ def write_stats() -> dict[str, int]:
     if writer is None:
         from agent_service.config import get_settings
 
-        return {"pending": 0, "max_pending": max(1, get_settings().trace_write_queue_max), "written": 0, "dropped": 0, "failed": 0}
+        return {
+            "pending": 0,
+            "max_pending": max(1, get_settings().trace_write_queue_max),
+            "written": 0,
+            "dropped": 0,
+            "failed": 0,
+        }
     return writer.stats()
 
 
@@ -690,7 +695,9 @@ def _filters(query: RunQuery, *, with_session: bool = False) -> list[Any]:
         )
     for key, value in query.metadata:
         conditions.append(
-            exists().where(run_metadata.c.run_id == runs.c.run_id, run_metadata.c.key == key, run_metadata.c.value == value)
+            exists().where(
+                run_metadata.c.run_id == runs.c.run_id, run_metadata.c.key == key, run_metadata.c.value == value
+            )
         )
     conditions.extend(_review_filters(query))
     return conditions
@@ -707,7 +714,9 @@ def _review_filters(query: RunQuery) -> list[Any]:
         conditions.append(runs.c.complexity.in_(query.complexity))
     if query.tool_failed is not None:
         failed = runs.c.tool_failures > 0
-        conditions.append(failed if query.tool_failed else or_(runs.c.tool_failures.is_(None), runs.c.tool_failures == 0))
+        conditions.append(
+            failed if query.tool_failed else or_(runs.c.tool_failures.is_(None), runs.c.tool_failures == 0)
+        )
     if query.side_effect is not None:
         called = exists().where(
             run_spans.c.run_id == runs.c.run_id,
@@ -728,7 +737,9 @@ def _review_filters(query: RunQuery) -> list[Any]:
         conditions.append(
             not_(
                 exists().where(
-                    run_metadata.c.run_id == runs.c.run_id, run_metadata.c.key == "dry_run", run_metadata.c.value == "true"
+                    run_metadata.c.run_id == runs.c.run_id,
+                    run_metadata.c.key == "dry_run",
+                    run_metadata.c.value == "true",
                 )
             )
         )
@@ -739,7 +750,9 @@ def _metadata_of(conn: Any, run_ids: list[str]) -> dict[str, dict[str, str]]:
     found: dict[str, dict[str, str]] = {run_id: {} for run_id in run_ids}
     if run_ids:
         for run_id, key, value in conn.execute(
-            select(run_metadata.c.run_id, run_metadata.c.key, run_metadata.c.value).where(run_metadata.c.run_id.in_(run_ids))
+            select(run_metadata.c.run_id, run_metadata.c.key, run_metadata.c.value).where(
+                run_metadata.c.run_id.in_(run_ids)
+            )
         ):
             found[run_id][key] = value
     return found
@@ -922,7 +935,9 @@ class DbTraceStore:
             )
             run_meta = _metadata_of(conn, [run_id])[run_id]
             run_files = _attachments_of(conn, [run_id])[run_id]
-            reference = conn.execute(select(run_references.c.reference).where(run_references.c.run_id == run_id)).scalar()
+            reference = conn.execute(
+                select(run_references.c.reference).where(run_references.c.run_id == run_id)
+            ).scalar()
         scores = [
             ScoreOut(
                 id=s.id,
@@ -1235,9 +1250,7 @@ def session_timeline(
         ).one()
         if not total.turns:
             return None
-        agent_types = sorted(
-            a for (a,) in conn.execute(select(runs.c.agent_type).where(*conditions).distinct())
-        )
+        agent_types = sorted(a for (a,) in conn.execute(select(runs.c.agent_type).where(*conditions).distinct()))
         rows = list(conn.execute(page_stmt))
         page, more = rows[:limit], len(rows) > limit
         run_ids = [r.run_id for r in page]
@@ -1269,7 +1282,9 @@ def session_timeline(
                 r
                 for (r,) in conn.execute(
                     select(run_metadata.c.run_id).where(
-                        run_metadata.c.run_id.in_(run_ids), run_metadata.c.key == "dry_run", run_metadata.c.value == "true"
+                        run_metadata.c.run_id.in_(run_ids),
+                        run_metadata.c.key == "dry_run",
+                        run_metadata.c.value == "true",
                     )
                 )
             }
@@ -1311,4 +1326,3 @@ def session_turns(session_id: str, agent_type: str) -> list[dict[str, Any]]:
             .order_by(runs.c.started_at)
         ).all()
     return [dict(r._mapping) for r in rows]
-
