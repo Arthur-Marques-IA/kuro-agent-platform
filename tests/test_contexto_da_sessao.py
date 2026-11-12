@@ -428,6 +428,38 @@ def test_agent_sent_diferente_da_ultima_resposta_fica(agente, modelo):
     assert texto.startswith("# Conversa desde a sua última resposta\n\n[Enviado em seu nome]\nResposta: qual o prazo?")
 
 
+@pytest.mark.parametrize("com_cache", [True, False])
+def test_analise_na_mesma_sessao_nao_vira_a_ultima_resposta(agente, modelo, com_cache):
+    """O `/analyze` aceita a `session_id` da conversa (agrupa as decisões de um analista com
+    ela). A saída JSON dele, mais nova que a resposta do chat, não pode ser a "última
+    resposta" do eco, nem com o cache quente nem lendo do banco."""
+    from datetime import datetime, timedelta, timezone
+
+    sid = f"s-{uuid4().hex[:8]}"
+    primeira = _turno(sid, message="qual o prazo?", context=_contexto(DIVIDA_V1))
+    run_store.record_run(
+        run_store.RunRecord(
+            run_id=str(uuid4()),
+            trace_id=uuid4().hex,
+            agent_type="triagem",
+            agent_name="Triagem",
+            prompt_version=1,
+            endpoint="analyze",
+            user_id="u",
+            session_id=sid,
+            message="{}",
+            started_at=datetime.now(timezone.utc) + timedelta(seconds=5),
+            output='{"fase": "cobranca"}',
+        )
+    )
+    if not com_cache:
+        session_context.forget()
+    assert session_context.last_reply(sid) == primeira.content
+    assert [b["key"] for b in session_context.current_context(sid) or []] == ["dados_aluno", "divida"]
+    segunda = _turno(sid, message="ok", events=[{"role": "agent_sent", "content": primeira.content}])
+    assert [e.get("echo") for e in _contexto_gravado(segunda.run_id)[2]] == [True]
+
+
 # -- aceite 6: history_tool_calls ---------------------------------------------------------
 
 

@@ -30,6 +30,9 @@ from typing import Any
 
 from sqlalchemy import select
 
+CHAT_ENDPOINTS = ("chat", "chat.stream")
+"""Os runs que contam como turno da conversa (o `endpoint` gravado pelas rotas)."""
+
 MAX_SESSIONS = 5000
 """Sessões lembradas em memória; acima disso sai a usada há mais tempo (o banco cobre)."""
 
@@ -104,7 +107,13 @@ def _latest(session_id: str, column: str) -> tuple[datetime | None, Any]:
     from agent_service.db import get_db
     from agent_service.observability.run_store import runs
 
-    conditions = [runs.c.session_id == session_id, runs.c[column].is_not(None)]
+    # Só os turnos de conversa: o `/analyze` aceita a mesma `session_id` (agrupa as decisões
+    # de um analista com a conversa), e a saída JSON dele não é "a última resposta do agente".
+    conditions = [
+        runs.c.session_id == session_id,
+        runs.c.endpoint.in_(CHAT_ENDPOINTS),
+        runs.c[column].is_not(None),
+    ]
     if column == "output":
         conditions.append(runs.c.status == "success")
     with get_db().db_engine.connect() as conn:

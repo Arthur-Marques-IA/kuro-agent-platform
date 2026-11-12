@@ -50,6 +50,11 @@ prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo h
   `message` numa sessão que nunca teve contexto continua exatamente como antes (o modelo recebe o
   mesmo prompt, byte a byte, e as três colunas ficam nulas); numa sessão que já tem contexto, ela
   herda o contexto e conta como turno estruturado.
+- **Conversas em andamento na hora da atualização: mande o `context` na primeira chamada depois
+  dela.** A `0.3.0` gravava `input_context = []` num turno só com `events`, e isso agora quer dizer
+  "a sessão ficou sem contexto": uma conversa que mandou o contexto num turno e só eventos nos
+  seguintes herdaria contexto nenhum. E os turnos gravados pela `0.3.0` trazem o contexto colado na
+  mensagem, que continua voltando pelo histórico até sair da janela de `num_history_runs`.
 
 ### Novo
 
