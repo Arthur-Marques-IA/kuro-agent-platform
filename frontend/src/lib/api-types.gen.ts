@@ -741,6 +741,9 @@ export interface paths {
          *     `model_credentials` diz se dá para cadastrar chaves de provedor: sem
          *     `CREDENTIALS_ENCRYPTION_KEY`, o `/model-credentials` responde 503. O serviço
          *     sobe mesmo assim — o google ainda funciona pela `GOOGLE_API_KEY` do ambiente.
+         *
+         *     `trace_writes` é a fila de gravação do trace store local (`run_store.TraceWriter`):
+         *     `pending`, `max_pending`, `written`, `dropped` (fila cheia) e `failed`.
          */
         get: operations["health_health_get"];
         put?: never;
@@ -2356,6 +2359,17 @@ export interface components {
             /** Requires Api Key */
             requires_api_key: boolean;
         };
+        /**
+         * EnvCredentialOut
+         * @description Credencial que o serviço lê do **ambiente** (não do cadastro). Só o nome da
+         *     variável: o valor nunca sai daqui, nem mascarado.
+         */
+        EnvCredentialOut: {
+            /** In Use */
+            in_use: boolean;
+            /** Variable */
+            variable: string;
+        };
         /** ErrorContract */
         ErrorContract: {
             /** Action */
@@ -2784,6 +2798,7 @@ export interface components {
             default_model_id: string;
             /** Docs Url */
             docs_url: string;
+            env_credential?: components["schemas"]["EnvCredentialOut"] | null;
             /** Label */
             label: string;
             /** Provider */
@@ -4068,6 +4083,8 @@ export interface components {
             kind: "builtin" | "api" | "python";
             /** Label */
             label: string;
+            /** Secrets At Rest */
+            secrets_at_rest?: ("encrypted" | "plaintext") | null;
             /** Side Effect */
             side_effect?: boolean | null;
             /** Tool Name */
@@ -4192,6 +4209,8 @@ export interface components {
             kind: "builtin" | "api" | "python";
             /** Label */
             label: string;
+            /** Secrets At Rest */
+            secrets_at_rest?: ("encrypted" | "plaintext") | null;
             /** Side Effect */
             side_effect?: boolean | null;
             /** Tool Name */
@@ -5899,7 +5918,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        [key: string]: string;
+                        [key: string]: unknown;
                     };
                 };
             };

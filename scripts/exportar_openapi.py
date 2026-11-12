@@ -18,8 +18,8 @@ RAIZ = Path(__file__).resolve().parents[1]
 
 
 def openapi_do_kuro() -> dict:
-    """Só as rotas do serviço (`base_app` de `main.py`), sem as que o AgentOS do Agno
-    monta por cima.
+    """Só as rotas do serviço (os routers que `main.build_app` inclui), sem as que o
+    AgentOS do Agno monta por cima.
 
     O `app.openapi()` completo traz as ~140 operações do Agno e, onde os caminhos
     coincidem (`GET /agents`, `GET /health`), documenta a do Agno — mas quem
@@ -29,7 +29,7 @@ def openapi_do_kuro() -> dict:
 
     from agent_service import main as servico
 
-    app = FastAPI(title=servico.settings.app_name)
+    app = FastAPI(title=servico.get_settings().app_name)
     # Mesma lista e mesma ordem dos `include_router` de `main.py`: rota nova num router
     # existente entra sozinha; um router novo precisa entrar aqui também.
     for router in (
@@ -56,7 +56,10 @@ def openapi_do_kuro() -> dict:
             for method in getattr(route, "methods", None) or ()
         }
 
-    faltando = rotas(servico.base_app) - rotas(app)
+    # O app de verdade só existe depois da subida (`main.py` não monta nada no import):
+    # migra o SQLite temporário e monta, só para conferir que nenhuma rota ficou de fora.
+    servico.prepare_database()
+    faltando = rotas(servico.build_app(None)) - rotas(app)
     if faltando:
         raise SystemExit(f"rotas do serviço fora do OpenAPI exportado (router novo em main.py?): {sorted(faltando)}")
     return app.openapi()
