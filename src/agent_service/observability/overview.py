@@ -215,7 +215,9 @@ def _totals(conn: Any, conditions: list[Any]) -> OverviewTotals:
             func.sum(runs.c.cost_usd).label("cost"),
         ).where(*conditions)
     ).one()
-    latencies = [v for (v,) in conn.execute(select(runs.c.latency_ms).where(*conditions, runs.c.latency_ms.is_not(None)))]
+    latencies = [
+        v for (v,) in conn.execute(select(runs.c.latency_ms).where(*conditions, runs.c.latency_ms.is_not(None)))
+    ]
     up, down = _feedback(conn, conditions)
     return OverviewTotals(
         runs=row.runs,
@@ -288,7 +290,9 @@ def build_overview(
     with engine.connect() as conn:
         if since is None:
             first = conn.execute(
-                select(func.min(runs.c.started_at)).where(*_conditions(datetime.min.replace(tzinfo=timezone.utc), until, agents, include_dry_run))
+                select(func.min(runs.c.started_at)).where(
+                    *_conditions(datetime.min.replace(tzinfo=timezone.utc), until, agents, include_dry_run)
+                )
             ).scalar_one()
             since = _as_utc(first) if first else until - timedelta(days=7)
         since = _as_utc(since)
@@ -340,7 +344,9 @@ def build_overview(
                 bucket.success += row.runs - (row.errors or 0) - (row.tfr or 0)
                 bucket.cost_usd += float(row.cost or 0)
                 bucket.total_tokens += int(row.tokens or 0)
-            agent = per_agent.setdefault(row.agent_type, {"name": row.agent_name, "trend": [0] * len(starts), "last": None})
+            agent = per_agent.setdefault(
+                row.agent_type, {"name": row.agent_name, "trend": [0] * len(starts), "last": None}
+            )
             if position is not None:
                 agent["trend"][position] += row.runs
             agent["name"] = agent["name"] or row.agent_name
@@ -464,4 +470,3 @@ def _tool_failures(conn: Any, conditions: list[Any]) -> list[ToolFailureRow]:
         for (name, failure), e in grouped.items()
     ]
     return sorted(rows, key=lambda r: (r.count, r.last_at), reverse=True)
-

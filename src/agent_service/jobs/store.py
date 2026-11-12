@@ -54,9 +54,13 @@ jobs = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("finished_at", DateTime(timezone=True), nullable=True),
-    Index("uq_jobs_dedupe_active", "dedupe_key", unique=True,
-          postgresql_where=text("status IN ('queued', 'running')"),
-          sqlite_where=text("status IN ('queued', 'running')")),
+    Index(
+        "uq_jobs_dedupe_active",
+        "dedupe_key",
+        unique=True,
+        postgresql_where=text("status IN ('queued', 'running')"),
+        sqlite_where=text("status IN ('queued', 'running')"),
+    ),
 )
 
 STATUSES = ("queued", "running", "succeeded", "failed", "cancelled")
@@ -144,9 +148,7 @@ def get_job(job_id: str) -> dict[str, Any] | None:
 
 def active_job(dedupe_key: str) -> dict[str, Any] | None:
     with _engine().connect() as conn:
-        row = conn.execute(
-            select(jobs).where(jobs.c.dedupe_key == dedupe_key, jobs.c.status.in_(ACTIVE))
-        ).fetchone()
+        row = conn.execute(select(jobs).where(jobs.c.dedupe_key == dedupe_key, jobs.c.status.in_(ACTIVE))).fetchone()
     return _row(row) if row else None
 
 
@@ -191,8 +193,13 @@ def claim(worker_id: str, kinds: list[str], lease: timedelta) -> dict[str, Any] 
         row = conn.execute(
             update(jobs)
             .where(jobs.c.id == candidate, jobs.c.status == "queued")
-            .values(status="running", locked_by=worker_id, locked_until=now + lease,
-                    attempts=jobs.c.attempts + 1, updated_at=now)
+            .values(
+                status="running",
+                locked_by=worker_id,
+                locked_until=now + lease,
+                attempts=jobs.c.attempts + 1,
+                updated_at=now,
+            )
             .returning(*jobs.c)
         ).fetchone()
     return _row(row) if row else None
@@ -222,9 +229,11 @@ def complete(job_id: str, worker_id: str, *, follow_up: dict[str, Any] | None = 
     now = _now()
     with _engine().begin() as conn:
         result = conn.execute(
-            update(jobs).where(*_owned(job_id, worker_id))
-            .values(status="succeeded", locked_by=None, locked_until=None, last_error=None,
-                    finished_at=now, updated_at=now)
+            update(jobs)
+            .where(*_owned(job_id, worker_id))
+            .values(
+                status="succeeded", locked_by=None, locked_until=None, last_error=None, finished_at=now, updated_at=now
+            )
         )
         if result.rowcount != 1:
             return False
@@ -250,7 +259,8 @@ def fail(job_id: str, worker_id: str, error: str) -> str | None:
         else:
             values = {"status": "queued", "run_after": now + backoff(attempts)}
         result = conn.execute(
-            update(jobs).where(*_owned(job_id, worker_id))
+            update(jobs)
+            .where(*_owned(job_id, worker_id))
             .values(**values, locked_by=None, locked_until=None, last_error=error[:2000], updated_at=now)
         )
     return values["status"] if result.rowcount == 1 else None
@@ -261,9 +271,16 @@ def release(job_id: str, worker_id: str) -> bool:
     now = _now()
     with _engine().begin() as conn:
         result = conn.execute(
-            update(jobs).where(*_owned(job_id, worker_id))
-            .values(status="queued", run_after=now, attempts=jobs.c.attempts - 1,
-                    locked_by=None, locked_until=None, updated_at=now)
+            update(jobs)
+            .where(*_owned(job_id, worker_id))
+            .values(
+                status="queued",
+                run_after=now,
+                attempts=jobs.c.attempts - 1,
+                locked_by=None,
+                locked_until=None,
+                updated_at=now,
+            )
         )
     return result.rowcount == 1
 
@@ -276,8 +293,7 @@ def reap_expired() -> list[dict[str, Any]]:
     given_up: list[dict[str, Any]] = []
     with _engine().begin() as conn:
         expired = conn.execute(
-            select(jobs).where(jobs.c.status == "running", jobs.c.locked_until < now)
-            .with_for_update(skip_locked=True)
+            select(jobs).where(jobs.c.status == "running", jobs.c.locked_until < now).with_for_update(skip_locked=True)
         ).fetchall()
         for row in map(_row, expired):
             error = f"Lease vencido em {row['locked_by']} (o processo parou no meio)."
@@ -300,7 +316,8 @@ def cancel(job_id: str) -> dict[str, Any] | None:
     now = _now()
     with _engine().begin() as conn:
         conn.execute(
-            update(jobs).where(jobs.c.id == job_id, jobs.c.status.in_(ACTIVE))
+            update(jobs)
+            .where(jobs.c.id == job_id, jobs.c.status.in_(ACTIVE))
             .values(status="cancelled", locked_by=None, locked_until=None, finished_at=now, updated_at=now)
         )
     return get_job(job_id)
@@ -312,7 +329,8 @@ def cancel_dedupe(dedupe_key: str, *, only_queued: bool = False) -> list[str]:
     statuses = ("queued",) if only_queued else ACTIVE
     with _engine().begin() as conn:
         rows = conn.execute(
-            update(jobs).where(jobs.c.dedupe_key == dedupe_key, jobs.c.status.in_(statuses))
+            update(jobs)
+            .where(jobs.c.dedupe_key == dedupe_key, jobs.c.status.in_(statuses))
             .values(status="cancelled", locked_by=None, locked_until=None, finished_at=now, updated_at=now)
             .returning(jobs.c.id)
         ).fetchall()
@@ -325,7 +343,8 @@ def advance(dedupe_key: str, run_after: datetime | None = None) -> bool:
     now = _now()
     with _engine().begin() as conn:
         result = conn.execute(
-            update(jobs).where(jobs.c.dedupe_key == dedupe_key, jobs.c.status == "queued")
+            update(jobs)
+            .where(jobs.c.dedupe_key == dedupe_key, jobs.c.status == "queued")
             .values(run_after=run_after or now, updated_at=now)
         )
         if result.rowcount and conn.dialect.name == "postgresql":
@@ -346,11 +365,14 @@ def retry(job_id: str) -> dict[str, Any]:
     try:
         with _engine().begin() as conn:
             conn.execute(
-                update(jobs).where(jobs.c.id == job_id, jobs.c.status.in_(("failed", "cancelled")))
+                update(jobs)
+                .where(jobs.c.id == job_id, jobs.c.status.in_(("failed", "cancelled")))
                 .values(status="queued", attempts=0, run_after=now, finished_at=None, updated_at=now)
             )
             if conn.dialect.name == "postgresql":
-                conn.execute(text("SELECT pg_notify(:channel, :kind)"), {"channel": NOTIFY_CHANNEL, "kind": job["kind"]})
+                conn.execute(
+                    text("SELECT pg_notify(:channel, :kind)"), {"channel": NOTIFY_CHANNEL, "kind": job["kind"]}
+                )
     except IntegrityError as exc:
         raise JobConflictError(job["dedupe_key"]) from exc
     return get_job(job_id)  # type: ignore[return-value]

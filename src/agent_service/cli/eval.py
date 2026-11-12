@@ -106,7 +106,12 @@ def _run_case(
     if score:
         try:
             client.score(
-                {"run_id": response["run_id"], "name": "eval", "value": 1 if passed else 0, "comment": f"caso {case['id']}"}
+                {
+                    "run_id": response["run_id"],
+                    "name": "eval",
+                    "value": 1 if passed else 0,
+                    "comment": f"caso {case['id']}",
+                }
             )
         except (ServiceUnavailable, ApiError):
             pass  # a nota é um extra; o relatório continua valendo
@@ -123,7 +128,9 @@ def _run_case(
     }
 
 
-def _run_all(client: Client, agent_type: str, cases: list[dict[str, Any]], concurrency: int, **options: Any) -> list[dict[str, Any]]:
+def _run_all(
+    client: Client, agent_type: str, cases: list[dict[str, Any]], concurrency: int, **options: Any
+) -> list[dict[str, Any]]:
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         return list(pool.map(lambda case: _run_case(client, agent_type, case, **options), cases))
 
@@ -198,7 +205,10 @@ def _render(report: dict[str, Any]) -> None:
             for r in failed[:30]:
                 reasons = [r["error"]] if r["error"] else []
                 reasons += [f"{m['field']}: esperado {m['expected']!r}, veio {m['actual']!r}" for m in r["mismatches"]]
-                reasons += [f"[red]regra {v['rule']}[/] ({v['field']} {v['op']} {v['expected']!r}; veio {v['actual']!r})" for v in r["violations"]]
+                reasons += [
+                    f"[red]regra {v['rule']}[/] ({v['field']} {v['op']} {v['expected']!r}; veio {v['actual']!r})"
+                    for v in r["violations"]
+                ]
                 table.add_row(str(r["id"]), "\n".join(reasons))
             console.print(table)
     verdict = report["verdict"]
@@ -210,10 +220,18 @@ def eval_command(
     ctx: typer.Context,
     agent_type: str = typer.Argument(..., help="Agente candidato (kind='analysis'), ex.: r8-draft."),
     file: str = typer.Option(..., "--file", "-f", help="Dataset JSONL: {id, input, dependencies, expected} por linha."),
-    rules_file: str | None = typer.Option(None, "--rules", "-r", help="Regras de política (JSON) que nenhuma saída pode violar."),
-    fields: str | None = typer.Option(None, "--fields", help="Só estes campos (vírgula; caminho com ponto: acordo.qtd_parcelas)."),
-    compare_with: str | None = typer.Option(None, "--compare", help="Roda o mesmo dataset neste agente (ex.: o de produção) e compara."),
-    min_pass: float = typer.Option(0.9, "--min-pass", min=0.0, max=1.0, help="Fração mínima de casos aprovados para sair com 0."),
+    rules_file: str | None = typer.Option(
+        None, "--rules", "-r", help="Regras de política (JSON) que nenhuma saída pode violar."
+    ),
+    fields: str | None = typer.Option(
+        None, "--fields", help="Só estes campos (vírgula; caminho com ponto: acordo.qtd_parcelas)."
+    ),
+    compare_with: str | None = typer.Option(
+        None, "--compare", help="Roda o mesmo dataset neste agente (ex.: o de produção) e compara."
+    ),
+    min_pass: float = typer.Option(
+        0.9, "--min-pass", min=0.0, max=1.0, help="Fração mínima de casos aprovados para sair com 0."
+    ),
     tolerance: float = typer.Option(0.01, "--tolerance", min=0.0, help="Diferença aceita em campos numéricos."),
     concurrency: int = typer.Option(4, "--concurrency", "-c", min=1, max=16, help="Casos em paralelo."),
     no_score: bool = typer.Option(False, "--no-score", help="Não grava a nota `eval` (1/0) em cada run."),

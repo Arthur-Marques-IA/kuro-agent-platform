@@ -70,7 +70,11 @@ def describe_attachments(attachments: list[AttachmentIn]) -> list[dict[str, Any]
     for attachment in attachments:
         mime = _guess_mime(attachment)
         kind = next(
-            (k for prefix, k in (("image/", "image"), ("audio/", "audio"), ("video/", "video")) if (mime or "").startswith(prefix)),
+            (
+                k
+                for prefix, k in (("image/", "image"), ("audio/", "audio"), ("video/", "video"))
+                if (mime or "").startswith(prefix)
+            ),
             "file",
         )
         item: dict[str, Any] = {"filename": attachment.filename, "mime_type": mime, "kind": kind}
@@ -102,7 +106,5 @@ def build_media(attachments: list[AttachmentIn]) -> dict[str, list[Any]]:
             else:
                 result["files"].append(File(mime_type=mime, filename=attachment.filename, **kwargs))
         except ValidationError as exc:
-            raise AttachmentError(
-                f"anexo {attachment.filename or ''!r} inválido (mime_type={mime!r}): {exc}"
-            ) from exc
+            raise AttachmentError(f"anexo {attachment.filename or ''!r} inválido (mime_type={mime!r}): {exc}") from exc
     return result

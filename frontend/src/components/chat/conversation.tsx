@@ -27,6 +27,16 @@ import { createId } from "@/lib/id";
 import { MEMORY_BACKENDS, modelLabel, parseDependencies } from "@/lib/agent-meta";
 import { sessionTitle } from "@/lib/sessions";
 import { useChat } from "@/lib/use-chat";
+import {
+  eventsBefore,
+  humanAgentEvent,
+  parseContextBlocks,
+  serializeContextBlocks,
+  sessionNameFromSpeech,
+  validateContextBlocks,
+  type ChatEventPayload,
+  type ContextBlockDraft,
+} from "@/lib/chat-request";
 import { testDependenciesText } from "@/lib/test-context";
 import { useLocalStorage, writeLocalStorage } from "@/lib/use-local-storage";
 import type { Attachment, ChatMessage, ProcedureState } from "@/lib/types";
@@ -47,7 +57,8 @@ import { useWorkspace } from "@/components/workspace/workspace-provider";
 import { AgentEditSheet } from "@/components/chat/agent-edit-sheet";
 import { ChatInspector } from "@/components/chat/chat-inspector";
 import { Composer } from "@/components/chat/composer";
-import { MessageBubble } from "@/components/chat/message-bubble";
+import { MASCOT_GUTTER } from "@/components/brand/kuro-mascot";
+import { HumanAgentBubble, MessageBubble } from "@/components/chat/message-bubble";
 import { ProcedureStrip } from "@/components/chat/procedure-progress";
 
 const SUGGESTIONS = [
@@ -87,10 +98,11 @@ export function Conversation({
   onFirstExchangeComplete,
 }: ConversationProps) {
   const toast = useToast();
-  const { userId, getAgent, sessions, refreshSessions, backendReachable, agents } = useWorkspace();
+  const { userId, getAgent, sessions, refreshSessions, renameSession, backendReachable, agents } = useWorkspace();
   const agent = getAgent(agentType);
   const { messages, send, stop, truncateFrom, isStreaming, procedureState, setProcedureState } = useChat({
     agentType,
+    agentName: agent?.name,
     userId,
     initialMessages,
   });
@@ -110,6 +122,14 @@ export function Conversation({
   const [dependenciesText, setDependenciesText] = useLocalStorage<string>(dependenciesKey, presetText);
   const dependencies = useMemo(() => parseDependencies(dependenciesText), [dependenciesText]);
   const [dryRun, setDryRun] = useDryRun();
+  // Blocos de `context`: guardados por agente, como as dependencies. Procedural recusa (422).
+  const blocksKey = `agent-service:context-blocks:${agentType}`;
+  const [blocksText, setBlocksText] = useLocalStorage<string>(blocksKey, "[]");
+  const blocks = useMemo(() => parseContextBlocks(blocksText), [blocksText]);
+  const blocksValidation = useMemo(() => validateContextBlocks(blocks), [blocks]);
+  const [contextTab, setContextTab] = useState("dependencies");
+  // Falas de atendente registradas e ainda não enviadas: vão em `events` com a próxima mensagem.
+  const [pendingEvents, setPendingEvents] = useState<ChatEventPayload[]>([]);
 
   // Conversa nova: depois que a primeira troca termina, sobe para a rota da sessão.
   const [completedSessionId, setCompletedSessionId] = useState<string | null>(null);
@@ -144,6 +164,9 @@ export function Conversation({
   }, [procedural, agentType, sessionId, setProcedureState]);
   const restoring = procedural && Boolean(sessionId) && restoredFor !== sessionId;
   const session = sessionId ? sessions.find((s) => s.session_id === sessionId) : undefined;
+  // No "Código": as falas de atendente pendentes ou, sem elas, as que foram com a última mensagem.
+  const lastUserIndex = messages.findLastIndex((m) => m.role === "user");
+  const lastSentEvents = lastUserIndex === -1 ? [] : eventsBefore(messages, lastUserIndex);
   const totalTokens = messages.reduce((sum, m) => sum + (m.usage?.total_tokens ?? 0), 0);
   const inspectorOpen = inspectorPref === "open";
 
@@ -155,44 +178,86 @@ export function Conversation({
         ? `O agente "${agentType}" não existe mais.`
         : null;
 
-  async function runSend(text: string, attachments: Attachment[]) {
+  async function runSend(text: string, attachments: Attachment[], events: ChatEventPayload[]) {
     const id = activeSessionId ?? draftId;
     if (!activeSessionId) onSessionCreated?.(id);
-    const executed = await send({ text, sessionId: id, dependencies: dependencies.value, attachments, dryRun });
+    const context = procedural ? [] : blocksValidation.blocks;
+    const sentEvents = procedural ? [] : events;
+    const firstTurn = messages.length === 0;
+    const executed = await send({
+      text,
+      sessionId: id,
+      dependencies: dependencies.value,
+      attachments,
+      dryRun,
+      context,
+      events: sentEvents,
+    });
     if (!executed) return;
+    // 1º turno estruturado: sem isto a conversa se chamaria "# Contexto ## …" na lista.
+    if (firstTurn && (context.length > 0 || sentEvents.length > 0) && text.trim()) {
+      await renameSession(id, sessionNameFromSpeech(text)).catch(() => {
+        // Sem o nome a conversa continua; só o título na lista fica com o texto montado.
+      });
+    }
     if (sessionId) void refreshSessions();
     else setCompletedSessionId(id);
   }
 
-  /** Validação síncrona para o composer saber se limpa o campo. */
-  function handleSend(text: string, attachments: Attachment[] = []): boolean {
+  /**
+   * Validação síncrona para o composer saber se limpa o campo. `retryEvents`: os eventos
+   * de um turno reenviado ("tentar novamente"); sem ele vão as falas de atendente pendentes.
+   */
+  function handleSend(text: string, attachments: Attachment[] = [], retryEvents?: ChatEventPayload[]): boolean {
     if (isStreaming || blockedReason) return false;
     if (dependencies.error) {
       toast({ title: "Contexto inválido", description: dependencies.error, variant: "error" });
-      openInspector(true);
+      openInspector("dependencies");
       return false;
     }
-    void runSend(text, attachments);
+    if (!procedural && blocksValidation.error) {
+      toast({ title: "Blocos de contexto inválidos", description: blocksValidation.error, variant: "error" });
+      openInspector("blocks");
+      return false;
+    }
+    void runSend(text, attachments, retryEvents ?? pendingEvents);
+    if (!retryEvents) setPendingEvents([]);
     return true;
   }
 
   function handleRetry(assistantMessageId: string) {
     const index = messages.findIndex((m) => m.id === assistantMessageId);
-    const userMessage = messages
-      .slice(0, index)
-      .reverse()
-      .find((m) => m.role === "user");
-    if (!userMessage) return;
-    truncateFrom(userMessage.id);
-    handleSend(userMessage.content);
+    let userIndex = -1;
+    for (let i = index - 1; i >= 0; i--) {
+      if (messages[i].role === "user") {
+        userIndex = i;
+        break;
+      }
+    }
+    if (userIndex === -1) return;
+    // As falas de atendente que foram junto daquela mensagem voltam a ir junto.
+    const events = eventsBefore(messages, userIndex);
+    truncateFrom(messages[userIndex - events.length].id);
+    handleSend(messages[userIndex].content, [], events);
   }
 
-  function openInspector(focusContext = false) {
+  function addHumanAgent(text: string) {
+    if (!text.trim()) return;
+    setPendingEvents((prev) => [...prev, humanAgentEvent(text)]);
+  }
+
+  /** `tab`: abre o painel na aba de contexto indicada e foca o primeiro campo dela. */
+  function openInspector(tab?: "dependencies" | "blocks") {
     if (window.matchMedia(INSPECTOR_BREAKPOINT).matches) setInspectorPref("open");
     else setMobileInspectorOpen(true);
-    if (focusContext) {
-      window.setTimeout(() => document.getElementById("chat-dependencies")?.focus(), 50);
-    }
+    if (!tab) return;
+    setContextTab(tab);
+    const target = tab === "blocks" ? "chat-context-blocks" : "chat-dependencies";
+    window.setTimeout(() => {
+      const el = document.getElementById(target);
+      if (tab === "dependencies") el?.focus();
+      else (el?.querySelector<HTMLElement>("[aria-invalid=true], input, textarea") ?? el)?.focus();
+    }, 50);
   }
 
   function toggleInspector() {
@@ -213,6 +278,12 @@ export function Conversation({
     onDependenciesReset: () => writeLocalStorage(dependenciesKey, null),
     dependenciesError: dependencies.error,
     dependenciesCount: dependencies.count,
+    contextTab,
+    onContextTabChange: setContextTab,
+    blocks,
+    blocksValidation,
+    onBlocksChange: (next: ContextBlockDraft[]) =>
+      next.length === 0 ? writeLocalStorage(blocksKey, null) : setBlocksText(serializeContextBlocks(next)),
     dryRun,
     onDryRunChange: setDryRun,
     procedureState,
@@ -299,6 +370,8 @@ export function Conversation({
           agentName={agent?.name}
           sessionId={activeSessionId}
           onRetry={handleRetry}
+          pending={pendingEvents}
+          onRemovePending={(index) => setPendingEvents((prev) => prev.filter((_, i) => i !== index))}
           empty={
             <ChatEmptyState
               agentType={agentType}
@@ -308,7 +381,8 @@ export function Conversation({
           }
         />
 
-        <div className="shrink-0 px-3 pb-3 sm:px-6 sm:pb-5">
+        {/* Com os detalhes abertos o composer ocupa a largura toda: recua do canto do Kuro. */}
+        <div className={cn("shrink-0 px-3 pb-3 sm:px-6 sm:pb-5", inspectorOpen && MASCOT_GUTTER)}>
           <div className="mx-auto w-full max-w-3xl">
             <Composer
               onSend={handleSend}
@@ -319,9 +393,16 @@ export function Conversation({
               placeholder={
                 blockedReason ?? (agent ? `Mensagem para ${agent.name}…` : "Escreva uma mensagem…")
               }
-              contextCount={dependencies.count}
-              contextInvalid={Boolean(dependencies.error)}
-              onOpenContext={() => openInspector(true)}
+              contextCount={dependencies.count + (procedural ? 0 : blocksValidation.blocks.length)}
+              contextInvalid={Boolean(dependencies.error) || (!procedural && Boolean(blocksValidation.error))}
+              onOpenContext={() =>
+                openInspector(
+                  !procedural && !dependencies.error && (blocksValidation.error || contextTab === "blocks")
+                    ? "blocks"
+                    : "dependencies"
+                )
+              }
+              onAddHumanAgent={procedural ? undefined : addHumanAgent}
             />
           </div>
         </div>
@@ -349,6 +430,8 @@ export function Conversation({
             userId={userId}
             sessionId={activeSessionId ?? "nova-sessao-uuid"}
             dependencies={dependencies.value}
+            context={procedural ? undefined : blocksValidation.blocks}
+            events={procedural ? undefined : pendingEvents.length ? pendingEvents : lastSentEvents}
           />
         </DialogBody>
       </Dialog>
@@ -438,6 +521,8 @@ function MessageList({
   agentName,
   sessionId,
   onRetry,
+  pending,
+  onRemovePending,
   empty,
 }: {
   messages: ChatMessage[];
@@ -445,6 +530,9 @@ function MessageList({
   agentName?: string;
   sessionId: string | null;
   onRetry: (assistantMessageId: string) => void;
+  /** Falas de atendente registradas que vão com a próxima mensagem. */
+  pending: ChatEventPayload[];
+  onRemovePending: (index: number) => void;
   empty: ReactNode;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -454,7 +542,7 @@ function MessageList({
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, pending]);
 
   function handleScroll() {
     const el = scrollRef.current;
@@ -476,10 +564,10 @@ function MessageList({
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} onScroll={handleScroll} className="scrollbar-thin h-full overflow-y-auto">
-        {messages.length === 0 ? (
+        {messages.length === 0 && pending.length === 0 ? (
           empty
         ) : (
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6 sm:px-6" aria-live="polite">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6 sm:px-6">
             {messages.map((message) => (
               <MessageBubble
                 key={message.id}
@@ -488,6 +576,15 @@ function MessageList({
                 agentName={agentName}
                 sessionId={sessionId}
                 onRetry={message.id === lastMessageId ? () => onRetry(message.id) : undefined}
+              />
+            ))}
+            {pending.map((event, index) => (
+              <HumanAgentBubble
+                key={`${event.at}-${index}`}
+                content={event.content}
+                createdAt={event.at ? Date.parse(event.at) : undefined}
+                pending
+                onRemove={() => onRemovePending(index)}
               />
             ))}
           </div>

@@ -26,11 +26,18 @@ DEFAULT_EMBEDDER_PROVIDER = "google"
 """O de antes: uma collection sem provedor gravado continua no Gemini."""
 
 
-class UnknownEmbedderProviderError(ValueError):
+class EmbedderError(ValueError):
+    """Base das falhas de embedder: quem só precisa saber que "o embedder desta
+    collection não dá para montar" captura esta. Falha de um provedor (a sonda do
+    ollama, por exemplo) é convertida para uma subclasse aqui, com `raise ... from`,
+    para a mensagem e a causa original chegarem a quem trata."""
+
+
+class UnknownEmbedderProviderError(EmbedderError):
     pass
 
 
-class EmbedderNotConfiguredError(ValueError):
+class EmbedderNotConfiguredError(EmbedderError):
     """Provedor reconhecido, mas sem chave cadastrada — 422 na criação."""
 
 

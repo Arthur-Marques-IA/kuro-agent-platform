@@ -1,3 +1,13 @@
+/*
+ * Os tipos daqui foram escritos à mão; os que já vêm do OpenAPI do serviço
+ * (`api-types.gen.ts`, `npm run gen:types`) são re-exportados de lá com o mesmo
+ * nome. Migrar um tipo: troque a interface por `Schemas["<NomeNoOpenAPI>"]` e
+ * rode `npm run build` — ver docs/desenvolvimento.md.
+ */
+import type { components } from "./api-types.gen";
+
+type Schemas = components["schemas"];
+
 /** Anexo de `/chat` e `/analyze`: imagem, áudio, vídeo ou arquivo. */
 export interface Attachment {
   content_base64?: string;
@@ -32,30 +42,17 @@ export interface AnalyzeResponse {
   trace_id?: string | null;
 }
 
-/** Uma regra da nota de comportamento (`GET /agents/{tipo}/feedback`). */
-export interface FeedbackRule {
-  id: string;
-  texto: string;
-}
+/** Uma regra da nota de comportamento (`GET /agents/{tipo}/feedback`). Gerado do OpenAPI. */
+export type FeedbackRule = Schemas["FeedbackRule"];
 
-export interface FeedbackNote {
-  agent_type: string;
-  /** Markdown derivado das regras — é o que entra nas instructions. */
-  content: string;
-  rules: FeedbackRule[];
-  version: number;
-  updated_at: string;
-  /** Só na resposta do POST: o que o merge mudou. */
-  diff?: Record<string, string[]> | null;
-}
+/**
+ * `GET /agents/{tipo}/feedback`. `content` é o markdown derivado das regras (o que entra
+ * nas instructions); `diff` só vem na resposta do POST (o que o merge mudou). Gerado do OpenAPI.
+ */
+export type FeedbackNote = Schemas["FeedbackOut"];
 
-export interface FeedbackVersion {
-  version: number;
-  rules: FeedbackRule[];
-  content: string;
-  origin: string;
-  created_at: string;
-}
+/** `GET /agents/{tipo}/feedback/versions`. Gerado do OpenAPI. */
+export type FeedbackVersion = Schemas["FeedbackVersionOut"];
 
 /** `GET /agents/{tipo}/integration` — o contrato que quem integra precisa. */
 export interface DependencyContract {
@@ -133,7 +130,8 @@ export interface ChatResponse {
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant";
+  /** `human_agent`: evento de atendente humano simulado no Playground (vai em `events` junto da fala seguinte). */
+  role: "user" | "assistant" | "human_agent";
   content: string;
   usage?: UsageMetrics;
   createdAt?: number;
@@ -585,11 +583,8 @@ export interface AgentDefinitionInput {
   plain_text?: boolean;
 }
 
-export interface PromptVersion {
-  version: number;
-  instructions: string[];
-  created_at: string;
-}
+/** `GET /agents/{tipo}/versions` — as versões do prompt. Gerado do OpenAPI. */
+export type PromptVersion = Schemas["PromptVersionOut"];
 
 /** Versão da configuração inteira (`GET /agents/{t}/revisions`) — o `agent_version` de cada run. */
 export interface AgentRevision {
@@ -659,7 +654,8 @@ export interface CollectionVersion {
 
 export interface Collection {
   name: string;
-  search: CollectionSearchConfig;
+  /** Ausente em serviços anteriores à busca por collection: leia com `collectionSearch()`. */
+  search?: CollectionSearchConfig | null;
   /** Versão atual da configuração — a que os runs gravam em `collection_version`. */
   version?: number | null;
   config_hash?: string | null;
@@ -672,8 +668,8 @@ export interface Collection {
   label: string;
   description: string | null;
   is_seed: boolean;
-  /** Agentes com `knowledge_collection` apontando para cá. */
-  agents_using: string[];
+  /** Agentes com `knowledge_collection` apontando para cá (pode faltar num serviço antigo). */
+  agents_using?: string[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -811,6 +807,12 @@ export interface ModelProviderSummary {
   docs_url: string;
   credential_count: number;
   configured_count: number;
+  /**
+   * Fallback lido do ambiente do serviço (hoje só `google`: `GOOGLE_API_KEY`
+   * ou o Vertex). Só o nome da variável — o valor nunca vem. `in_use`: nenhuma
+   * credencial cadastrada resolve a padrão, então é ela que responde agora.
+   */
+  env_credential?: { variable: string; in_use: boolean } | null;
 }
 
 /**
@@ -917,6 +919,9 @@ export interface RunSummary {
   /** 1 = nenhuma tool de negócio; 2 = uma ou duas distintas; 3 = três ou mais. */
   complexity?: number | null;
   attachments?: AttachmentInfo[];
+  /** Entrada estruturada: a fala pura do contato (`message` é o texto montado que o modelo leu).
+   *  `null` em run só com `message` (legado). */
+  input_message?: string | null;
 }
 
 export interface RunPage {
@@ -965,6 +970,100 @@ export interface RunTrace {
   reference?: Record<string, unknown> | null;
   /** Só em turno de agente procedural: o `state` como o turno terminou. */
   procedure_state?: ProcedureState | null;
+  /** Entrada estruturada: os `events` da requisição; `null` em run não estruturado. */
+  input_events?: TimelineEvent[] | null;
+  /** Entrada estruturada: os blocos de `context` (`{key, title, content, volatile, hash}`). */
+  input_context?: InputContextBlock[] | null;
+}
+
+export type TimelineRole = "contact" | "human_agent" | "agent_sent" | "system";
+
+/** Um evento da entrada estruturada (`events` do `/chat`), como o run guardou. */
+export interface TimelineEvent {
+  role: TimelineRole | string;
+  content?: string | null;
+  at?: string | null;
+  kind?: "text" | "document" | string | null;
+  attachments?: AttachmentInfo[];
+  /** O evento que é a fala nova do turno. */
+  speech?: boolean;
+}
+
+export interface InputContextBlock {
+  key: string;
+  title?: string | null;
+  content: string;
+  volatile?: boolean;
+  hash?: string;
+}
+
+/** Um bloco de contexto na linha do tempo, comparado com o turno estruturado anterior. */
+export interface TimelineContextBlock extends InputContextBlock {
+  hash: string;
+  changed: boolean;
+  /** O texto anterior, quando mudou; `null` quando o bloco é novo (ou não mudou). */
+  previous_content?: string | null;
+}
+
+/** Uma chamada de tool no turno. */
+export interface TimelineStep {
+  tool: string;
+  args?: unknown;
+  ok: boolean;
+  failure?: string | null;
+  http_status?: number | null;
+  error?: string | null;
+  result_preview?: string | null;
+  side_effect: boolean;
+  latency_ms?: number | null;
+}
+
+/** Um turno (um run) da linha do tempo. */
+export interface TimelineTurn {
+  run_id: string;
+  at: string;
+  agent_type: string;
+  agent_version?: number | null;
+  status: RunStatus;
+  status_message?: string | null;
+  dry_run: boolean;
+  /** `false`: run só com `message` (legado) — o texto inteiro vem em `raw_input`. */
+  structured: boolean;
+  events: TimelineEvent[];
+  message?: string | null;
+  raw_input?: string | null;
+  context: TimelineContextBlock[];
+  steps: TimelineStep[];
+  sources: ChatSource[];
+  output?: string | null;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    cost_usd?: number | null;
+    latency_ms?: number | null;
+  };
+}
+
+/** `GET /observability/sessions/{id}/timeline` — totais da sessão inteira, turnos paginados do mais antigo ao mais novo. */
+export interface SessionTimeline {
+  session_id: string;
+  user_id?: string | null;
+  agent_types: string[];
+  started_at: string;
+  ended_at: string;
+  duration_ms: number;
+  turns: number;
+  error_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd?: number | null;
+  /** Nome do contato (dependency ou bloco com chave conhecida); `null` sem nome. */
+  contact_name?: string | null;
+  channel?: string | null;
+  items: TimelineTurn[];
+  next_cursor?: string | null;
 }
 
 /** `GET /observability/runs/{id}/related` — os runs ligados por uma chave de correlação. */
@@ -1016,6 +1115,10 @@ export interface LogSessionSummary {
   error_count: number;
   feedback_up: number | null;
   feedback_down: number | null;
+  /** Prévia da última fala (`input_message`, ou o texto inteiro em run legado). */
+  last_message?: string | null;
+  contact_name?: string | null;
+  channel?: string | null;
 }
 
 export interface LogSessionPage {

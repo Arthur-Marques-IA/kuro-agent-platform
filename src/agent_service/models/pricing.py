@@ -58,7 +58,7 @@ def _prices() -> dict[str, tuple[float, float]]:
         try:
             prices.update({model: (float(p[0]), float(p[1])) for model, p in json.loads(raw).items()})
         except (ValueError, TypeError, IndexError, AttributeError):
-            logger.warning("MODEL_PRICES inválido (esperado {\"modelo\": [entrada, saída]}): ignorado")
+            logger.warning('MODEL_PRICES inválido (esperado {"modelo": [entrada, saída]}): ignorado')
     return prices
 
 

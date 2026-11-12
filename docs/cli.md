@@ -31,7 +31,7 @@ se configura pelo console dá para configurar pela CLI, e vice-versa:
 | Indexar texto e arquivo | `/collections/{n}/documents`, `/files` | `collections add`, `add -f` | abas Texto e Arquivo |
 | Listar e apagar documento indexado | `/collections/{n}/documents` | `collections docs\|rm-doc` | tabela da coleção |
 | Sites: coletar, acompanhar, ressincronizar | `/collections/{n}/sources` | `collections add-site\|sources\|sync\|set-site\|rm-site` | aba Site e painel Sites |
-| Provedores e credenciais de modelo | `/model-providers`, `/model-credentials` | `providers`, `credentials` | Chaves de API |
+| Provedores e credenciais de modelo | `/model-providers`, `/model-credentials` | `providers`, `credentials` | Credenciais de modelos |
 | Modelos disponíveis no provedor (ao vivo) | `/model-providers/{p}/models` | `providers models <p>` | seletor de modelo do agente |
 | Execuções, traces e scores | `/observability/*` | `runs ...`, `dash` | Logs |
 | Panorama (totais, agentes, tools falhando) | `/observability/overview` | `dash` (aba Panorama) | Logs |
@@ -90,7 +90,7 @@ kuro> /agents
 | `/runs` · `/runs show <run_id>` | execuções recentes e o detalhe de uma |
 | `/runs tail` · `/runs stats` | execuções ao vivo e o resumo com custo |
 | `/dash` | painel em tela cheia: execuções ao vivo, trace e panorama ([detalhes](tui.md)) |
-| `/sessions` · `/sessions show <id>` | conversas guardadas e a transcrição de uma |
+| `/sessions` · `/sessions show <id>` | conversas guardadas e a linha do tempo de uma |
 | `/providers` · `/credentials` | provedores e chaves de modelo |
 | `/health` | diagnóstico do serviço |
 | `/help` · `/sair` | ajuda e saída |
@@ -167,7 +167,8 @@ uv run kuro runs tail --agent suporte           # acompanha as execuções ao vi
 uv run kuro runs stats --agent suporte          # total, erros, tokens, custo e série diária
 uv run kuro runs sessions --agent suporte       # execuções agrupadas por sessão (o mesmo recorte dos Logs)
 uv run kuro sessions list                       # conversas guardadas deste user_id
-uv run kuro sessions show <session_id>          # a transcrição, mensagem a mensagem
+uv run kuro sessions show <session_id>          # a linha do tempo: conversa, contexto que mudou, tools, resposta
+uv run kuro sessions show <session_id> --all-users -n 50   # sem filtrar por user_id; 50 turnos por página (--cursor)
 ```
 
 `runs` lê as execuções registradas (tokens, custo, spans); `sessions` lê a

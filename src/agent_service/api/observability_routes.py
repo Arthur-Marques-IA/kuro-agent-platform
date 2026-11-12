@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from agent_service.observability import tracing
 from agent_service.observability.overview import DEFAULT_TIMEZONE, Granularity, Overview, build_overview
+from agent_service.observability.transcript import SessionTimeline
 from agent_service.observability.trace_store import (
     RagFilter,
     RunPage,
@@ -179,26 +180,43 @@ def list_runs(
     cursor: str | None = None,
     agent_version: Annotated[int | None, Query(ge=1)] = None,
     meta: Annotated[list[str] | None, Query(description="Filtro por metadata, `chave=valor` (repetível).")] = None,
-    search: Annotated[str | None, Query(max_length=200, description="Trecho do session_id, user_id ou de um valor de metadata, ou o run_id/trace_id inteiro.")] = None,
+    search: Annotated[
+        str | None,
+        Query(
+            max_length=200,
+            description="Trecho do session_id, user_id ou de um valor de metadata, ou o run_id/trace_id inteiro.",
+        ),
+    ] = None,
     complexity: Annotated[
-        list[Annotated[int, Field(ge=1, le=3)]] | None, Query(description="Só estes níveis de complexidade (repetível).")
+        list[Annotated[int, Field(ge=1, le=3)]] | None,
+        Query(description="Só estes níveis de complexidade (repetível)."),
     ] = None,
     tool_failed: Annotated[bool | None, Query(description="true: só com tool falhando; false: só sem.")] = None,
-    side_effect: Annotated[bool | None, Query(description="true: só os que chamaram tool com efeito colateral.")] = None,
-    min_message_chars: Annotated[int | None, Query(ge=1, le=1000, description="Esconde mensagens mais curtas que isto.")] = None,
+    side_effect: Annotated[
+        bool | None, Query(description="true: só os que chamaram tool com efeito colateral.")
+    ] = None,
+    min_message_chars: Annotated[
+        int | None, Query(ge=1, le=1000, description="Esconde mensagens mais curtas que isto.")
+    ] = None,
     feedback: Annotated[Literal["up", "down", "none"] | None, Query()] = None,
     include_dry_run: Annotated[bool, Query(description="false tira os testes do Playground.")] = True,
-    sample: Annotated[int | None, Query(ge=1, le=100, description="Amostra aleatória deste tamanho, sem paginação.")] = None,
+    sample: Annotated[
+        int | None, Query(ge=1, le=100, description="Amostra aleatória deste tamanho, sem paginação.")
+    ] = None,
     sort: Annotated[
         RunSort, Query(description="`cost`/`latency`: as mais caras/lentas primeiro (sem os runs sem esse valor).")
     ] = "recent",
-    knowledge_collection: Annotated[str | None, Query(description="Só runs de agentes que consultavam esta collection.")] = None,
+    knowledge_collection: Annotated[
+        str | None, Query(description="Só runs de agentes que consultavam esta collection.")
+    ] = None,
     collection_version: Annotated[
         int | None, Query(ge=1, description="Só runs com esta versão da configuração de busca da collection.")
     ] = None,
     rag: Annotated[
         RagFilter | None,
-        Query(description="searched: buscou na base; empty: alguma busca voltou vazia; flagged: trecho marcado errado e aberto."),
+        Query(
+            description="searched: buscou na base; empty: alguma busca voltou vazia; flagged: trecho marcado errado e aberto."
+        ),
     ] = None,
 ) -> RunPage:
     """Execuções de todos os agentes (ou só dos `agent_type` pedidos), mais recentes
@@ -284,7 +302,13 @@ def list_sessions(
     since: datetime | None = None,
     until: datetime | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
-    search: Annotated[str | None, Query(max_length=200, description="Trecho do session_id, user_id ou de um valor de metadata, ou o run_id/trace_id inteiro.")] = None,
+    search: Annotated[
+        str | None,
+        Query(
+            max_length=200,
+            description="Trecho do session_id, user_id ou de um valor de metadata, ou o run_id/trace_id inteiro.",
+        ),
+    ] = None,
 ) -> SessionPage:
     """Sessões recentes (execuções agrupadas por `session_id`), com tokens, custo e feedback somados.
 
@@ -307,6 +331,37 @@ def list_sessions(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+TIMELINE_LIMIT = 200
+
+
+@router.get("/sessions/{session_id}/timeline", response_model=SessionTimeline)
+def session_timeline(
+    session_id: str,
+    user_id: Annotated[str | None, Query(description="Só os runs deste user_id.")] = None,
+    limit: Annotated[int, Query(ge=1, le=TIMELINE_LIMIT, description="Turnos por página.")] = 100,
+    cursor: Annotated[str | None, Query(description="O `next_cursor` da página anterior.")] = None,
+) -> SessionTimeline:
+    """A linha do tempo da sessão, um turno por run, do mais antigo ao mais novo: os
+    eventos e a fala nova, os blocos de contexto (com `changed` e `previous_content`
+    contra o turno estruturado anterior), as tools, as fontes, a resposta e o uso — e,
+    no envelope, os totais da sessão inteira (agentes, início, fim, turnos, tokens, custo).
+
+    Run sem entrada estruturada vem com `structured: false` e o texto em `raw_input`.
+    Até `limit` turnos (máx. 200); `next_cursor` pede os seguintes. Só no trace store
+    local: com `TRACE_STORE_BACKEND=langfuse` responde 501."""
+    from agent_service.observability import run_store
+    from agent_service.observability.transcript import build_timeline
+
+    if not _is_local(_store()):
+        raise HTTPException(
+            status_code=501, detail="A linha do tempo só existe com o trace store local (TRACE_STORE_BACKEND=db)."
+        )
+    data = run_store.session_timeline(session_id, user_id=user_id, limit=limit, cursor=cursor)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Sessão {session_id!r} sem execuções registradas.")
+    return build_timeline(session_id, data)
+
+
 @router.get("/sessions/{session_id}/transcript")
 def session_transcript(
     session_id: str,
@@ -314,10 +369,10 @@ def session_transcript(
     timezone: str = DEFAULT_TIMEZONE,
     memories: bool = True,
 ) -> dict[str, Any]:
-    """A conversa compacta (`observability/transcript.py`): por turno a fala, o contexto
-    só quando mudou, as tools numa linha e a resposta; e o que o agente lembra — o
-    resumo da sessão e as memórias do contato. O `RunOutput` cru continua em
-    `/sessions/{id}/runs`."""
+    """O que o agente lembra da conversa — o resumo da sessão e as memórias do contato —
+    e uma linha por turno da sessão do Agno (a entrada inteira, as tools e a resposta).
+    A conversa separada em campos é a `/sessions/{id}/timeline`; o `RunOutput` cru
+    continua em `/sessions/{id}/runs`."""
     from agno.db.base import SessionType
 
     from agent_service.db import get_db
@@ -354,7 +409,9 @@ def overview(
     from zoneinfo import ZoneInfoNotFoundError
 
     if not _is_local(_store()):
-        raise HTTPException(status_code=501, detail="O panorama só existe com o trace store local (TRACE_STORE_BACKEND=db).")
+        raise HTTPException(
+            status_code=501, detail="O panorama só existe com o trace store local (TRACE_STORE_BACKEND=db)."
+        )
     if since and until and since >= until:
         raise HTTPException(status_code=422, detail="since precisa ser anterior a until")
     try:
@@ -719,15 +776,17 @@ def export_cases(
     return cases
 
 
-
 # -- feedback por trecho recuperado (RAG) ---------------------------------------------
 
 
 class ChunkFeedbackIn(BaseModel):
     run_id: str = Field(..., min_length=1, max_length=200)
-    chunk_id: str = Field(..., min_length=1, max_length=200, description="`chunk_id` do trecho em `metadata.references`")
+    chunk_id: str = Field(
+        ..., min_length=1, max_length=200, description="`chunk_id` do trecho em `metadata.references`"
+    )
     label: Literal["relevant", "irrelevant", "wrong"] = Field(
-        ..., description="`relevant` (era o trecho certo), `irrelevant` (não respondia) ou `wrong` (conteúdo errado/desatualizado)"
+        ...,
+        description="`relevant` (era o trecho certo), `irrelevant` (não respondia) ou `wrong` (conteúdo errado/desatualizado)",
     )
     span_id: str | None = Field(
         default=None, max_length=300, description="A span da busca; sem ela, vale a primeira busca do run com o trecho"
@@ -763,7 +822,8 @@ class ChunkFeedbackOut(BaseModel):
 
 class ChunkFeedbackStatusIn(BaseModel):
     status: Literal["open", "resolved", "dismissed"] = Field(
-        ..., description="`dismissed` (a marcação não procedia), `resolved` (corrigido sem editar aqui) ou `open` (reabrir)"
+        ...,
+        description="`dismissed` (a marcação não procedia), `resolved` (corrigido sem editar aqui) ou `open` (reabrir)",
     )
     note: str | None = Field(default=None, max_length=2000)
     by: str | None = Field(default=None, max_length=200)

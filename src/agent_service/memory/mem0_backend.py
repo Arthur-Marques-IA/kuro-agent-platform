@@ -23,15 +23,11 @@ class Mem0MemoryBackend(MemoryBackend):
     def __init__(self) -> None:
         settings = get_settings()
         if not settings.mem0_enabled:
-            raise Mem0NotConfiguredError(
-                "Mem0 não está habilitado. Defina MEM0_ENABLED=true e MEM0_API_KEY no .env."
-            )
+            raise Mem0NotConfiguredError("Mem0 não está habilitado. Defina MEM0_ENABLED=true e MEM0_API_KEY no .env.")
         try:
             from mem0 import MemoryClient
         except ImportError as exc:
-            raise Mem0NotConfiguredError(
-                "Pacote 'mem0ai' não instalado. Rode: uv add mem0ai"
-            ) from exc
+            raise Mem0NotConfiguredError("Pacote 'mem0ai' não instalado. Rode: uv add mem0ai") from exc
 
         self._client = MemoryClient(api_key=settings.mem0_api_key)
 

@@ -9,7 +9,9 @@ def _sem_espacos(text: str) -> str:
 
 
 def test_pergunta_em_paragrafo_proprio_vai_com_a_resposta():
-    md = ("Contexto geral do curso. " * 20) + "\n\nComo peço presença na aula gravada?\n\nPela Central do Aluno, aba Presença."
+    md = (
+        "Contexto geral do curso. " * 20
+    ) + "\n\nComo peço presença na aula gravada?\n\nPela Central do Aluno, aba Presença."
     chunks = chunk_markdown(md, max_chars=560)
     [com_pergunta] = [c for c in chunks if "Como peço presença" in c.text]
     assert com_pergunta.text.endswith("Pela Central do Aluno, aba Presença.")
@@ -45,7 +47,7 @@ def test_faq_do_tutorial_continua_inteiro():
         "## Passo 1 — Acesse a Central do Aluno\n\nInforme o CPF e a data de nascimento.\n\n"
         "## Perguntas frequentes\n\n"
         "- Como registro minha presença? Pela Central do Aluno, aba Presença.\n"
-        "- Assisti à aula gravada, como solicito? Marque \"Assisti à aula gravada\"."
+        '- Assisti à aula gravada, como solicito? Marque "Assisti à aula gravada".'
     )
     chunks = chunk_markdown(md)
     assert len(chunks) == 1

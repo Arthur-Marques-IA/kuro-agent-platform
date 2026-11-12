@@ -45,6 +45,11 @@ def resolve_para(monkeypatch, *ips: str) -> None:
         ("::ffff:169.254.169.254", "link-local"),  # o mesmo, escrito em IPv6
         ("0.0.0.0", "não especificado"),
         ("224.0.0.1", "multicast"),
+        # CGNAT: `is_private` é falso para 100.64.0.0/10, mas não é endereço público
+        ("100.64.0.1", "CGNAT"),
+        ("100.100.100.200", "CGNAT"),  # metadata da Alibaba Cloud
+        ("::ffff:100.100.100.200", "CGNAT"),  # o mesmo, escrito em IPv6
+        ("fec0::1", "site-local"),  # IPv6 obsoleto: `is_global` é verdadeiro no Python 3.12
     ],
 )
 def test_destinos_internos_sao_bloqueados(monkeypatch, ip, motivo):
@@ -57,6 +62,19 @@ def test_destinos_internos_sao_bloqueados(monkeypatch, ip, motivo):
 def test_destino_publico_passa(monkeypatch):
     resolve_para(monkeypatch, "93.184.216.34")
     check_url("https://exemplo.com/x")  # não levanta
+
+
+@pytest.mark.parametrize("ip", ["8.8.8.8", "100.128.0.1", "2001:4860:4860::8888"])
+def test_publicos_vizinhos_do_cgnat_continuam_liberados(ip):
+    """100.128.0.1 fica logo depois de 100.64.0.0/10: a trava não pode pegar a /8 inteira."""
+    check_url(f"https://[{ip}]/x" if ":" in ip else f"https://{ip}/x")  # não levanta
+
+
+def test_cgnat_liberado_pela_allowlist(monkeypatch):
+    monkeypatch.setattr(get_settings(), "tool_egress_allowlist", "100.100.100.200")
+    check_url("http://100.100.100.200/latest/meta-data/")  # liberado de propósito
+    with pytest.raises(EgressBlockedError):
+        check_url("http://100.64.0.1/")  # o resto da faixa continua bloqueado
 
 
 def test_um_registro_interno_no_meio_ja_bloqueia(monkeypatch):
@@ -210,9 +228,7 @@ def _tool_python(code: str, monkeypatch):
 def test_tool_python_nao_alcanca_a_rede_interna(monkeypatch):
     """Sem isto, `import httpx` numa tool Python seria o desvio da trava."""
     fn = _tool_python(
-        "import httpx\n"
-        "def handler() -> str:\n"
-        "    return httpx.get('http://169.254.169.254/latest/meta-data/').text\n",
+        "import httpx\ndef handler() -> str:\n    return httpx.get('http://169.254.169.254/latest/meta-data/').text\n",
         monkeypatch,
     )
     resolve_para(monkeypatch, "169.254.169.254")

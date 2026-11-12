@@ -4,7 +4,7 @@ O serviço nasceu sem autenticação nenhuma: quem alcançasse a porta lia toda
 conversa que passou por ele, reescrevia prompt de produção e lia as credenciais
 de modelo. Estes testes fixam as três coisas que a trava precisa garantir — a
 separação dos escopos, o fecho das rotas do AgentOS (que não passam pelos
-routers deste repo) e o modo aberto de quem roda local sem chave.
+routers deste repo) e o modo aberto, que só existe com `ALLOW_OPEN=1` explícito.
 """
 
 import pytest
@@ -107,8 +107,9 @@ def test_health_fica_aberta(app_com_auth):
 
 
 def test_sem_chave_configurada_o_servico_segue_aberto(app_sem_chaves):
-    """Comportamento de antes, para não quebrar quem roda local — o alerta fica
-    em `/health` e no `kuro health`."""
+    """Sem chave, o middleware deixa passar — a subida só chega aqui com `ALLOW_OPEN=1`
+    (ver os testes de `check_startup_auth` abaixo). O alerta fica em `/health` e no
+    `kuro health`."""
     assert app_sem_chaves.get("/agents").status_code == 200
     assert not auth.auth_enabled()
 
@@ -209,3 +210,57 @@ def test_cliente_manda_so_a_chave_atual_de_uma_lista():
 
     Client("http://x", transport=httpx.MockTransport(handler), api_key="nova, antiga").health()
     assert vistos == ["Bearer nova"]
+
+
+# -- subida: fechado por padrão ------------------------------------------------------
+
+
+def test_sem_chave_e_sem_allow_open_a_subida_falha_dizendo_o_que_definir(app_sem_chaves, monkeypatch):
+    """Antes, sem chave o serviço subia aberto em silêncio — inclusive num servidor."""
+    monkeypatch.setattr(get_settings(), "allow_open", False)
+    with pytest.raises(auth.OpenServiceRefused) as erro:
+        auth.check_startup_auth()
+    mensagem = str(erro.value)
+    assert "ADMIN_API_KEY" in mensagem and "RUNTIME_API_KEY" in mensagem
+    assert "ALLOW_OPEN=1" in mensagem
+
+
+def test_com_allow_open_sobe_aberto_com_aviso_no_log(app_sem_chaves, monkeypatch, caplog):
+    from agent_service.api.routes import health
+
+    monkeypatch.setattr(get_settings(), "allow_open", True)
+    with caplog.at_level("WARNING", logger="agent_service.api.auth"):
+        auth.check_startup_auth()
+    assert "SEM autenticação" in caplog.text
+    assert health()["auth"] == "disabled"
+    assert app_sem_chaves.get("/agents").status_code == 200
+
+
+@pytest.mark.parametrize("allow_open", [True, False])
+def test_com_chave_sobe_fechado_com_ou_sem_allow_open(app_com_auth, monkeypatch, caplog, allow_open):
+    from agent_service.api.routes import health
+
+    monkeypatch.setattr(get_settings(), "allow_open", allow_open)
+    with caplog.at_level("WARNING", logger="agent_service.api.auth"):
+        auth.check_startup_auth()
+    assert "SEM autenticação" not in caplog.text
+    assert health()["auth"] == "enabled"
+    assert app_com_auth.get("/agents").status_code == 401
+
+
+def test_so_a_chave_runtime_ja_conta_como_fechado(monkeypatch):
+    """Sem a de admin, ninguém alcança as rotas de admin: não é o serviço aberto."""
+    monkeypatch.setattr(get_settings(), "admin_api_key", None)
+    monkeypatch.setattr(get_settings(), "runtime_api_key", RUNTIME)
+    monkeypatch.setattr(get_settings(), "allow_open", False)
+    auth.check_startup_auth()
+
+
+@pytest.mark.parametrize(("valor", "esperado"), [("", False), (" ", False), ("1", True), ("0", False), ("true", True)])
+def test_allow_open_vazio_e_nao(monkeypatch, valor, esperado):
+    """O compose repassa `ALLOW_OPEN=` vazio quando ninguém define: tem que ler como "não",
+    e não derrubar a subida com um erro de validação no lugar da mensagem."""
+    from agent_service.config import Settings
+
+    monkeypatch.setenv("ALLOW_OPEN", valor)
+    assert Settings(_env_file=None).allow_open is esperado

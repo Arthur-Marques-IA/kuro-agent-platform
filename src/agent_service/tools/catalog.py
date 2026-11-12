@@ -67,9 +67,7 @@ def _web_search(params: dict[str, Any], _tool_name: str) -> Any:
     try:
         from agno.tools.duckduckgo import DuckDuckGoTools
     except ImportError as exc:  # pragma: no cover - depende do extra opcional
-        raise RuntimeError(
-            "Pacote 'ddgs' não instalado — rode `uv sync --extra tools` no agent-service."
-        ) from exc
+        raise RuntimeError("Pacote 'ddgs' não instalado — rode `uv sync --extra tools` no agent-service.") from exc
     return DuckDuckGoTools(
         enable_news=params.get("enable_news", True),
         fixed_max_results=params.get("max_results") or None,
@@ -211,7 +209,9 @@ BUILTIN_CATALOG: dict[str, BuiltinToolSpec] = {
             description="Busca artigos e resumos na base do PubMed/NCBI. API pública, sem chave.",
             params=[
                 ParamSpec(
-                    "email", "string", "E-mail de contato",
+                    "email",
+                    "string",
+                    "E-mail de contato",
                     description="O NCBI pede um e-mail para identificar quem consulta a API.",
                 ),
                 ParamSpec("max_results", "integer", "Máx. de artigos por busca", default=None),
@@ -237,11 +237,7 @@ BUILTIN_CATALOG: dict[str, BuiltinToolSpec] = {
             "qualquer outra que use esta tool (ou a tool 'files' com o mesmo nome). Não use para "
             "conteúdo de um cliente específico. PDF e DOCX ficam de fora: exigem pacotes que o "
             "serviço não instala.",
-            params=[
-                ParamSpec(
-                    "enable_code_generation", "boolean", "Permitir gerar arquivos de código", default=False
-                )
-            ],
+            params=[ParamSpec("enable_code_generation", "boolean", "Permitir gerar arquivos de código", default=False)],
             factory=_file_generation,
         ),
         BuiltinToolSpec(

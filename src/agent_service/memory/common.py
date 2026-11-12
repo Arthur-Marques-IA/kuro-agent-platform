@@ -26,6 +26,4 @@ class CommonMemoryBackend(MemoryBackend):
         self._manager.add_user_memory(memory=UserMemory(memory=content), user_id=user_id)
 
     def search(self, *, user_id: str, query: str, limit: int = 5) -> list[Any]:
-        return self._manager.search_user_memories(
-            user_id=user_id, query=query, limit=limit, retrieval_method="agentic"
-        )
+        return self._manager.search_user_memories(user_id=user_id, query=query, limit=limit, retrieval_method="agentic")

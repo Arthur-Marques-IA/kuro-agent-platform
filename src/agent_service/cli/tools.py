@@ -36,7 +36,9 @@ def _render_list(tools: list[dict[str, Any]]) -> None:
     for t in tools:
         seed = " [dim](seed)[/]" if t["is_seed"] else ""
         efeito = {True: "sim", False: "não"}.get(t.get("side_effect"), "[yellow]não classificada[/]")
-        table.add_row(f"[cyan]{t['tool_name']}[/]{seed}", t["kind"], t["label"], "sim" if t["enabled"] else "[red]não[/]", efeito)
+        table.add_row(
+            f"[cyan]{t['tool_name']}[/]{seed}", t["kind"], t["label"], "sim" if t["enabled"] else "[red]não[/]", efeito
+        )
     console.print(table)
 
 
@@ -91,7 +93,10 @@ def get_tool(
     if as_editable:
         # Os segredos saem mascarados; devolvê-los assim no `apply` preserva o
         # valor guardado (a API restaura quando o campo volta como a máscara).
-        emit(st, {"tool_name": detail["tool_name"], "kind": detail["kind"], **{k: detail.get(k) for k in EDITABLE_FIELDS}})
+        emit(
+            st,
+            {"tool_name": detail["tool_name"], "kind": detail["kind"], **{k: detail.get(k) for k in EDITABLE_FIELDS}},
+        )
     else:
         emit(st, detail, _render_tool)
 
@@ -174,7 +179,9 @@ def catalog(ctx: typer.Context) -> None:
     emit(
         st,
         call(st, st.client.tool_catalog),
-        lambda entries: [console.print(f"[cyan]{e['builtin_id']}[/] — {e['label']}: {e['description']}") for e in entries],
+        lambda entries: [
+            console.print(f"[cyan]{e['builtin_id']}[/] — {e['label']}: {e['description']}") for e in entries
+        ],
     )
 
 
@@ -182,7 +189,9 @@ def catalog(ctx: typer.Context) -> None:
 def invoke(
     ctx: typer.Context,
     tool_name: str,
-    arg: list[str] = typer.Option([], "--arg", "-a", help="Argumento nome=valor (repetível; valor em JSON quando possível)."),
+    arg: list[str] = typer.Option(
+        [], "--arg", "-a", help="Argumento nome=valor (repetível; valor em JSON quando possível)."
+    ),
     args_json: str | None = typer.Option(None, "--args-json", help="Argumentos como objeto JSON."),
     dep: list[str] = typer.Option(
         [],
@@ -202,7 +211,10 @@ def invoke(
     injetado pelo servidor a partir de `dependencies`. Use `-d` para testá-lo
     sem montar um agente."""
     st = state(ctx)
-    arguments = {**(parse_json_object(st, args_json, "--args-json") if args_json else {}), **parse_pairs(st, arg, "--arg")}
+    arguments = {
+        **(parse_json_object(st, args_json, "--args-json") if args_json else {}),
+        **parse_pairs(st, arg, "--arg"),
+    }
     _invoke(st, tool_name, arguments, function, parse_pairs(st, dep, "--dep"), dry_run=dry_run)
 
 
@@ -228,7 +240,9 @@ def _invoke(
 def browse(st: State) -> None:
     while True:
         rows = call(st, st.client.list_tools)
-        choices = [questionary.Choice(f"{t['tool_name']}  —  {t['label']} ({t['kind']})", value=t["tool_name"]) for t in rows]
+        choices = [
+            questionary.Choice(f"{t['tool_name']}  —  {t['label']} ({t['kind']})", value=t["tool_name"]) for t in rows
+        ]
         choices.append(questionary.Choice("← sair", value=BACK))
         tool_name = questionary.select("Tool:", choices=choices).ask()
         if tool_name in (None, BACK):

@@ -14,6 +14,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
+import { overlayLayers } from "@/lib/overlay-layers";
 
 interface TriggerProps {
   ref: RefObject<HTMLButtonElement | null>;
@@ -70,6 +71,13 @@ export function DropdownMenu({
 
   useEffect(() => {
     if (!open) return;
+    // Camada passageira: fecha os outros menus e sai sozinha quando um diálogo (ou a paleta
+    // do Ctrl+K) abre por cima. O foco volta ao gatilho antes de o diálogo guardar o "foco
+    // anterior" e mover o seu para dentro: fechado o diálogo, o foco cai no gatilho, não no body.
+    const releaseLayer = overlayLayers.open("menu", () => {
+      close();
+      triggerRef.current?.focus();
+    });
     menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])')?.focus();
 
     function onPointerDown(e: PointerEvent) {
@@ -85,6 +93,7 @@ export function DropdownMenu({
     window.addEventListener("resize", onScrollOrResize);
     window.addEventListener("scroll", onScrollOrResize, true);
     return () => {
+      releaseLayer();
       document.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("resize", onScrollOrResize);
       window.removeEventListener("scroll", onScrollOrResize, true);
@@ -165,7 +174,7 @@ export function DropdownMenuItem({
         onSelect?.();
       }}
       className={cn(
-        "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] outline-none transition-colors",
+        "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] outline-none transition-colors max-md:min-h-10",
         "hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-50",
         destructive && "text-destructive hover:bg-destructive/10 focus-visible:bg-destructive/10",
         className

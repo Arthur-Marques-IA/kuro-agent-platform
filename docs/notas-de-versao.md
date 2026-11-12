@@ -24,6 +24,38 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Ação necessária
 
+- **O profile `tls` só sobe com login no console.** O console chama a API com a chave admin e era
+  publicado no `KURO_CONSOLE_DOMAIN` sem barreira nenhuma. Agora o Caddy pede usuário e senha
+  (basic_auth) no domínio do console e se recusa a subir sem `CONSOLE_BASIC_AUTH_USER` e
+  `CONSOLE_BASIC_AUTH_HASH` no `.env` — **inclusive para quem usa o profile `tls` só para a API**:
+  sem as variáveis, a API também fica sem HTTPS até você defini-las. A API (`/chat`, `/analyze`,
+  `/mcp`, `/health`) não ganha basic_auth; continua com a chave. **O que fazer:** antes do
+  `up`, gere o hash com `docker run --rm caddy:2-alpine caddy hash-password --plaintext 'senha'` e
+  ponha no `.env` com o hash entre aspas simples (`CONSOLE_BASIC_AUTH_HASH='$2a$14$...'`). Ver
+  [Login do console](operacao.md#login-do-console-basic_auth).
+- **Sem chave de API, o serviço não sobe mais.** Antes, sem `ADMIN_API_KEY` nem `RUNTIME_API_KEY`
+  ele subia aberto a quem alcançasse a porta. Agora a subida falha com uma mensagem que diz o que
+  definir, a não ser com `ALLOW_OPEN=1` explícito (aí sobe aberto como antes, com aviso no log, e o
+  `/health` segue dizendo `"auth": "disabled"`). Uma instalação sem chave pode parar de subir depois
+  de atualizar: defina `ADMIN_API_KEY` e `RUNTIME_API_KEY` no `.env` (o recomendado) ou, só na sua
+  máquina, `ALLOW_OPEN=1`. Com chave configurada, nada muda.
+  - No `docker-compose.yml`, `ALLOW_OPEN` vem ligado por padrão (a porta só é publicada no
+    loopback), então o `docker compose up` local segue funcionando sem chave. Para desligar,
+    `ALLOW_OPEN=0` no `.env`.
+  - O profile `tls` passa a conferir a autenticação como o `ip` já fazia: com ela desligada, o
+    `caddy` recusa publicar e diz o que falta (`docker compose logs caddy`).
+    `KURO_TLS_ALLOW_OPEN=1` pula a verificação, só para teste local.
+  - Fora do compose (`uv run uvicorn`, Kubernetes, outra orquestração) o padrão é fechado: defina as
+    chaves ou `ALLOW_OPEN=1`.
+- **A imagem do agent-service roda sem root (uid/gid `10001`) e sem compilador.** Reconstrua
+  (`docker compose up -d --build`). `docker compose exec agent-service kuro ...` segue igual, agora
+  como o usuário `kuro`. Nenhum volume do compose precisa de ajuste (o serviço não escreve em
+  nenhum); se o seu `docker-compose.override.yml` monta uma pasta ou volume em que o serviço
+  escreve, passe o dono para `10001:10001` (comando em [operação](operacao.md#imagem-do-serviço)).
+- **Senha do Postgres por variável: `POSTGRES_PASSWORD`** (padrão `postgres`, o valor de antes,
+  então nada muda sem ela). Ela só vale na criação do volume: num banco que já existe, rode o
+  `ALTER USER` **antes** de definir a variável, ou o agent-service e o Langfuse não conectam
+  ([operação](operacao.md#senha-do-postgres)).
 - **`kuro connect --json` e `kuro mcp-config --json` mudaram de formato.** No `kuro connect`,
   `registered` e `replaced` deixam de ser `true`/`false` e passam a ser listas com os clientes
   (`["claude-code", "vscode"]`; vazia quando nada foi registrado), e entram `wrapper`, `codex` e
@@ -36,16 +68,185 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   `section`. CSV continua uma linha por trecho. Os trechos ficam menores: se um agente passar a
   receber pouco contexto, suba o `max_results` (k) da collection. Os documentos já indexados não
   mudam até serem recortados (`POST /collections/{nome}/reindex`, `kuro collections reindex`).
-
 - **Fila no limite de execuções.** Acima de `MAX_CONCURRENT_RUNS`, a chamada **espera**
   na fila (até `QUEUE_MAX_WAIT_SECONDS`, 30 s) em vez de receber 503 na hora, e só então o run começa
   a contar o `timeout_seconds`. O timeout do seu cliente precisa cobrir as duas esperas
   (`QUEUE_MAX_WAIT_SECONDS + timeout_seconds + 5`); um cliente com `timeout_seconds + 5`, como o
   [guia de integração](integracao.md#4-erros-e-fallback) recomendava, pode desistir com o run ainda na fila.
   Para o comportamento antigo (503 na hora), use `QUEUE_MAX_WAIT_SECONDS=0`.
+- **Tools `kind="python"` só enxergam os nomes públicos dos módulos.** O validador aceitava
+  `random._os.getcwd()`, `collections._sys.modules[...]` e `from random import _os`, que davam acesso
+  a `os`/`sys`. Agora o cadastro responde 422 para qualquer acesso a atributo que comece com `_`, para
+  `from x import y` com `y` fora dos nomes públicos do módulo (o `__all__`, sem submódulos como
+  `uuid.os`; `string.Formatter` também fica de fora), para `from x import *` e para `import a.b`
+  (só `collections.abc` é aceito). Na execução, `import x` entrega uma cópia do módulo só com esses
+  nomes, então uma tool já salva que usasse um nome privado passa a falhar ao rodar. Continua não
+  sendo sandbox: é redução de superfície. **O que fazer:** se alguma tool Python sua usa nome com
+  `_` de um módulo, troque pelo equivalente público e salve de novo; `kuro tools invoke <tool>`
+  confere.
+- **Tools não alcançam mais a faixa CGNAT (`100.64.0.0/10`).** A trava de egress só deixava de fora
+  o que o Python chama de "privado", e essa faixa não entra nessa conta: `100.64.0.1` e
+  `100.100.100.200` (metadata da Alibaba Cloud) passavam. Agora uma tool só alcança endereço
+  público (`is_global`); o que não for público e não tiver motivo próprio (loopback, privado,
+  link-local...) é recusado como "faixa de uso especial". O site-local do IPv6 (`fec0::/10`), que o
+  Python dá como público, também passa a ser recusado. Se uma tool sua fala com um serviço nessa
+  faixa (Tailscale usa `100.64.0.0/10`, por exemplo), libere o host em `TOOL_EGRESS_ALLOWLIST`.
+- **`kuro sessions show` e a tool MCP `session_show` passam a ler a linha do tempo da sessão.**
+  O `--json` de `kuro sessions show` deixa de ser a lista de runs do Agno (`run_input`, `content`,
+  `metrics`) e passa a ser o envelope de `GET /observability/sessions/{id}/timeline` (`items` com
+  um turno por run). O `session_show` do MCP deixa de devolver `resumo_da_sessao` e
+  `memorias_do_contato` (continuam em `GET /observability/sessions/{id}/transcript`); `raw=true`
+  segue devolvendo os runs crus do Agno. `kuro sessions show` filtra pelo `user_id` como antes
+  (`cli` ou `KURO_USER_ID`), agora pelo `user_id` gravado no run; `--all-users` tira o filtro.
+- **`GET /observability/sessions/{id}/transcript` não recorta mais a entrada.** Cada item perde
+  `fala`, `contexto`, `contexto_igual_ao_anterior` e `temporal` (que saíam de marcadores de texto
+  como `[FALA DO CONTATO]`) e traz a entrada inteira em `entrada`. O resumo da sessão e as memórias
+  do contato não mudam. A conversa separada em campos é a linha do tempo, abaixo.
+- **Segredos de tools `api` passam a ser cifrados com a `CREDENTIALS_ENCRYPTION_KEY`.** Sem a chave
+  configurada nada quebra: a tool é gravada em texto plano, como antes, com um aviso no log e
+  `secrets_at_rest: "plaintext"` na leitura. Mas defina a chave (ver "Como atualizar") — e
+  **guarde-a**: perder ou trocar a chave depois de cifrar faz as tools com segredo responderem
+  "Erro de configuração da tool: o segredo em auth.token está cifrado e não pôde ser decifrado..."
+  (`failure: "config"`, sem chamar o destino) até o segredo ser cadastrado de novo. A mesma chave
+  já cifra as credenciais de modelo.
 
 ### Novo
 
+- **`env_credential` em `GET /model-providers`** (campo novo, opcional): quando o provedor tem
+  fallback no ambiente do serviço e ele está definido, vem `{"variable": "GOOGLE_API_KEY",
+  "in_use": true}`, só o nome da variável, nunca o valor. `in_use` é `true` quando nenhuma
+  credencial cadastrada resolve a padrão do provedor, ou seja, quando é a do ambiente que responde.
+  Hoje só o `google` tem esse fallback (`GOOGLE_API_KEY`, ou o Vertex com
+  `GOOGLE_GENAI_USE_VERTEXAI=true`); nos outros provedores o campo vem `null`. O console mostra essa
+  credencial como uma linha somente leitura, em vez de dizer que não há chave nenhuma.
+- **Console: "Chaves de API" virou "Credenciais de modelos"** no menu e no título da tela `/models`
+  (a rota não mudou). A tela avisa que essas não são as chaves de acesso ao Kuro
+  (`ADMIN_API_KEY`/`RUNTIME_API_KEY`).
+- **Console: formulário do agente mais fácil de percorrer.** Índice das seções (fixo ao lado; barra
+  compacta em tela estreita) com a marca de alteração ou erro em cada uma; editor de prompt em tela
+  cheia com numeração, busca e diff contra a versão salva; revisão do diff antes de salvar um prompt
+  alterado; o modelo salvo aparece sem esperar a lista dos provedores, que cai na lista fixa depois de
+  10 s. "Chaves de API" vira "Credenciais de modelos" nos textos do formulário.
+  Ver [console](console.md#o-formulário-do-agente).
+- **Console: a busca (`Ctrl+K`) acha tools, bases de conhecimento e ids.** Colar um `run_id` ou um
+  `session_id` leva direto à execução ou à sessão. Um UUID pode ser os dois, então aparecem as duas
+  opções; `analyze-…`, `cli-…` e `mcp-…` são sessão. Com a observabilidade ligada, a busca diz se o id
+  existe, sem atrasar o Enter. A tela de Tools aceita `?q=` para abrir já filtrada. Na busca,
+  "Chaves de API" virou "Credenciais de modelos". A lista "Conversas" da sidebar passa a se chamar
+  "Conversas deste navegador", porque mostra só as do Playground deste navegador, e ganha o atalho
+  **Todas** para as sessões dos Logs. Detalhes em [console.md](console.md#busca-global-ctrlk-e-a-barra-lateral).
+- **`kuro dash`: fala pura, contexto, sessão e conteúdo completo no trace.** A coluna mensagem do
+  Ao vivo e a caixa do trace mostram a fala (`input_message`); num run antigo, a mensagem inteira,
+  como antes. A caixa tem altura máxima e rolagem própria, e não empurra mais os spans. No trace,
+  `c` abre os blocos de contexto (título, chave, marca de volátil e conteúdo), `s` abre a sessão do
+  run (a linha do tempo, um turno por bloco, com as tools), Enter num span alterna entre a prévia e
+  a entrada e a saída completas (espaço passa a abrir e fechar o span) e `y` copia o `run_id`.
+  Ver [tui.md](tui.md). As capturas de `docs/telas/` agora saem de `docs/telas/gerar.py`.
+- **Console: teclado, leitor de tela, toque e contraste.** Nas listas de execuções e de sessões,
+  `j`/`k` movem a seleção (com anel de foco na linha) e `Enter` abre; na tela de uma execução ou
+  de uma sessão, `Esc` volta para a lista de onde se veio. Os atalhos ficam quietos digitando,
+  com diálogo ou menu aberto e com modificador. Um anunciador único lê no leitor de tela o fim de
+  cada resposta do Playground (uma vez, não a cada pedaço do streaming; antes a conversa inteira
+  era região viva) e os avisos de salvar; os erros ao salvar agente, tool, collection e
+  credencial são anunciados no próprio formulário (`role="alert"`). Salvar uma tool agora mostra um aviso. Em tela de toque ou estreita, botões de
+  ícone e links pequenos ganham área de toque de 40 px sem mudar de tamanho. Cores: vermelho,
+  verde e âmbar do tema claro mais escuros, e o vermelho do tema escuro mais claro (com texto
+  escuro no botão destrutivo), para passar 4,5:1 em badges de 11 px. Ver
+  [Console web](console.md#atalhos-e-acessibilidade).
+- **Console, listas de Logs: exportar CSV, atualização automática e cartões no celular.** Sessões,
+  Execuções e RAG ganham **Exportar CSV** com os filtros ativos, buscado no servidor (execuções até
+  5.000 linhas, paginadas; sessões até 200), em UTF-8 com BOM e com as células que começam com `=`,
+  `+`, `-` ou `@` neutralizadas contra fórmula. Ao lado de **Atualizar**, o seletor **Auto**
+  (desligada, 10, 30 ou 60 s) atualiza sem perder a rolagem nem o que veio de "Carregar mais", pausa
+  com a aba oculta e fica lembrado no navegador. O Panorama e as Execuções vazios por terem só testes
+  (`dry_run`) dizem isso e trazem o botão **Incluir testes**. Abaixo de 768 px, as listas viram
+  cartões (fala, agente, status, horário) e os filtros têm 40 px para o toque. Ver
+  [Console web](console.md#logs-panorama-sessões-e-execuções).
+- **Retenção do trace store e redação por chave.** Três variáveis novas, todas opcionais e
+  desligadas por padrão (nada muda sem configurá-las):
+  `RUN_RETENTION_DAYS` (vazio ou `0` = sem prazo) liga um job recorrente na fila de jobs
+  (`trace_retention`, a cada 6 h, um só entre as réplicas) que trata os runs mais antigos que o
+  prazo conforme `RUN_RETENTION_MODE`: `delete` (padrão) apaga o run com spans, metadata, scores,
+  referência do shadow e marcações de trecho; `anonymize` mantém as linhas para as estatísticas
+  (tokens, custo, status, datas, agente, versão) e apaga o conteúdo (mensagem, entrada estruturada,
+  saída, entrada/saída dos spans, `dependencies`, anexos), marcando o run com a metadata
+  `retention=anonymized`. `TRACE_REDACT_KEYS` (ex.: `cpf,telefone`) mascara como `[redigido]`, na
+  gravação do trace, o valor dessas chaves em `dependencies`, argumentos e resultados JSON das
+  tools, spans e `metadata` — por chave, não em texto livre; o modelo e as tools continuam
+  recebendo o valor real. Com o Langfuse ligado, o mesmo mascaramento vale para o que é enviado a
+  ele. A retenção não alcança as sessões do Agno, memórias, estado de procedurais nem o Langfuse:
+  ver [operação](operacao.md#retenção-e-dados-pessoais).
+- **Limite de requisições por chave: `RATE_LIMIT_PER_MINUTE`** (vazio ou 0 = desligado, o padrão).
+  Ligado, cada chave de API (ou cada IP, com o serviço aberto) faz até N chamadas por minuto no
+  `/chat`, `/chat/stream` e `/analyze`, somados; acima disso, **429** com `Retry-After` e
+  `{"detail", "error": "rate_limited"}`. A contagem é em memória e por processo (N processos = N
+  vezes o limite). O contrato de integração ganha a linha do 429. Ver
+  [operação](operacao.md#limite-de-requisições) e [integração](integracao.md#4-erros-e-fallback).
+- **Gravação de trace com fila própria.** O registro de cada execução sai do executor padrão do
+  processo e vai para uma fila só dele (uma thread, `kuro-trace-writer`), limitada por
+  `TRACE_WRITE_QUEUE_MAX` (1000): com o banco lento, a fila cheia descarta a gravação e conta, sem
+  atrasar o `/chat`. `GET /health` ganha `trace_writes` (`pending`, `max_pending`, `written`,
+  `dropped`, `failed`). No encerramento, o serviço espera até `TRACE_WRITE_SHUTDOWN_SECONDS` (5 s)
+  pelas gravações pendentes e loga as que ficaram para trás. Ver
+  [operação](operacao.md#gravação-de-trace).
+- **Segredos de tools `kind="api"` cifrados em repouso.** `auth.token`, `auth.value`,
+  `auth.password` e o valor dos headers com nome de credencial (os mesmos que a leitura mascara:
+  `Authorization`, `X-Api-Key`, `X-...-Token`...) ficam no banco como `enc:v1:<token Fernet>`,
+  valor a valor; o resto da config (URL, parâmetros, `auth.type`, `auth.username`, `Accept`)
+  continua legível. A API continua mascarando, e ecoar a máscara num update preserva o valor
+  guardado. Segredo antigo em texto plano continua funcionando e passa a ser cifrado na próxima
+  gravação da config. `GET /tools` e `GET /tools/{nome}` trazem `secrets_at_rest` (`encrypted`,
+  `plaintext` ou `null` quando a tool não tem segredo). Cifrar não muda a versão da configuração
+  dos agentes: o hash continua sendo do texto plano.
+- **Linha do tempo da sessão: `GET /observability/sessions/{id}/timeline`.** Um turno por run, em
+  ordem cronológica, já separado: `events` (como gravados, com `kind`, `attachments` e `speech`),
+  `message` (a fala pura), `context` (cada bloco com `changed` contra o turno estruturado anterior e,
+  quando mudou, `previous_content`; bloco `volatile` nunca conta como mudado; no primeiro turno
+  estruturado nenhum conta), `steps` (cada tool: argumentos, `ok`, `failure`, `error`, prévia do
+  resultado e `side_effect`), `sources`, `output` e `usage`. No envelope, os totais da sessão
+  inteira: agentes, início, fim, duração, turnos, erros, tokens e custo. Run sem entrada
+  estruturada vem com `structured: false` e o texto inteiro em `raw_input`, sem recorte. Até 200
+  turnos por página (`limit`, padrão 100; `next_cursor` → `cursor`), filtro por `user_id`, escopo
+  admin como o resto de `/observability`; 404 para sessão sem runs e 501 com
+  `TRACE_STORE_BACKEND=langfuse`. Formato em [integracao.md](integracao.md#linha-do-tempo-da-sessão).
+- **Quem é o contato, na linha do tempo e na listagem de sessões.** `GET .../timeline` ganha
+  `contact_name` e `channel` no envelope; `GET /observability/sessions` ganha, em cada sessão,
+  `contact_name`, `channel` e `last_message` (prévia de até 160 caracteres da fala do run mais
+  recente: `input_message`, ou o `message` inteiro num run não estruturado). Todos opcionais e
+  `null` quando não há o dado (ou no backend Langfuse). O nome sai, em ordem, de uma `dependency`
+  `contact_name`/`nome_contato`/`nome`/`name`; de um bloco de `context` com uma dessas `key` (a
+  primeira linha); ou da linha `nome:` de um bloco `dados_contato`/`dados_aluno`/`dados_cliente`.
+  O canal, da `metadata` ou de uma `dependency` `channel`/`canal`. Para o console mostrar o nome,
+  mande um desses campos.
+- **Console: a sessão como conversa.** A tela da sessão lê a linha do tempo: uma bolha por evento
+  (contato, atendente humano, o que foi enviado em nome do agente, sistema), uma linha por tool com
+  selo de falha e de efeito colateral, o contexto do turno num painel ao lado (gaveta no celular)
+  com "ver diferença" contra o turno anterior, e o cabeçalho com o nome do contato, canal, duração,
+  turnos e custo. O que foi enviado igual à resposta do agente não se repete; o que saiu diferente
+  ganha o selo "enviado diferente". Run legado aparece como "entrada não estruturada", com o texto
+  original. As tabelas de execuções e de sessões mostram a fala pura (`input_message`), e a tela da
+  execução mostra a entrada em blocos, com a migalha em Logs. Detalhes em [console.md](console.md#a-tela-da-sessão).
+- **Console: o Playground com a mesma entrada estruturada.** O painel **Contexto** ganha a aba
+  **Blocos de contexto** (`key`, `title`, `content` e `volatile`, guardados por agente no navegador
+  como as `dependencies`, com key única e título obrigatório conferidos antes do envio) e o botão
+  **Atendente** do campo de mensagem registra falas de um atendente humano, que vão em `events`
+  (`human_agent`, com `at`) junto da próxima mensagem do contato e aparecem como bolha de atendente.
+  A conversa reaberta mostra a fala e o atendente separados (lidos da linha do tempo), e o
+  **Código** mostra a chamada com `context` e `events` quando usados. Sem blocos nem atendente o
+  corpo enviado é o de antes. Agente procedural não oferece os dois controles (o servidor os recusa
+  com 422). Detalhes em [console.md](console.md#entrada-estruturada-no-playground).
+- **Entrada estruturada no `/chat` e no `/chat/stream`.** Campos opcionais `events` (o que aconteceu
+  desde a última resposta do agente: `role` `contact` | `human_agent` | `agent_sent` | `system`,
+  `content`, `at`, `kind`, `attachments`) e `context` (blocos `{key, title, content, volatile}`), em
+  vez de tudo concatenado em `message`. O servidor monta o texto do modelo com um gabarito fixo.
+  `message` passa a ser opcional quando `events` traz um evento `contact`; sem nenhum dos dois, 422.
+  Limites: 30 blocos, 200 eventos e a soma dos textos em `MAX_INPUT_CHARS`. Agente procedural recusa
+  os dois campos (422). O run grava `input_message`, `input_events` e `input_context` (no detalhe do
+  run, `GET /observability/runs/{id}/trace` e `kuro runs show`; `input_message` também na
+  listagem), e `GET /agents/{t}/integration` traz `structured_request_example`. Uma chamada só com
+  `message` não muda em nada, e os runs anteriores ficam como entrada não estruturada, sem
+  retrocarga. Antes e depois de uma chamada do Regente e o guia de migração em
+  [integracao.md](integracao.md#entrada-estruturada).
 - **Conectar o MCP sem instalar o Kuro, em qualquer cliente.** Na sua máquina, só com o uv:
   `uv run https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py root@servidor`.
   O `kuro connect` virou um arquivo só, que usa apenas a biblioteca padrão do Python: começa em
@@ -96,7 +297,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   contagem de cada um: buscaram na base, busca sem trecho nenhum (a base não cobre a pergunta) e
   trecho marcado errado ainda aberto, filtráveis por collection. API: `rag=searched|empty|flagged`
   em `GET /observability/runs` e `/stats` (que também aceita `knowledge_collection`).
-
 - **Investigar runs que não são conversa.** Três adições aditivas à observabilidade, sem migração:
   - O trace de um turno de agente procedural (`GET /observability/runs/{id}/trace`) traz
     `procedure_state`: o `state` como o turno terminou (etapa, `collected`, `missing`, `invalid`,
@@ -154,7 +354,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   chunk-feedback|chunk-unmark|chunk-marks|chunk-flagged|chunk-export`. MCP: `run_chunk_feedback`,
   `chunk_feedback_flagged` e `chunk_feedback_export`.
   Ver [conceitos](conceitos.md#feedback-por-trecho).
-
 - **A coleta de sites indexa os arquivos linkados.** PDF, DOCX, PPTX e XLSX linkados nas páginas,
   do mesmo escopo da fonte e dentro de `max_pages` (depois das páginas), entram na collection lidos
   pelos leitores do Agno, sem o agente formatador; cada trecho de PDF leva `page` (e o de PPTX, o
@@ -367,9 +566,52 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 - **URL sem domínio próprio, documentada:** `KURO_API_DOMAIN=<ip-com-hífens>.sslip.io` com o profile
   `tls` dá HTTPS com certificado válido, inclusive para o MCP por `/mcp`. Precisa das portas 80 e
   443 livres. Ver [operação](operacao.md#sem-domínio-próprio-sslipio).
+- **Versões no rodapé do console.** A barra lateral mostra `console <hash> · serviço <versão>` (o
+  hash do commit do build do console e o `version` do `GET /health`) e avisa **Versões
+  incompatíveis** quando o serviço está abaixo da versão mínima que o console exige
+  (`MIN_SERVICE_VERSION`, hoje `0.2.0`) ou não informa a versão. O `GET /api/health` do console
+  passa a devolver `version` junto do `status`.
+- **Console: a saída de um analista campo a campo.** Na tela **Análise**, "Campos que este agente
+  devolve" vira uma tabela (nome, tipo, obrigatório, descrição, com `object` e `array` indentados e
+  os valores do `enum`), e o resultado aparece como rótulo → valor. Na Análise e na tela do run,
+  um valor de campo com `enum` aparece como selo, em alerta se estiver fora dos permitidos; o JSON
+  cru fica atrás do botão **JSON**, com copiar. Ver [console](console.md#a-tela-da-execução).
+- **Uma consulta ao banco para achar o agente.** Cada `/chat`, `/chat/stream` e `/analyze` lia a
+  definição do agente, a nota de feedback e uma linha por tool (2 + N consultas); agora é uma só, que
+  traz a definição e os carimbos da nota e das tools, e o agente em cache é reaproveitado quando nada
+  mudou. Editar agente, tool ou nota continua valendo na requisição seguinte, em qualquer worker ou
+  réplica. O que é por processo (cache, vagas de execução, fila de espera) e o que isso implica com
+  mais de um worker está em [operação](operacao.md#mais-de-um-worker-ou-réplica).
+- **Réplicas subindo juntas, uma de cada vez.** A migração, os seeds e a montagem do app saíram
+  do import do módulo para a subida (o lifespan), sob um `pg_advisory_lock`: com várias réplicas
+  (ou `--workers N`) subindo juntas, uma sobe por vez, e as outras logam `Esperando outra
+  instância terminar de migrar o banco` até a vez delas, quando acham o banco já migrado e seguem.
+  O `kuro-migrate` usa o mesmo lock. Uma subida recusada (sem chave de API, CORS inválido, banco
+  fora do ar) mostra o mesmo motivo de antes, agora seguido de `Application startup failed.
+  Exiting.` do uvicorn, e o processo sai com código 3 (antes falhava no import, com o traceback).
+  Quem roda o uvicorn com `--lifespan off` passa a receber 503 `O serviço ainda está subindo.` em
+  toda requisição. Ver [a subida](operacao.md#a-subida-migração-seeds-e-várias-réplicas).
 
 ### Corrigido
 
+- **Depois de um reboot, o serviço ficava reiniciando em laço.** O `postgres` do
+  `docker-compose.yml` não tinha política de reinício: quando o servidor (ou o Docker) reiniciava,
+  o agent-service e o console voltavam sozinhos e o banco não, e o serviço caía repetidamente com
+  `failed to resolve host 'postgres'`. O `postgres` agora tem `restart: unless-stopped`. Numa
+  instalação que já está assim, `docker compose up -d` traz o banco de volta.
+- **Base de conhecimento quebrando com o console mais novo que o serviço.** Com um serviço que não
+  devolve a configuração de busca da collection, a tela caía com "Cannot read properties of
+  undefined (reading 'search_mode')". Agora ela abre e diz que o serviço parece mais antigo que o
+  console. A tela de erro do console também deixou de mostrar só a mensagem crua do JavaScript:
+  explica em português o que conferir, e o detalhe técnico fica recolhido, com botão de copiar.
+- **Duas réplicas subindo juntas podiam derrubar uma delas.** As duas migravam ao mesmo tempo, e o
+  `CREATE EXTENSION IF NOT EXISTS vector` do Agno em paralelo cai com `duplicate key value
+  violates unique constraint "pg_extension_name_index"`. Agora a subida é serializada pelo lock.
+- **Console: agente aberto já aparecia com "Alterações não salvas".** O formulário comparava o que
+  mostrava com a resposta crua da API: uma instrução salva com quebra de linha dentro ou espaço
+  sobrando (o editor normaliza uma por linha) já contava como prompt alterado ("será salvo como v2"),
+  e um campo que um serviço mais antigo não devolve contava como mudado. Agora a comparação é contra
+  os valores que o formulário montou ao abrir, e o `PUT` leva só os campos editados.
 - **Conectar o MCP no Windows.** O comando antigo (`uvx --from "agent-service[mcp] @ git+..." kuro
   connect`) clona o repositório, e no Windows o clone falhava num caminho longo do `frontend/` se o
   git não tivesse `core.longpaths` ligado. O comando novo baixa um arquivo só, sem clonar nada.
@@ -407,7 +649,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 - O link "OpenAPI" da aba Integração e o "Referência OpenAPI" do menu do console abriam o `/docs`,
   que dá 403 sem a chave admin. Agora abrem o OpenAPI de integração pelo console.
 - `kuro agents integrate` num agente analista imprimia `streaming (SSE): POST None`.
-
 - O título de uma conversa com `dependencies` mostrava os dados do cliente: sem nome definido, o
   AgentOS usa a primeira mensagem como título, e o Agno junta a ela o bloco
   `<additional context>{...}` (CPF, nome...). O console, a CLI (`kuro sessions list`) e o MCP
@@ -424,14 +665,34 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   ar? (docker compose up -d)", que manda olhar o lugar errado. Agora a CLI, o MCP e o painel dizem
   que a porta parece bloqueada por um firewall no caminho (o do painel do provedor, por exemplo) e
   sugerem o `kuro connect`; e não tentam de novo, o que dobrava a espera.
+- Console: camadas sobrepostas. O Kuro do canto não cobre mais a barra "Alterações não salvas" do
+  agente (sai da tela enquanto o formulário está aberto) nem o anexo do Playground com os detalhes
+  abertos (o composer recua). Abrir a busca (`Ctrl+K`) ou um diálogo fecha o menu que estava aberto
+  (Preferências, filtros de Logs), e cada `Esc` fecha uma camada só.
 
 ### Como atualizar
 
+- **Instalação em operação: siga o [roteiro de migração](migracao.md).** Ele junta, em ordem, o
+  backup, o que conferir no `.env` e nas tools, o comando, a conferência, o que acontece com as
+  sessões já gravadas e como voltar atrás.
+- **Profile `tls`: defina o login do console antes de subir.** Variáveis novas, obrigatórias com o
+  profile: `CONSOLE_BASIC_AUTH_USER` e `CONSOLE_BASIC_AUTH_HASH` (bcrypt, entre aspas simples no
+  `.env`). Depois, `docker compose --profile tls up -d` (o container do Caddy é recriado com o
+  script `docker/caddy-tls.sh`). Confira: o console pede usuário e senha, e
+  `curl https://<KURO_API_DOMAIN>/health` responde sem eles. Se o Caddy não subir,
+  `docker compose --profile tls logs caddy` diz o que falta.
+- Variáveis novas, opcionais: `POSTGRES_PASSWORD` (`postgres`) e `RATE_LIMIT_PER_MINUTE` (desligado).
+  O `--build` do `up` é obrigatório para a imagem nova (dois estágios, usuário `10001`).
 - **O repositório agora se chama `kuro-agent-platform`**
   (`https://github.com/Arthur-Marques-IA/kuro-agent-platform`). O `kuro connect` e o `uvx --from`
   da documentação já apontam para o nome novo. O GitHub redireciona o endereço antigo, mas atualize
   o remote dos clones existentes:
   `git remote set-url origin https://github.com/Arthur-Marques-IA/kuro-agent-platform.git`.
+- **Reconstrua o serviço e o console juntos**, com o hash do commit para o rodapé do console:
+  `KURO_BUILD_SHA=$(git rev-parse --short HEAD) docker compose --profile ui up -d --build` (mais os
+  outros profiles que você usa). Variável nova, opcional: `KURO_BUILD_SHA` (vira o build arg
+  `NEXT_PUBLIC_BUILD_SHA` da imagem do console; sem ela, `dev`). Ver
+  [operação](operacao.md#atualizando).
 - Rode o `up` com `--build` e com todos os profiles que você já usa: o `kuro mcp-config` novo, o
   `kuro-mcp` que o `kuro connect` chama e o `/mcp` moram na imagem (o pacote `mcp` passou a ser
   dependência do serviço; o extra `[mcp]` continua aceito). Para ligar o HTTPS pelo IP, acrescente `--profile ip`, por exemplo
@@ -459,6 +720,16 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 - A migração `0014` também roda sozinha: cria `document_revisions` e acrescenta o estado e a revisão
   em `chunk_feedback`. As marcações existentes ficam `open`, com a revisão desconhecida; os documentos
   já indexados ganham a revisão 1 na primeira vez que alguém a consulta, sem reindexar nada.
+- A migração `0016` também roda sozinha: acrescenta `input_message`, `input_events` e
+  `input_context` em `runs`. Os runs existentes ficam com as três nulas (entrada não estruturada).
+- A migração `0017` também roda sozinha: cifra os segredos das tools `api` já gravados. **Defina a
+  `CREDENTIALS_ENCRYPTION_KEY` no `.env` antes do `up`** (gere com
+  `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`). Sem
+  ela, a migração não falha nem impede a subida: deixa os segredos em texto plano e loga um aviso.
+  Para cifrar depois de configurar a chave, regrave cada tool com `secrets_at_rest: "plaintext"`:
+  `kuro --json tools get <tool> --editable > t.json && kuro --json tools apply -f t.json` (a
+  máscara ecoada é trocada pelo valor guardado e gravada cifrada). O downgrade da `0017` (Alembic,
+  à mão) decifra e exige a mesma chave; voltar só a imagem não sobe com o banco na `0017`.
 - `AGENT_SERVICE_PUBLIC_URL` do console deixou de ter `http://localhost:58000` fixo no compose:
   vazia, a aba Integração mostra a URL que o agent-service conhece. Para forçar outra, defina-a no
   `.env`.

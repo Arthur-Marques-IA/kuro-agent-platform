@@ -236,9 +236,16 @@ def test_list_runs_sums_usage_from_children_and_counts_feedback() -> None:
     roots_filter = fake.filters(0)
     assert {"type": "boolean", "column": "isRootObservation", "operator": "=", "value": True} in roots_filter
     assert {"type": "string", "column": "traceName", "operator": "=", "value": "conversational"} in roots_filter
-    assert {"type": "stringOptions", "column": "environment", "operator": "any of", "value": ["development"]} in roots_filter
+    assert {
+        "type": "stringOptions",
+        "column": "environment",
+        "operator": "any of",
+        "value": ["development"],
+    } in roots_filter
     # Uma única consulta de uso para a página inteira.
-    assert fake.filters(1) == [{"type": "stringOptions", "column": "traceId", "operator": "any of", "value": [TRACE_ID]}]
+    assert fake.filters(1) == [
+        {"type": "stringOptions", "column": "traceId", "operator": "any of", "value": [TRACE_ID]}
+    ]
 
 
 def test_feedback_counts_are_unknown_when_scores_exceed_the_page_limit() -> None:
@@ -273,7 +280,13 @@ def test_list_runs_translates_filters() -> None:
     assert {"type": "string", "column": "version", "operator": "=", "value": "prompt-v3"} in filters
     assert {"type": "string", "column": "level", "operator": "=", "value": "ERROR"} in filters
     assert {"type": "string", "column": "userId", "operator": "=", "value": "u9"} in filters
-    assert {"type": "stringObject", "column": "metadata", "key": "tenant_id", "operator": "=", "value": "acme"} in filters
+    assert {
+        "type": "stringObject",
+        "column": "metadata",
+        "key": "tenant_id",
+        "operator": "=",
+        "value": "acme",
+    } in filters
     assert not any(f["column"] == "environment" for f in filters)
     assert len(fake.requests) == 1  # sem runs, não busca uso nem feedback
 
@@ -364,11 +377,18 @@ def test_several_agents_and_statuses_become_any_of_filters() -> None:
     make_store(fake).list_runs(query)
 
     filters = fake.filters(0)
-    assert {"type": "stringOptions", "column": "traceName", "operator": "any of", "value": ["conversational", "outro"]} in filters
+    assert {
+        "type": "stringOptions",
+        "column": "traceName",
+        "operator": "any of",
+        "value": ["conversational", "outro"],
+    } in filters
     assert {"type": "stringOptions", "column": "level", "operator": "any of", "value": ["ERROR", "WARNING"]} in filters
 
     # As agregações (sessões, estatísticas) varrem com os mesmos filtros.
-    stats = make_store(FakeLangfuse([ROOT, GENERATION], [])).get_stats(RunQuery(agent_types=("conversational", "outro")))
+    stats = make_store(FakeLangfuse([ROOT, GENERATION], [])).get_stats(
+        RunQuery(agent_types=("conversational", "outro"))
+    )
     assert stats.total_runs == 1
 
 

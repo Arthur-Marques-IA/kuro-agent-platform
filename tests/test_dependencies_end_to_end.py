@@ -133,14 +133,10 @@ def test_dependency_chega_na_tool_pelo_chat_stream(tool_e_chamadas, monkeypatch)
     que atendeu a requisição."""
     tool, chamadas = tool_e_chamadas
     agent = AgentQueChamaATool(tool)
-    monkeypatch.setattr(
-        "agent_service.api.routes._resolve", lambda request, endpoint: (agent, _run(endpoint=endpoint))
-    )
+    monkeypatch.setattr("agent_service.api.routes._resolve", lambda request, endpoint: (agent, _run(endpoint=endpoint)))
 
     async def consumir() -> list[str]:
-        response = await chat_stream(
-            ChatRequest(agent_type="suporte", user_id="u1", session_id="s1", message="oi")
-        )
+        response = await chat_stream(ChatRequest(agent_type="suporte", user_id="u1", session_id="s1", message="oi"))
         eventos = []
         async for chunk in response.body_iterator:
             eventos.append(chunk)

@@ -12,7 +12,15 @@ from agno.models.response import ToolExecution
 from agno.run.agent import RunCompletedEvent, ToolCallCompletedEvent, ToolCallErrorEvent
 
 from agent_service.api.observability_routes import get_run_trace
-from agent_service.api.tools_routes import ToolIn, ToolInvokeIn, ToolUpdateIn, create_tool, delete_tool, invoke_tool, update_tool
+from agent_service.api.tools_routes import (
+    ToolIn,
+    ToolInvokeIn,
+    ToolUpdateIn,
+    create_tool,
+    delete_tool,
+    invoke_tool,
+    update_tool,
+)
 from agent_service.observability import trace_store, tracing
 from agent_service.observability.tracing import RunContext
 from agent_service.tools import api_tool, failures
@@ -44,8 +52,18 @@ def rede(status: int = 200, payload=None, erro: Exception | None = None):
 
 @pytest.mark.parametrize(
     ("status", "kind"),
-    [(200, None), (201, None), (400, "invalid_arguments"), (422, "invalid_arguments"), (401, "auth"),
-     (403, "auth"), (404, "not_found"), (429, "unavailable"), (500, "unavailable"), (503, "unavailable")],
+    [
+        (200, None),
+        (201, None),
+        (400, "invalid_arguments"),
+        (422, "invalid_arguments"),
+        (401, "auth"),
+        (403, "auth"),
+        (404, "not_found"),
+        (429, "unavailable"),
+        (500, "unavailable"),
+        (503, "unavailable"),
+    ],
 )
 def test_classificacao_http(status, kind):
     assert failures.classify_http(status) == kind
@@ -125,8 +143,15 @@ class AgenteQueChamaATool:
 def test_run_com_tool_falhando_continua_success_mas_conta_a_falha(monkeypatch):
     monkeypatch.setattr(api_tool, "_client", rede(500))
     agent = AgenteQueChamaATool(build_api_function(tool_name="oferta", description=None, config=CONFIG), valor=10)
-    run = RunContext(endpoint="chat", agent_type=f"agente-{uuid4().hex[:8]}", agent_name="t", prompt_version=1,
-                     user_id="u", session_id="s", message="fecha por 10")
+    run = RunContext(
+        endpoint="chat",
+        agent_type=f"agente-{uuid4().hex[:8]}",
+        agent_name="t",
+        prompt_version=1,
+        user_id="u",
+        session_id="s",
+        message="fecha por 10",
+    )
 
     async def consumir():
         async with aclosing(tracing.traced_run_events(agent, run)) as eventos:
@@ -184,25 +209,31 @@ def test_migracao_reclassifica_falhas_antigas_so_de_tools_api(tmp_path):
     with engine.begin() as conn:
         config.attributes["connection"] = conn
         command.upgrade(config, "0005")
-        conn.execute(sa.text(
-            "INSERT INTO tool_definitions (tool_name, kind, label, config, enabled, is_seed) VALUES "
-            "('ficha', 'api', 'Ficha', '{}', 1, 0), ('script', 'python', 'Script', '{}', 1, 0)"
-        ))
-        conn.execute(sa.text(
-            "INSERT INTO runs (run_id, trace_id, tenant_id, agent_type, status, input_tokens, output_tokens, "
-            "total_tokens, started_at) VALUES ('r1', 't1', 'default', 'r8', 'success', 0, 0, 0, '2026-09-30'), "
-            "('r2', 't2', 'default', 'r8', 'success', 0, 0, 0, '2026-09-30')"
-        ))
+        conn.execute(
+            sa.text(
+                "INSERT INTO tool_definitions (tool_name, kind, label, config, enabled, is_seed) VALUES "
+                "('ficha', 'api', 'Ficha', '{}', 1, 0), ('script', 'python', 'Script', '{}', 1, 0)"
+            )
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO runs (run_id, trace_id, tenant_id, agent_type, status, input_tokens, output_tokens, "
+                "total_tokens, started_at) VALUES ('r1', 't1', 'default', 'r8', 'success', 0, 0, 0, '2026-09-30'), "
+                "('r2', 't2', 'default', 'r8', 'success', 0, 0, 0, '2026-09-30')"
+            )
+        )
         for span_id, name, output in [
             ("s1", "ficha", '"HTTP 500: {\\"ok\\": false}"'),
             ("s2", "ficha", '"HTTP 200: {\\"ok\\": true}"'),
             ("s3", "script", '"HTTP 500: texto qualquer de uma tool python"'),
             ("s4", "ficha", '"HTTP 404: {\\"ok\\": false}"'),
         ]:
-            conn.execute(sa.text(
-                "INSERT INTO run_spans (id, run_id, type, name, level, output, input_tokens, output_tokens, "
-                f"total_tokens, started_at) VALUES ('{span_id}', 'r1', 'TOOL', '{name}', 'DEFAULT', '{output}', 0, 0, 0, '2026-09-30')"
-            ))
+            conn.execute(
+                sa.text(
+                    "INSERT INTO run_spans (id, run_id, type, name, level, output, input_tokens, output_tokens, "
+                    f"total_tokens, started_at) VALUES ('{span_id}', 'r1', 'TOOL', '{name}', 'DEFAULT', '{output}', 0, 0, 0, '2026-09-30')"
+                )
+            )
         command.upgrade(config, "head")
 
     with engine.connect() as conn:
@@ -233,8 +264,15 @@ def test_404_no_run_vira_aviso_e_nao_conta(monkeypatch):
 
             return stream()
 
-    run = RunContext(endpoint="chat", agent_type=f"agente-{uuid4().hex[:8]}", agent_name="t", prompt_version=1,
-                     user_id="u", session_id="s", message="m")
+    run = RunContext(
+        endpoint="chat",
+        agent_type=f"agente-{uuid4().hex[:8]}",
+        agent_name="t",
+        prompt_version=1,
+        user_id="u",
+        session_id="s",
+        message="m",
+    )
 
     async def consumir():
         async with aclosing(tracing.traced_run_events(Agente(), run)) as eventos:

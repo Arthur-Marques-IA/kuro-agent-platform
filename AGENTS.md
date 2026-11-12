@@ -72,6 +72,9 @@ kuro --json chat suporte -m "fecha o acordo" --dry-run   # teste: tools recebem 
 # `dry_run: true` no /chat e no /analyze (também `--dry-run` em analyze, eval e tools invoke):
 # as tools recebem o header e `dependencies.dry_run` (sem declarar em dependency_fields);
 # o run fica com metadata.dry_run=true. Quem implementa a tool decide o que simular.
+# Entrada estruturada (pela API): `events` [{role: contact|human_agent|agent_sent|system, content, at}]
+# e `context` [{key, title, content, volatile}] no /chat em vez de tudo em `message`; o run guarda
+# input_message/input_events/input_context (`runs show`). Procedural recusa (422). docs/integracao.md.
 
 # Anexos: imagem, áudio, vídeo ou arquivo (PDF, DOCX, CSV, TXT...) direto ao modelo
 kuro --json chat suporte -m "o que tem nessa foto?" --attach foto.png       # -a, repetível
@@ -180,7 +183,8 @@ kuro --json runs export -a r8 -o casos.jsonl    # runs com referência viram dat
 # Conversas guardadas (a transcrição em si)
 # O user_id é o mesmo do chat: `cli` por padrão, ou KURO_USER_ID.
 kuro --json sessions list --agent suporte
-kuro --json sessions show <session_id>          # transcrição: cada mensagem, a resposta e os tokens
+kuro --json sessions show <session_id>          # linha do tempo: por turno events, message, context (changed), steps, output, usage
+kuro --json sessions show <session_id> --all-users   # sem filtrar por user_id (conversa de uma integração); pagina com --cursor
 kuro --json sessions rename <session_id> "Cliente X"
 kuro --json sessions delete <session_id> --yes  # apaga a conversa (não tem volta); o registro em `kuro runs` continua
 
@@ -293,5 +297,6 @@ arquivo. A versão no ar sai de `pyproject.toml` e aparece em `GET /health` (`ve
 Este arquivo é só a receita rápida da CLI. Conceitos em `docs/conceitos.md`, comandos em
 `docs/cli.md`, o servidor MCP em `docs/mcp.md`, o painel `kuro dash` (só para humanos, precisa
 de TTY) em `docs/tui.md`, integração em `docs/integracao.md`, configuração e segurança em
-`docs/operacao.md`, testes e estrutura do código em `docs/desenvolvimento.md`. O índice está
+`docs/operacao.md`, atualizar uma instalação em operação em `docs/migracao.md`, testes e
+estrutura do código em `docs/desenvolvimento.md`. O índice está
 no `README.md`. Links relativos entre documentos são conferidos por `tests/test_docs_links.py`.

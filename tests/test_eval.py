@@ -53,7 +53,10 @@ def test_rules_with_condition_and_dependency_reference():
     bad = {"acao": "efetivar_acordo", "identidade_confirmada": False, "acordo": {"valor_acordo": 1100}}
 
     assert kuro_eval.check_rules(rules, ok, {"teto": 1000}) == []
-    assert [v["rule"] for v in kuro_eval.check_rules(rules, bad, {"teto": 1000})] == ["identidade antes do acordo", "teto"]
+    assert [v["rule"] for v in kuro_eval.check_rules(rules, bad, {"teto": 1000})] == [
+        "identidade antes do acordo",
+        "teto",
+    ]
     # `when` falso: a regra não se aplica.
     assert kuro_eval.check_rules(rules[1:2], {"acao": "responder"}, {}) == []
 
@@ -82,7 +85,9 @@ def api(monkeypatch, tmp_path):
         if path == "/analyze":
             body = json.loads(request.content)
             result = deciders[body["agent_type"]](json.loads(body["document"]))
-            return httpx.Response(200, json={"result": result, "run_id": f"run-{len(scores)}", "agent_version": 7, "config_hash": "abc"})
+            return httpx.Response(
+                200, json={"result": result, "run_id": f"run-{len(scores)}", "agent_version": 7, "config_hash": "abc"}
+            )
         if path == "/observability/scores":
             scores.append(json.loads(request.content))
             return httpx.Response(202, json={})
@@ -90,7 +95,9 @@ def api(monkeypatch, tmp_path):
 
     transport = httpx.MockTransport(handler)
     monkeypatch.setattr(
-        cli_main, "Client", lambda url, timeout, api_key=None, **kw: Client(url, timeout, transport=transport, api_key=api_key, **kw)
+        cli_main,
+        "Client",
+        lambda url, timeout, api_key=None, **kw: Client(url, timeout, transport=transport, api_key=api_key, **kw),
     )
     return deciders, scores
 
@@ -138,7 +145,9 @@ def test_a_policy_violation_fails_even_with_every_decision_right(api, tmp_path):
     rules = tmp_path / "regras.json"
     rules.write_text(json.dumps([{"name": "teto", "field": "valor", "op": "lte", "value": 500}]), encoding="utf-8")
 
-    result = runner.invoke(cli_main.app, ["--json", "eval", "r6", "-f", _dataset(tmp_path, CASES), "-r", str(rules), "--no-score"])
+    result = runner.invoke(
+        cli_main.app, ["--json", "eval", "r6", "-f", _dataset(tmp_path, CASES), "-r", str(rules), "--no-score"]
+    )
 
     assert result.exit_code == 1
     assert json.loads(result.stdout)["summary"]["policy_violations"] == 1
@@ -149,8 +158,12 @@ def test_compare_fails_when_the_candidate_is_worse_than_production(api, tmp_path
     deciders["r6"] = lambda doc: {"acao": "responder" if doc["divida"] < 500 else "transferir"}
     deciders["r6-draft"] = lambda doc: {"acao": "responder"}
 
-    worse = runner.invoke(cli_main.app, ["--json", "eval", "r6-draft", "--compare", "r6", "-f", _dataset(tmp_path, CASES), "--no-score"])
-    better = runner.invoke(cli_main.app, ["--json", "eval", "r6", "--compare", "r6-draft", "-f", _dataset(tmp_path, CASES), "--no-score"])
+    worse = runner.invoke(
+        cli_main.app, ["--json", "eval", "r6-draft", "--compare", "r6", "-f", _dataset(tmp_path, CASES), "--no-score"]
+    )
+    better = runner.invoke(
+        cli_main.app, ["--json", "eval", "r6", "--compare", "r6-draft", "-f", _dataset(tmp_path, CASES), "--no-score"]
+    )
 
     assert worse.exit_code == 1 and "pior que" in json.loads(worse.stdout)["verdict"]["reason"]
     assert better.exit_code == 0

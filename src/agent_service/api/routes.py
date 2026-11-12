@@ -16,17 +16,17 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing, asynccontextmanager
 from typing import Annotated, Any
 
-from agno.agent import Agent
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sse_starlette.sse import EventSourceResponse
 
-from agno.run.agent import RunEvent
-
-from agent_service.api import idempotency
+from agent_service.api import idempotency, rate_limit
+from agent_service.agents import structured_input
+from agent_service.agents.runtime import RunnableAgent, read_event
 from agent_service.agents.attachments import AttachmentError, AttachmentIn, build_media, describe_attachments
+from agent_service.agents.structured_input import MAX_CONTEXT_BLOCKS, MAX_EVENTS, ContextBlock, InputEvent
 from agent_service.agents.dependency_fields import DependencyValidationError, validate_dependencies
 from agent_service.agents.procedure_runner import (
     ProcedureBusyError,
@@ -36,7 +36,7 @@ from agent_service.agents.procedure_runner import (
 )
 from agent_service.agents.registry import UnknownAgentTypeError, get_agent_with_definition, list_agent_types
 from agent_service.config import get_settings
-from agent_service.documents.collections import EmbedderError
+from agent_service.documents.embedder import EmbedderError
 from agent_service.documents.retrieval import sources_from
 from agent_service.observability.tracing import (
     RUN_FAILED,
@@ -51,6 +51,9 @@ from agent_service.tools.registry import ToolBuildError, UnknownToolError
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_RATE_LIMITED = [Depends(rate_limit.check_rate_limit)]
+"""`RATE_LIMIT_PER_MINUTE` por chave, só nas rotas que executam agente (`api/rate_limit.py`)."""
 
 _slots: asyncio.Semaphore | None = None
 _waiting = 0
@@ -113,7 +116,13 @@ async def _idempotent(
         return await handler()
     try:
         key = idempotency.check_key(key)
-        body_hash = idempotency.request_hash(request.model_dump(mode="json"))
+        body = request.model_dump(mode="json")
+        # Campos opcionais que vieram depois (a entrada estruturada): ausentes, ficam fora
+        # do hash, para uma repetição feita através de uma atualização bater com a primeira.
+        for late in ("events", "context"):
+            if late in body and body[late] is None:
+                del body[late]
+        body_hash = idempotency.request_hash(body)
         reservation = await run_in_threadpool(idempotency.reserve, endpoint, request.agent_type, key, body_hash)
     except idempotency.IdempotencyError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
@@ -170,7 +179,26 @@ class ChatRequest(BaseModel):
     agent_type: str = "conversational"
     user_id: str
     session_id: str
-    message: str
+    message: str | None = Field(
+        default=None,
+        description="A fala nova do contato. Obrigatória, a não ser que `events` traga ao menos um "
+        "evento role='contact' (aí a fala é o último deles). Com `events`, é o que veio depois deles.",
+    )
+    events: list[InputEvent] | None = Field(
+        default=None,
+        max_length=MAX_EVENTS,
+        description="Entrada estruturada: o que aconteceu desde a última resposta do agente, em ordem "
+        f"(até {MAX_EVENTS}). Cada item: role (contact | human_agent | agent_sent | system), content, at, "
+        "kind (text | document), attachments (só a descrição). Não repita turnos que o agente já viu: o "
+        "histórico da sessão já os traz.",
+    )
+    context: list[ContextBlock] | None = Field(
+        default=None,
+        max_length=MAX_CONTEXT_BLOCKS,
+        description=f"Entrada estruturada: blocos de texto para o modelo ler (até {MAX_CONTEXT_BLOCKS}), "
+        "cada um com key (estável e única), title, content e volatile. Diferente de `dependencies`, que "
+        "são valores tipados para tools e validação.",
+    )
     dependencies: dict[str, Any] | None = None
     """Metadados opcionais (ex: cpf, nome) injetados como contexto estruturado
     no prompt — ver a aba Integração dos agentes no frontend para exemplos."""
@@ -192,6 +220,15 @@ class ChatRequest(BaseModel):
     def _check_metadata(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         _normalize_metadata(value)
         return value
+
+    @model_validator(mode="after")
+    def _check_structure(self) -> "ChatRequest":
+        structured_input.check_structure(self.message, self.events, self.context)
+        return self
+
+    @property
+    def structured(self) -> bool:
+        return structured_input.is_structured(self.events, self.context)
 
 
 class Source(BaseModel):
@@ -234,7 +271,7 @@ class ChatResponse(BaseModel):
     interpretar o texto (ver `agents/procedural.py::state_view`)."""
 
 
-def _resolve(request: ChatRequest, endpoint: str) -> tuple[Agent, RunContext]:
+def _resolve(request: ChatRequest, endpoint: str) -> tuple[RunnableAgent, RunContext]:
     """Monta o agente e o contexto do run. Faz I/O síncrono no Postgres (definição,
     nota de feedback, uma consulta por tool): chame via `run_in_threadpool`, nunca
     direto numa rota `async` — travaria o event loop do worker inteiro."""
@@ -250,6 +287,17 @@ def _resolve(request: ChatRequest, endpoint: str) -> tuple[Agent, RunContext]:
         # A collection do agente perdeu a credencial do embedder: configuração do
         # serviço, não da chamada.
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if request.structured and (definition.get("kind") or "conversational") == "procedural":
+        # A extração do procedural lê a mensagem procurando os campos que a pessoa
+        # informou: com o contexto junto, pegaria o CPF dos dados do contato como se
+        # ela tivesse dito. Dado conhecido de antemão vai em `dependencies`, que já
+        # preenche as etapas de coleta.
+        raise HTTPException(
+            status_code=422,
+            detail=f"Agente {request.agent_type!r} é procedural e não aceita events nem context: mande a fala "
+            "em message e os dados que você já tem em dependencies.",
+        )
 
     try:
         dependencies = validate_dependencies(definition.get("dependency_fields"), request.dependencies)
@@ -270,7 +318,6 @@ def _resolve(request: ChatRequest, endpoint: str) -> tuple[Agent, RunContext]:
         dry_run=request.dry_run,
         user_id=request.user_id,
         session_id=request.session_id,
-        message=request.message,
         dependencies=dependencies,
         attachments=tuple(describe_attachments(request.attachments)),
         images=tuple(media["images"]),
@@ -278,8 +325,39 @@ def _resolve(request: ChatRequest, endpoint: str) -> tuple[Agent, RunContext]:
         videos=tuple(media["videos"]),
         files=tuple(media["files"]),
         definition=definition,
+        **_input_fields(request),
     )
     return agent, run
+
+
+def _input_fields(request: ChatRequest) -> dict[str, Any]:
+    """`message` do run e as três colunas da entrada estruturada. Só com `message`
+    (o legado), o texto é o que veio, byte a byte, e as colunas ficam nulas — é
+    por elas que se distingue um run estruturado de um antigo."""
+    if not request.structured:
+        return {"message": request.message}
+    return {
+        "message": structured_input.build_model_text(request.message, request.events, request.context),
+        "input_message": structured_input.pure_message(request.message, request.events or []),
+        "input_events": structured_input.events_for_storage(request.message, request.events),
+        "input_context": structured_input.context_for_storage(request.context),
+    }
+
+
+def _check_chat_input(request: ChatRequest) -> None:
+    """O teto de `MAX_INPUT_CHARS` no `/chat`. Na entrada estruturada vale para a soma
+    dos textos (fala, eventos, títulos e blocos) e também no `/chat/stream`."""
+    if not request.structured:
+        _check_input_size(request.message or "", "message")
+        return
+    size = structured_input.text_size(request.message, request.events, request.context)
+    limit = get_settings().max_input_chars
+    if size > limit:
+        raise HTTPException(
+            status_code=422,
+            detail=f"message, events e context somam {size} caracteres e o limite é {limit} "
+            f"(MAX_INPUT_CHARS). Mande só o que mudou desde a última resposta, ou resuma os blocos.",
+        )
 
 
 def _build_media_or_422(attachments: list[AttachmentIn]) -> dict[str, list[Any]]:
@@ -290,7 +368,7 @@ def _build_media_or_422(attachments: list[AttachmentIn]) -> dict[str, list[Any]]
 
 
 @router.get("/health")
-def health() -> dict[str, str]:
+def health() -> dict[str, Any]:
     """Aberta de propósito: é o healthcheck do container e de qualquer load
     balancer na frente. Só responde se o processo está de pé — não checa banco:
     com o Postgres fora, reiniciar o container não resolveria nada.
@@ -305,15 +383,20 @@ def health() -> dict[str, str]:
 
     `model_credentials` diz se dá para cadastrar chaves de provedor: sem
     `CREDENTIALS_ENCRYPTION_KEY`, o `/model-credentials` responde 503. O serviço
-    sobe mesmo assim — o google ainda funciona pela `GOOGLE_API_KEY` do ambiente."""
+    sobe mesmo assim — o google ainda funciona pela `GOOGLE_API_KEY` do ambiente.
+
+    `trace_writes` é a fila de gravação do trace store local (`run_store.TraceWriter`):
+    `pending`, `max_pending`, `written`, `dropped` (fila cheia) e `failed`."""
     from agent_service.api.auth import auth_enabled
     from agent_service.models.crypto import encryption_status
+    from agent_service.observability import run_store
 
     return {
         "status": "ok",
         "version": service_version(),
         "auth": "enabled" if auth_enabled() else "disabled",
         "model_credentials": encryption_status(),
+        "trace_writes": run_store.write_stats(),
     }
 
 
@@ -362,9 +445,9 @@ def _check_input_size(text: str, field: str) -> None:
         )
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/chat", response_model=ChatResponse, dependencies=_RATE_LIMITED)
 async def chat(request: ChatRequest, idempotency_key: IdempotencyKey = None) -> ChatResponse:
-    _check_input_size(request.message, "message")
+    _check_chat_input(request)
     return await _idempotent("chat", request, idempotency_key, lambda: _chat(request, idempotency_key))
 
 
@@ -380,12 +463,13 @@ async def _chat(request: ChatRequest, idempotency_key: str | None) -> ChatRespon
     async with _run_slot(), aclosing(traced_run_events(agent, run)) as events:
         try:
             async for event in events:
-                if event.event == RunEvent.run_content.value and isinstance(event.content, str):
-                    chunks.append(event.content)
-                elif event.event == RunEvent.run_completed.value and isinstance(event.content, str):
-                    final_content = event.content
-                elif event.event == RunEvent.run_error.value:
-                    raise HTTPException(status_code=502, detail=event.content or RUN_FAILED)
+                step = read_event(event)
+                if step.kind == "content" and isinstance(step.content, str):
+                    chunks.append(step.content)
+                elif step.kind == "completed" and isinstance(step.content, str):
+                    final_content = step.content
+                elif step.kind == "error":
+                    raise HTTPException(status_code=502, detail=step.content or RUN_FAILED)
         except RunTimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
 
@@ -401,7 +485,7 @@ async def _chat(request: ChatRequest, idempotency_key: str | None) -> ChatRespon
     )
 
 
-async def _chat_procedural(request: ChatRequest, agent: Agent, run: RunContext) -> ChatResponse:
+async def _chat_procedural(request: ChatRequest, agent: RunnableAgent, run: RunContext) -> ChatResponse:
     chunks: list[str] = []
     state: dict[str, Any] | None = None
     async with _run_slot():
@@ -470,7 +554,7 @@ class AnalyzeResponse(BaseModel):
     """Ver `ChatResponse.sources`."""
 
 
-@router.post("/analyze", response_model=AnalyzeResponse)
+@router.post("/analyze", response_model=AnalyzeResponse, dependencies=_RATE_LIMITED)
 async def analyze(request: AnalyzeRequest, idempotency_key: IdempotencyKey = None) -> AnalyzeResponse:
     """One-shot: sem sessão/histórico — devolve o `document` analisado como
     objeto estruturado (`response_schema` do agente), não texto."""
@@ -484,7 +568,7 @@ async def _analyze(request: AnalyzeRequest, idempotency_key: str | None) -> Anal
         agent, definition = await run_in_threadpool(get_agent_with_definition, request.agent_type)
     except UnknownAgentTypeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (ToolBuildError, UnknownToolError, *EmbedderError) as exc:
+    except (ToolBuildError, UnknownToolError, EmbedderError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     if (definition.get("kind") or "conversational") != "analysis":
@@ -526,10 +610,11 @@ async def _analyze(request: AnalyzeRequest, idempotency_key: str | None) -> Anal
     async with _run_slot(), aclosing(traced_run_events(agent, run)) as events:
         try:
             async for event in events:
-                if event.event == RunEvent.run_completed.value:
-                    final_content = event.content
-                elif event.event == RunEvent.run_error.value:
-                    raise HTTPException(status_code=502, detail=event.content or RUN_FAILED)
+                step = read_event(event)
+                if step.kind == "completed":
+                    final_content = step.content
+                elif step.kind == "error":
+                    raise HTTPException(status_code=502, detail=step.content or RUN_FAILED)
         except RunTimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
 
@@ -548,7 +633,7 @@ async def _analyze(request: AnalyzeRequest, idempotency_key: str | None) -> Anal
     )
 
 
-@router.post("/chat/stream")
+@router.post("/chat/stream", dependencies=_RATE_LIMITED)
 async def chat_stream(request: ChatRequest, idempotency_key: IdempotencyKey = None) -> EventSourceResponse:
     """Streaming via POST (não GET): a mensagem do usuário vai no corpo, não
     na query string — evita acabar em log de acesso. `EventSource` do browser
@@ -569,6 +654,10 @@ async def chat_stream(request: ChatRequest, idempotency_key: IdempotencyKey = No
             status_code=422,
             detail=f"{idempotency.HEADER} não vale no /chat/stream: use o /chat para uma chamada que pode ser repetida.",
         )
+    if request.structured:
+        # Só na entrada estruturada: o legado do stream nunca teve o teto, e passar a
+        # recusar quem já chama mudaria o contrato.
+        _check_chat_input(request)
     agent, run = await run_in_threadpool(_resolve, request, "chat.stream")
     trace_id = run.trace_id
 
@@ -603,13 +692,14 @@ async def chat_stream(request: ChatRequest, idempotency_key: IdempotencyKey = No
             failed = False
             async with _run_slot(), aclosing(traced_run_events(agent, run)) as events:
                 async for event in events:
-                    if event.event == RunEvent.run_content.value and event.content:
-                        yield {"event": "message", "data": json.dumps({"content": event.content})}
-                    elif event.event == RunEvent.run_completed.value and event.metrics:
-                        yield {"event": "usage", "data": json.dumps(event.metrics.to_dict())}
-                    elif event.event == RunEvent.run_error.value:
+                    step = read_event(event)
+                    if step.kind == "content" and step.content:
+                        yield {"event": "message", "data": json.dumps({"content": step.content})}
+                    elif step.kind == "completed" and (usage := step.usage()) is not None:
+                        yield {"event": "usage", "data": json.dumps(usage)}
+                    elif step.kind == "error":
                         failed = True
-                        yield {"event": "error", "data": json.dumps({"message": event.content or RUN_FAILED})}
+                        yield {"event": "error", "data": json.dumps({"message": step.content or RUN_FAILED})}
             if not failed:
                 sources = sources_from(run.knowledge_searches)
                 yield {"event": "sources", "data": json.dumps({"sources": sources}, default=str)}

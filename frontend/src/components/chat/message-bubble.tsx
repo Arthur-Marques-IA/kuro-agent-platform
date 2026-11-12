@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CircleAlert, FileText, Film, Globe, Image as ImageIcon, Music, RotateCcw, Waypoints } from "lucide-react";
+import { CircleAlert, FileText, Film, Globe, Image as ImageIcon, Music, RotateCcw, Waypoints, X } from "lucide-react";
 import { formatDuration, formatNumber } from "@/lib/format";
 import type { AttachmentInfo, ChatMessage, ChatSource } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -127,6 +127,50 @@ function SourceChips({ sources, runId }: { sources: ChatSource[]; runId?: string
   );
 }
 
+const timeFormatter = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+/**
+ * A fala de um atendente humano (evento `human_agent`), no mesmo desenho da tela da
+ * sessão em Logs. `pending`: registrada no Playground, ainda não enviada — vai em
+ * `events` junto da próxima mensagem do contato.
+ */
+export function HumanAgentBubble({
+  content,
+  createdAt,
+  pending,
+  onRemove,
+}: {
+  content: string;
+  createdAt?: number;
+  pending?: boolean;
+  onRemove?: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span className="font-medium">Atendente humano</span>
+        {createdAt ? <span>{timeFormatter.format(new Date(createdAt))}</span> : null}
+        {pending && <span className="italic">· vai junto da próxima mensagem</span>}
+      </p>
+      <div className="flex max-w-[85%] items-start gap-1">
+        <div
+          className={
+            "whitespace-pre-wrap break-words rounded-2xl rounded-bl-md border border-violet-500/30 bg-violet-500/10 px-4 py-2.5 text-sm leading-relaxed" +
+            (pending ? " border-dashed" : "")
+          }
+        >
+          {content}
+        </div>
+        {onRemove && (
+          <Button variant="ghost" size="icon-sm" className="size-6 shrink-0" onClick={onRemove} aria-label="Descartar fala do atendente">
+            <X className="size-3.5" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function MessageBubble({
   message,
   agentType,
@@ -144,6 +188,10 @@ export function MessageBubble({
   canTeach?: boolean;
   onRetry?: () => void;
 }) {
+  if (message.role === "human_agent") {
+    return <HumanAgentBubble content={message.content} createdAt={message.createdAt} />;
+  }
+
   if (message.role === "user") {
     return (
       <div className="group flex flex-col items-end gap-1">
@@ -193,7 +241,7 @@ export function MessageBubble({
         )}
 
         {showFooter && (
-          <div className="mt-1.5 flex min-h-6 flex-wrap items-center gap-1.5">
+          <div className="mt-1.5 flex min-h-6 flex-wrap items-center gap-1.5 max-md:gap-x-3 pointer-coarse:gap-x-3">
             {message.usage && <UsageSummary usage={message.usage} />}
             {/* O feedback fica sempre visível: é por ele que se ensina o agente, e
                 escondido no hover ninguém achava. Copiar aparece só no hover. */}

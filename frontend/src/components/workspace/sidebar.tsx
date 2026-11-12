@@ -25,10 +25,13 @@ import {
   SquarePen,
   Sun,
   Trash,
+  TriangleAlert,
   Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { CONSOLE_BUILD, serviceCompat } from "@/lib/service-compat";
 import { formatDateTime, groupByRecency } from "@/lib/format";
+import { MODEL_CREDENTIALS_TITLE } from "@/lib/model-credentials";
 import { apiUrl, errorMessage } from "@/lib/http";
 import { sessionTitle } from "@/lib/sessions";
 import { useTheme } from "@/lib/theme";
@@ -52,7 +55,7 @@ const NAV_ITEMS = [
   { href: "/analyze", label: "Análise", icon: FileSearch },
   { href: "/agents", label: "Agentes", icon: Bot },
   { href: "/tools", label: "Tools", icon: Wrench },
-  { href: "/models", label: "Chaves de API", icon: Cpu },
+  { href: "/models", label: MODEL_CREDENTIALS_TITLE, icon: Cpu },
   { href: "/knowledge", label: "Conhecimento", icon: Library },
 ];
 const LOGS_ITEM = { href: "/logs", label: "Logs", icon: Activity };
@@ -179,15 +182,32 @@ export function Sidebar({
 
 function SessionList({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
-  const { sessions, sessionsLoading, sessionsError, refreshSessions } = useWorkspace();
+  const { sessions, sessionsLoading, sessionsError, refreshSessions, observability } = useWorkspace();
   const activeId = pathname.startsWith("/chat/") ? decodeURIComponent(pathname.slice("/chat/".length)) : null;
   const groups = useMemo(() => groupByRecency(sessions, (s) => s.updated_at ?? s.created_at), [sessions]);
 
   return (
     <div className="mt-5 flex min-h-0 flex-1 flex-col">
-      <p className="px-6 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-        Conversas
-      </p>
+      <div className="flex items-baseline gap-2 pb-1.5 pl-6 pr-4">
+        {/* Só as do Playground com o user_id deste navegador: as de integrações, da CLI e de outras pessoas ficam nos Logs. */}
+        <p
+          className="min-w-0 flex-1 truncate text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
+          title="Só as conversas do Playground feitas neste navegador. As de integrações, da CLI e de outras pessoas estão em Logs › Sessões."
+        >
+          Conversas deste navegador
+        </p>
+        {observability.enabled && (
+          <Link
+            href="/logs/sessions"
+            onClick={onNavigate}
+            aria-label="Todas as sessões"
+            title="Todas as sessões, de qualquer origem (Logs › Sessões)"
+            className="shrink-0 rounded text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Todas
+          </Link>
+        )}
+      </div>
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         {sessionsLoading && (
           <div className="flex flex-col gap-1.5 px-2.5 pt-1" aria-label="Carregando conversas">
@@ -289,7 +309,11 @@ function SessionItem({
         onBlur={commitRename}
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
-          if (e.key === "Escape") setEditing(false);
+          if (e.key === "Escape") {
+            // Um Esc, uma camada: cancela a renomeação sem fechar a gaveta (mobile) em volta.
+            e.stopPropagation();
+            setEditing(false);
+          }
         }}
         className="h-8 w-full rounded-lg border border-ring bg-card px-2.5 text-[13px] outline-none ring-3 ring-ring/20"
       />
@@ -349,17 +373,23 @@ function SessionItem({
 
 type HealthStatus = "checking" | "online" | "offline";
 
-function useBackendHealth(): HealthStatus {
-  const [status, setStatus] = useState<HealthStatus>("checking");
+/** Status do agent-service e a versão que o `/health` dele informa (`null` se não informa). */
+function useBackendHealth(): { status: HealthStatus; version: string | null } {
+  const [status, setStatus] = useState<{ status: HealthStatus; version: string | null }>({
+    status: "checking",
+    version: null,
+  });
 
   useEffect(() => {
     let cancelled = false;
     async function check() {
       try {
         const res = await fetch(apiUrl("/api/health"), { cache: "no-store" });
-        if (!cancelled) setStatus(res.ok ? "online" : "offline");
+        const body = (await res.json().catch(() => null)) as { version?: unknown } | null;
+        const version = typeof body?.version === "string" ? body.version : null;
+        if (!cancelled) setStatus({ status: res.ok ? "online" : "offline", version });
       } catch {
-        if (!cancelled) setStatus("offline");
+        if (!cancelled) setStatus({ status: "offline", version: null });
       }
     }
     void check();
@@ -380,7 +410,9 @@ const HEALTH_LABELS: Record<HealthStatus, string> = {
 };
 
 function SidebarFooter({ collapsed }: { collapsed: boolean }) {
-  const health = useBackendHealth();
+  const { status: health, version: serviceVersion } = useBackendHealth();
+  const compat = health === "checking" ? null : serviceCompat(health === "online", serviceVersion);
+  const versions = `console ${CONSOLE_BUILD} · serviço ${serviceVersion ?? "?"}`;
   const [theme, setTheme] = useTheme();
   const { userId, publicApiUrl } = useWorkspace();
   const toast = useToast();
@@ -403,18 +435,37 @@ function SidebarFooter({ collapsed }: { collapsed: boolean }) {
           "flex min-w-0 flex-1 items-center gap-2 px-2 text-xs text-muted-foreground",
           collapsed && "justify-center px-0"
         )}
-        title={`${HEALTH_LABELS[health]} · ${publicApiUrl}`}
+        title={[
+          `${HEALTH_LABELS[health]} · ${publicApiUrl}`,
+          versions,
+          compat && !compat.ok ? compat.message : null,
+        ]
+          .filter(Boolean)
+          .join("\n")}
         role="status"
       >
         <span
           className={cn(
             "size-2 shrink-0 rounded-full",
-            health === "online" && "bg-success",
+            health === "online" && (compat?.ok === false ? "bg-warning" : "bg-success"),
             health === "offline" && "bg-destructive",
             health === "checking" && "animate-pulse bg-muted-foreground/50"
           )}
         />
-        {!collapsed && <span className="truncate">{HEALTH_LABELS[health]}</span>}
+        {!collapsed && (
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate">{HEALTH_LABELS[health]}</span>
+            <span className="truncate font-mono text-[10px] text-muted-foreground/80" data-testid="versions">
+              {versions}
+            </span>
+            {compat && !compat.ok && compat.reason !== "unreachable" && (
+              <span className="flex items-center gap-1 text-[11px] text-warning">
+                <TriangleAlert className="size-3 shrink-0" aria-hidden />
+                <span className="truncate">Versões incompatíveis</span>
+              </span>
+            )}
+          </span>
+        )}
       </div>
 
       <DropdownMenu

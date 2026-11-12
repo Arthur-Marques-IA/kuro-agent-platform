@@ -17,7 +17,7 @@
 ```
 src/agent_service/
   api/            contrato estável (/chat, /chat/stream, /analyze) e CRUD de agentes, tools, collections, credenciais, observabilidade
-  agents/         store (definições + versões + nota de feedback), registry (resolução em runtime), anexos, dependências
+  agents/         store (definições + versões + nota de feedback), registry (resolução em runtime), runtime (a camada entre as rotas e os tipos do Agno), anexos, dependências
   tools/          store, catálogo de builtins, tools de API e Python, resolução
   models/         catálogo de provedores, credenciais cifradas, criação do modelo
   memory/         memória comum (Agno) e Mem0

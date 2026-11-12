@@ -15,6 +15,17 @@ from agent_service.models.catalog import PROVIDERS
 router = APIRouter(prefix="/model-providers", tags=["model-providers"])
 
 
+class EnvCredentialOut(BaseModel):
+    """Credencial que o serviço lê do **ambiente** (não do cadastro). Só o nome da
+    variável: o valor nunca sai daqui, nem mascarado."""
+
+    variable: str
+    """Ex.: `GOOGLE_API_KEY`."""
+    in_use: bool
+    """`true` quando nenhuma credencial cadastrada resolve a chave padrão do
+    provedor — é esta variável que os agentes sem credencial fixa usam agora."""
+
+
 class ModelProviderOut(BaseModel):
     provider: str
     label: str
@@ -24,6 +35,30 @@ class ModelProviderOut(BaseModel):
     docs_url: str
     credential_count: int
     configured_count: int
+    env_credential: EnvCredentialOut | None = None
+    """Fallback lido do ambiente, quando o provedor tem um e ele está definido.
+    Hoje só o `google` (`GOOGLE_API_KEY`, ou o Vertex com
+    `GOOGLE_GENAI_USE_VERTEXAI=true`); os outros só usam o cadastro."""
+
+
+def _env_credential(provider: str) -> EnvCredentialOut | None:
+    """Espelha o fallback de `models/provider.get_model`: só reporta o que o
+    serviço de fato usa."""
+    import os
+
+    from agent_service.config import get_settings
+
+    if provider != "google":
+        return None
+    if get_settings().google_api_key:
+        variable = "GOOGLE_API_KEY"
+    elif os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true":
+        variable = "GOOGLE_GENAI_USE_VERTEXAI"
+    else:
+        return None
+    default = store.resolve_default_credential(provider)
+    in_use = default is None or not default["api_key_encrypted"]
+    return EnvCredentialOut(variable=variable, in_use=in_use)
 
 
 @router.get("", response_model=list[ModelProviderOut])
@@ -42,6 +77,7 @@ def list_model_providers() -> list[ModelProviderOut]:
                 docs_url=spec.docs_url,
                 credential_count=len(credentials),
                 configured_count=configured_count,
+                env_credential=_env_credential(name),
             )
         )
     return result
@@ -89,7 +125,11 @@ def list_provider_models(provider: str, credential_id: str | None = None, refres
         raise HTTPException(status_code=422, detail=f"{spec.label}: nenhuma chave cadastrada em /model-credentials")
     try:
         models, fetched_at = list_models(
-            provider, api_key=api_key, base_url=base_url, cache_key=credential["id"] if credential else None, refresh=refresh
+            provider,
+            api_key=api_key,
+            base_url=base_url,
+            cache_key=credential["id"] if credential else None,
+            refresh=refresh,
         )
     except ProviderProbeError as exc:
         raise HTTPException(status_code=502, detail=f"{spec.label} não listou os modelos: {exc}") from exc

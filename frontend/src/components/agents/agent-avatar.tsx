@@ -47,7 +47,7 @@ export function AgentAvatar({
         className
       )}
     >
-      {initials(name || agentType)}
+      {initials(name || agentType, agentType)}
     </span>
   );
 }

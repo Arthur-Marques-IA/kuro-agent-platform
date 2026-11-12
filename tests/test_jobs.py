@@ -107,8 +107,9 @@ def test_agendamento_e_reschedule():
         rodou.append(job["id"])
         return Reschedule(run_after=datetime.now(timezone.utc) + timedelta(hours=1))
 
-    futuro = store.enqueue("teste.recorrente", {"a": 1}, dedupe_key="rec:1",
-                           run_after=datetime.now(timezone.utc) + timedelta(minutes=5))
+    futuro = store.enqueue(
+        "teste.recorrente", {"a": 1}, dedupe_key="rec:1", run_after=datetime.now(timezone.utc) + timedelta(minutes=5)
+    )
     w = Worker()
     assert asyncio.run(w.run_once()) is None  # ainda não é hora
     assert store.advance("rec:1")  # "sincronizar agora" puxa o agendado
@@ -190,11 +191,17 @@ def test_desligar_devolve_o_job_sem_gastar_tentativa():
 
 def _vence_lease(job_id: str) -> None:
     with store._engine().begin() as conn:
-        conn.execute(store.update(store.jobs).where(store.jobs.c.id == job_id)
-                     .values(locked_until=datetime.now(timezone.utc) - timedelta(seconds=1)))
+        conn.execute(
+            store.update(store.jobs)
+            .where(store.jobs.c.id == job_id)
+            .values(locked_until=datetime.now(timezone.utc) - timedelta(seconds=1))
+        )
 
 
 def _vence_espera(job_id: str) -> None:
     with store._engine().begin() as conn:
-        conn.execute(store.update(store.jobs).where(store.jobs.c.id == job_id)
-                     .values(run_after=datetime.now(timezone.utc) - timedelta(seconds=1)))
+        conn.execute(
+            store.update(store.jobs)
+            .where(store.jobs.c.id == job_id)
+            .values(run_after=datetime.now(timezone.utc) - timedelta(seconds=1))
+        )

@@ -1,7 +1,7 @@
 [project]
 name = "agent-service"
 version = "0.2.0"
-description = "Add your description here"
+description = "Kuro Agent Platform: serviço para construir, avaliar e operar agentes de IA em produção, por API, CLI, console web e MCP."
 readme = "README.md"
 authors = [
     { name = "Arthur Marques", email = "joao_arthur@discente.ufg.br" }
@@ -83,7 +83,54 @@ dev = [
     "agent-service[mcp,tui]",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "ruff==0.17.4",
+    "mypy==2.4.1",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    # Pulados sem `TEST_DATABASE_URL` (ver tests/pg.py e docs/desenvolvimento.md).
+    "postgres: precisa de um Postgres com pgvector de verdade (SKIP LOCKED, LISTEN/NOTIFY, pgvector, tsvector, migrações)",
 ]
 
 [tool.ruff]
 target-version = "py312"
+# O código nunca foi quebrado em 88 colunas: 120 é o comprimento que ele já segue
+# (é o valor com que o `ruff format` mexe em menos arquivos).
+line-length = 120
+
+[tool.ruff.lint]
+# Regras explícitas, as que o código já cumpre (o conjunto padrão clássico do ruff).
+# Explícitas porque o padrão muda entre versões do ruff; ampliar é uma decisão à parte,
+# com as correções num commit próprio.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+# Checagem de tipos em modo gradual (ver docs/desenvolvimento.md). Por padrão é
+# permissiva: função sem anotação não é cobrada e erro em módulo importado de fora
+# da lista não é reportado. Um `uv run mypy` sem argumentos checa só os módulos de
+# `files`, e esses em modo estrito (override abaixo).
+python_version = "3.12"
+mypy_path = "src"
+files = [
+    "src/agent_service/agents/structured_input.py",
+    "src/agent_service/field_schema.py",
+    "src/agent_service/public_url.py",
+    "src/agent_service/tools/crypto.py",
+    "src/agent_service/tools/egress.py",
+    "src/agent_service/tools/failures.py",
+]
+follow_imports = "silent"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Para ampliar: o módulo entra aqui E em `files` acima, já passando no `uv run mypy`.
+module = [
+    "agent_service.agents.structured_input",
+    "agent_service.field_schema",
+    "agent_service.public_url",
+    "agent_service.tools.crypto",
+    "agent_service.tools.egress",
+    "agent_service.tools.failures",
+]
+strict = true

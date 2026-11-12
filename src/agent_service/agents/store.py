@@ -160,9 +160,7 @@ def list_definitions() -> list[dict[str, Any]]:
 
 def get_definition(agent_type: str) -> dict[str, Any] | None:
     with get_db().db_engine.connect() as conn:
-        row = conn.execute(
-            select(agent_definitions).where(agent_definitions.c.agent_type == agent_type)
-        ).first()
+        row = conn.execute(select(agent_definitions).where(agent_definitions.c.agent_type == agent_type)).first()
         return _row_to_dict(row) if row else None
 
 
@@ -214,11 +212,7 @@ def create_definition(
                 prompt_version=1,
             )
         )
-        conn.execute(
-            insert(agent_prompt_versions).values(
-                agent_type=agent_type, version=1, instructions=instructions
-            )
-        )
+        conn.execute(insert(agent_prompt_versions).values(agent_type=agent_type, version=1, instructions=instructions))
     definition = get_definition(agent_type)
     assert definition is not None
     return definition
@@ -303,11 +297,7 @@ def update_definition(
     engine = get_db().db_engine
     with engine.begin() as conn:
         if values:
-            conn.execute(
-                update(agent_definitions)
-                .where(agent_definitions.c.agent_type == agent_type)
-                .values(**values)
-            )
+            conn.execute(update(agent_definitions).where(agent_definitions.c.agent_type == agent_type).values(**values))
         if prompt_changed:
             conn.execute(
                 insert(agent_prompt_versions).values(
@@ -343,9 +333,7 @@ def list_prompt_versions(agent_type: str) -> list[dict[str, Any]]:
 
 def get_feedback_note(agent_type: str) -> dict[str, Any] | None:
     with get_db().db_engine.connect() as conn:
-        row = conn.execute(
-            select(agent_feedback_notes).where(agent_feedback_notes.c.agent_type == agent_type)
-        ).first()
+        row = conn.execute(select(agent_feedback_notes).where(agent_feedback_notes.c.agent_type == agent_type)).first()
     if row is None:
         return None
     note = _row_to_dict(row)

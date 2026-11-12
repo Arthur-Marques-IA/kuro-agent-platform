@@ -49,6 +49,7 @@ model_credentials = SATable(
     ),
 )
 
+
 def _row_to_dict(row: Any) -> dict[str, Any]:
     return dict(row._mapping)
 
@@ -149,7 +150,9 @@ def update_credential(
     return get_credential(credential_id)
 
 
-def record_test_result(credential_id: str, *, ok: bool, message: str | None, tested_at: datetime) -> dict[str, Any] | None:
+def record_test_result(
+    credential_id: str, *, ok: bool, message: str | None, tested_at: datetime
+) -> dict[str, Any] | None:
     engine = get_db().db_engine
     with engine.begin() as conn:
         result = conn.execute(

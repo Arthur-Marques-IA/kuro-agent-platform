@@ -43,7 +43,9 @@ def _equal(expected: Any, actual: Any, tolerance: float) -> bool:
     return expected == actual
 
 
-def compare(expected: dict[str, Any], actual: dict[str, Any], fields: list[str] | None, tolerance: float) -> list[dict[str, Any]]:
+def compare(
+    expected: dict[str, Any], actual: dict[str, Any], fields: list[str] | None, tolerance: float
+) -> list[dict[str, Any]]:
     """Campos que não bateram: `[{field, expected, actual}]`."""
     wanted = flatten(expected)
     if fields:
@@ -107,7 +109,9 @@ def validate_rules(rules: Any) -> list[str]:
     return problems
 
 
-def check_rules(rules: list[dict[str, Any]], actual: dict[str, Any], dependencies: dict[str, Any]) -> list[dict[str, Any]]:
+def check_rules(
+    rules: list[dict[str, Any]], actual: dict[str, Any], dependencies: dict[str, Any]
+) -> list[dict[str, Any]]:
     """Regras violadas por esta saída: `[{rule, field, op, expected, actual}]`."""
     violations = []
     for i, rule in enumerate(rules):

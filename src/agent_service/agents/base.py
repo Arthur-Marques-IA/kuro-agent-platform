@@ -79,8 +79,7 @@ def build_agent(
         add_dependencies_to_context = True
         instructions = [
             *instructions,
-            "Se houver memórias em `dependencies.mem0_memories`, use-as para "
-            "personalizar sua resposta ao usuário.",
+            "Se houver memórias em `dependencies.mem0_memories`, use-as para personalizar sua resposta ao usuário.",
         ]
 
     return Agent(

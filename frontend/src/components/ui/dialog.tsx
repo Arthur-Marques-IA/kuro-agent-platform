@@ -13,6 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { overlayLayers } from "@/lib/overlay-layers";
 import { useIsClient } from "@/lib/use-local-storage";
 
 type DialogSize = "sm" | "md" | "lg" | "xl";
@@ -61,12 +62,16 @@ export function Dialog({
 
   useEffect(() => {
     if (!open) return;
+    // Abrir por cima fecha os menus abertos (ex.: Preferências sob a paleta do Ctrl+K). Um
+    // diálogo nunca é dispensado por outra camada, então o `dismiss` não é chamado.
+    const releaseLayer = overlayLayers.open("modal", () => {});
     const previouslyFocused = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const panel = panelRef.current;
     (panel?.querySelector<HTMLElement>("[data-autofocus]") ?? panel)?.focus();
     return () => {
+      releaseLayer();
       document.body.style.overflow = previousOverflow;
       previouslyFocused?.focus?.();
     };
@@ -135,7 +140,7 @@ export function Dialog({
             <button
               type="button"
               onClick={() => onOpenChange(false)}
-              className="absolute right-3 top-3 z-10 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="touch-target absolute right-3 top-3 z-10 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Fechar"
             >
               <X className="size-4" />

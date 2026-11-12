@@ -120,6 +120,12 @@ class RunContext:
     """A definição do agente que vai rodar — a rota decide por ela o caminho
     (um agente procedural não é um run só do modelo)."""
 
+    input_message: str | None = None
+    """Entrada estruturada (`agents/structured_input.py`): a fala pura. `message` é o
+    texto montado que o modelo lê. As três ficam `None` numa chamada só com `message`."""
+    input_events: list[dict[str, Any]] | None = field(default=None, compare=False, repr=False)
+    input_context: list[dict[str, Any]] | None = field(default=None, compare=False, repr=False)
+
     extra_spans: tuple[Any, ...] = ()
     """Spans que aconteceram fora do run do Agno e fazem parte da mesma execução
     (a extração e a ação de um agente procedural), gravados junto no run."""
@@ -174,12 +180,22 @@ def configure_tracing() -> None:
         )
         return
 
+    from agent_service.observability import redaction
+
+    # `TRACE_REDACT_KEYS`: o mesmo mascaramento do trace store local, no que sai para o
+    # Langfuse — pela API do SDK (`mask`) e pelos spans do instrumentor (`mask_otel_spans`).
+    masking = (
+        {"mask": redaction.langfuse_mask, "mask_otel_spans": redaction.langfuse_mask_otel_spans}
+        if redaction.redact_keys()
+        else {}
+    )
     _client = Langfuse(
         public_key=settings.langfuse_public_key,
         secret_key=settings.langfuse_secret_key,
         base_url=settings.langfuse_base_url,
         environment=settings.langfuse_environment,
         timeout=settings.langfuse_timeout_seconds,
+        **masking,
     )
     # O Langfuse registra o TracerProvider global; o instrumentor do Agno publica nele.
     AgnoInstrumentor().instrument(tracer_provider=otel_trace.get_tracer_provider())
@@ -291,9 +307,7 @@ def _cache_metadata(entry: Any) -> dict[str, int]:
     Claude com `model_params.prompt_cache`). É o jeito de ver se o prefixo — as
     instructions e as tools — está mesmo sendo reaproveitado entre chamadas."""
     return {
-        name: value
-        for name in ("cache_read_tokens", "cache_write_tokens")
-        if (value := getattr(entry, name, 0) or 0)
+        name: value for name in ("cache_read_tokens", "cache_write_tokens") if (value := getattr(entry, name, 0) or 0)
     }
 
 
@@ -365,6 +379,7 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
         user_id=run.user_id,
         session_id=run.session_id,
         message=run.message,
+        **_structured_input(run),
         started_at=datetime.now(timezone.utc),
         metadata=dict(run.metadata),
         input={
@@ -411,7 +426,9 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
                     record.spans.extend(_model_spans(metrics, record.started_at))
                     # Custo do Agno quando ele informa; senão, a soma estimada por modelo.
                     span_costs = [s.cost_usd for s in record.spans if s.type == "GENERATION" and s.cost_usd is not None]
-                    record.cost_usd = metrics.cost if metrics.cost is not None else (sum(span_costs) if span_costs else None)
+                    record.cost_usd = (
+                        metrics.cost if metrics.cost is not None else (sum(span_costs) if span_costs else None)
+                    )
             elif event.event == RunEvent.run_error.value:
                 record.status = "error"
                 record.status_message = event.content or RUN_FAILED
@@ -452,6 +469,15 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
         _set_collection_version(record, run)
         record.ended_at = datetime.now(timezone.utc)
         run_store.record_run(record)
+
+
+def _structured_input(run: RunContext) -> dict[str, Any]:
+    """As colunas da entrada estruturada do run (`None` nas três no legado)."""
+    return {
+        "input_message": run.input_message,
+        "input_events": run.input_events,
+        "input_context": run.input_context,
+    }
 
 
 def _set_collection_version(record: Any, run: RunContext) -> None:
@@ -513,6 +539,7 @@ def record_run_without_model(
         user_id=run.user_id,
         session_id=run.session_id,
         message=run.message,
+        **_structured_input(run),
         started_at=min((s.started_at for s in run.extra_spans), default=started),
         metadata=dict(run.metadata),
         input={"message": run.message, "dependencies": run.dependencies},
@@ -590,7 +617,9 @@ async def _produce(client: "Langfuse", agent: Agent, run: RunContext, queue: asy
                 input={
                     "message": run.message,
                     "dependencies": run.dependencies,
-                    **({"attachments": list(run.attachments) or run.attachment_counts} if run.attachment_counts else {}),
+                    **(
+                        {"attachments": list(run.attachments) or run.attachment_counts} if run.attachment_counts else {}
+                    ),
                 },
             ) as root,
         ):

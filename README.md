@@ -141,6 +141,10 @@ docker compose up -d --build                       # núcleo: postgres, agent-se
 uv run kuro health                                 # serviço, autenticação, Langfuse, provedores
 ```
 
+Sem `ADMIN_API_KEY`/`RUNTIME_API_KEY`, o serviço só sobe com `ALLOW_OPEN=1`: o `docker-compose.yml`
+liga isso por padrão (a porta fica só no loopback), mas fora da sua máquina defina as chaves
+([operação](docs/operacao.md#segurança-e-limitações-atuais)).
+
 A API fica em http://127.0.0.1:58000 (`/docs` tem o OpenAPI). O console web e o Langfuse são
 opcionais, cada um num profile do Compose; portas, HTTPS e variáveis estão em
 [operação](docs/operacao.md).
@@ -204,5 +208,6 @@ lista cada operação e as poucas exceções. Componentes e o fluxo de uma mensa
 | [docs/operacao.md](docs/operacao.md) | configuração, HTTPS, deploy, segurança e limitações |
 | [docs/desenvolvimento.md](docs/desenvolvimento.md) | rodar os testes, estrutura do código, como contribuir |
 | [docs/notas-de-versao.md](docs/notas-de-versao.md) | o que mudou em cada versão e como atualizar |
+| [docs/migracao.md](docs/migracao.md) | roteiro para atualizar uma instalação em operação, e o que acontece com as sessões já gravadas |
 | [AGENTS.md](AGENTS.md) | receitas curtas da CLI para agentes de IA |
 | [ROADMAP.md](ROADMAP.md) | o plano: diagnóstico, prioridades e o que cortar |

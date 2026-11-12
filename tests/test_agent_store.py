@@ -55,7 +55,9 @@ def test_create_definition_defaults_to_conversational_kind():
 
 def test_create_analysis_definition_with_response_schema():
     schema = [{"name": "valor", "type": "number", "required": True}]
-    create_definition(agent_type="teste-e", name="Teste E", instructions=["v1"], kind="analysis", response_schema=schema)
+    create_definition(
+        agent_type="teste-e", name="Teste E", instructions=["v1"], kind="analysis", response_schema=schema
+    )
     definition = get_definition("teste-e")
     assert definition["kind"] == "analysis"
     assert definition["response_schema"] == schema
@@ -76,9 +78,7 @@ def test_save_feedback_note_versiona_cada_gravacao():
     assert second["version"] == 2
     assert second["content"].splitlines() == ["- confirme o CPF antes de responder", "- seja breve"]
     assert [v["version"] for v in list_feedback_versions("teste-f")] == [2, 1]
-    assert get_feedback_version("teste-f", 1)["rules"] == [
-        {"id": "r1", "texto": "confirme o CPF antes de responder"}
-    ]
+    assert get_feedback_version("teste-f", 1)["rules"] == [{"id": "r1", "texto": "confirme o CPF antes de responder"}]
     delete_definition("teste-f")
 
 

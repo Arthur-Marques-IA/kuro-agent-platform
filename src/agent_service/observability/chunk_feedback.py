@@ -283,8 +283,11 @@ def flagged_documents(
                     chunk_feedback.c.document_revision,
                 )
                 .where(chunk_feedback.c.label == label, key == group["key"], state)
-                .where(chunk_feedback.c.collection.is_(None) if group["collection"] is None
-                       else chunk_feedback.c.collection == group["collection"])
+                .where(
+                    chunk_feedback.c.collection.is_(None)
+                    if group["collection"] is None
+                    else chunk_feedback.c.collection == group["collection"]
+                )
                 .order_by(chunk_feedback.c.created_at.desc())
                 .limit(20)
             ).all()

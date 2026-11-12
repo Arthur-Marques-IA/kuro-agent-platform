@@ -138,7 +138,9 @@ def _validate_collect_fields(stage_id: str, raw: Any, owners: dict[str, str]) ->
         if name in RESERVED_NAMES:
             raise StageSpecError(f"etapa {stage_id!r}: {name!r} é um nome reservado")
         if name in owners:
-            raise StageSpecError(f"campo {name!r} aparece nas etapas {owners[name]!r} e {stage_id!r} — cada campo é de uma etapa só")
+            raise StageSpecError(
+                f"campo {name!r} aparece nas etapas {owners[name]!r} e {stage_id!r} — cada campo é de uma etapa só"
+            )
         owners[name] = stage_id
         pattern = spec.get("pattern")
         if pattern is not None:
@@ -319,9 +321,7 @@ def finish_action(
     else:
         action.update(status="failed", error=outcome.get("error") or "a ação falhou")
         index = next(i for i, s in enumerate(stages) if s["id"] == stage_id)
-        previous_confirm = max(
-            (i for i, s in enumerate(stages[:index]) if s["type"] == "confirm"), default=None
-        )
+        previous_confirm = max((i for i, s in enumerate(stages[:index]) if s["type"] == "confirm"), default=None)
         if previous_confirm is not None:
             confirm_id = stages[previous_confirm]["id"]
             state["confirmed"] = [c for c in state["confirmed"] if c != confirm_id]
@@ -378,9 +378,7 @@ def state_view(stages: list[dict[str, Any]], state: dict[str, Any], *, finished:
                 "id": s["id"],
                 "type": s["type"],
                 "goal": s["goal"],
-                "status": "done"
-                if finished or stage_ready(s, state)
-                else ("current" if i == index else "pending"),
+                "status": "done" if finished or stage_ready(s, state) else ("current" if i == index else "pending"),
             }
             for i, s in enumerate(stages)
         ],
@@ -497,9 +495,7 @@ EXTRACTION_INSTRUCTIONS = [
 ]
 
 
-def extraction_prompt(
-    stages: list[dict[str, Any]], state: dict[str, Any], message: str, last_reply: str | None
-) -> str:
+def extraction_prompt(stages: list[dict[str, Any]], state: dict[str, Any], message: str, last_reply: str | None) -> str:
     index = current_index(stages, state)
     stage = stages[index] if index is not None else None
     lines = []

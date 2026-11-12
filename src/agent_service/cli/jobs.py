@@ -29,8 +29,12 @@ def _render_list(page: dict[str, Any]) -> None:
     for job in items:
         color = _COLORS.get(job["status"], "white")
         table.add_row(
-            _when(job["created_at"]), f"[cyan]{job['id'][:12]}[/]", job["kind"], f"[{color}]{job['status']}[/]",
-            f"{job['attempts']}/{job['max_attempts']}", _when(job["run_after"]),
+            _when(job["created_at"]),
+            f"[cyan]{job['id'][:12]}[/]",
+            job["kind"],
+            f"[{color}]{job['status']}[/]",
+            f"{job['attempts']}/{job['max_attempts']}",
+            _when(job["run_after"]),
             (job.get("last_error") or job.get("dedupe_key") or "—")[:60],
         )
     console.print(table)

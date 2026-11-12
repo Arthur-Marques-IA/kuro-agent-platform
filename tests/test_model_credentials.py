@@ -199,7 +199,10 @@ def test_credential_reports_agents_using_it(monkeypatch):
     out = create_model_credential(ModelCredentialCreateIn(provider="openai", label="Padrão", api_key="sk-x"))
     monkeypatch.setattr(
         "agent_service.api.model_credentials_routes.list_definitions",
-        lambda: [{"name": "Agente Um", "model_credential_id": out.id}, {"name": "Agente Dois", "model_credential_id": None}],
+        lambda: [
+            {"name": "Agente Um", "model_credential_id": out.id},
+            {"name": "Agente Dois", "model_credential_id": None},
+        ],
     )
     credentials = list_model_credentials()
     assert credentials[0].agents_using == ["Agente Um"]
@@ -247,3 +250,47 @@ def test_test_model_credential_reports_failure(monkeypatch):
 
     assert result.ok is False
     assert result.message == "chave inválida"
+
+
+# -- /model-providers: credencial do ambiente ---------------------------------
+
+
+def _providers_by_name():
+    from agent_service.api.model_providers_routes import list_model_providers
+
+    return {p.provider: p for p in list_model_providers()}
+
+
+def test_model_providers_reports_env_credential_without_value(monkeypatch):
+    from agent_service.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "google_api_key", "AIza-env-secret-9876")
+    providers = _providers_by_name()
+    env = providers["google"].env_credential
+    assert env is not None
+    assert env.variable == "GOOGLE_API_KEY"
+    assert env.in_use is True  # nada cadastrado: é a do ambiente que responde
+    # Os outros provedores não têm fallback de ambiente no `get_model`.
+    assert providers["openai"].env_credential is None
+    assert providers["anthropic"].env_credential is None
+    body = str([p.model_dump() for p in providers.values()])
+    assert "AIza-env-secret-9876" not in body
+    assert "9876" not in body
+
+
+def test_model_providers_env_credential_not_in_use_with_stored_key(monkeypatch):
+    from agent_service.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "google_api_key", "AIza-env-secret")
+    store.create_credential("google", "Cadastrada", api_key="AIza-stored", enabled=True)
+    env = _providers_by_name()["google"].env_credential
+    assert env is not None
+    assert env.in_use is False
+
+
+def test_model_providers_without_env_key(monkeypatch):
+    from agent_service.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "google_api_key", None)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    assert _providers_by_name()["google"].env_credential is None

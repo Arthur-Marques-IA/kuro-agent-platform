@@ -1,9 +1,11 @@
 "use client";
 
 import { FormEvent, useEffect, useId, useState } from "react";
-import { History, Pencil, SlidersHorizontal } from "lucide-react";
+import { History, Pencil, SlidersHorizontal, TriangleAlert } from "lucide-react";
+import { announce } from "@/lib/announce";
+import { collectionSearch } from "@/lib/collection-search";
 import { errorMessage, requestJson } from "@/lib/http";
-import type { Collection, CollectionVersion, SearchMode } from "@/lib/types";
+import type { Collection, CollectionSearchConfig, CollectionVersion, SearchMode } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,7 +20,28 @@ import { SCORE_KIND_LABEL } from "@/components/knowledge/chunk-list";
 export function SearchSettings({ collection, onSaved }: { collection: Collection; onSaved: () => void }) {
   const [editing, setEditing] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
-  const { search } = collection;
+  const search = collectionSearch(collection);
+
+  if (!search) {
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2">
+            <SlidersHorizontal className="size-4 text-muted-foreground" /> Como a busca funciona
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="flex gap-2 text-[13px] text-muted-foreground" role="status">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+            <span>
+              O serviço não informou a configuração de busca desta coleção: ele parece ser mais antigo que o
+              console. Atualize as duas imagens juntas (versões no rodapé da barra lateral).
+            </span>
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -38,6 +61,7 @@ export function SearchSettings({ collection, onSaved }: { collection: Collection
           <SearchForm
             key={collection.config_hash ?? collection.name}
             collection={collection}
+            search={search}
             onDone={(saved) => {
               setEditing(false);
               if (saved) onSaved();
@@ -75,10 +99,17 @@ export function SearchSettings({ collection, onSaved }: { collection: Collection
   );
 }
 
-function SearchForm({ collection, onDone }: { collection: Collection; onDone: (saved: boolean) => void }) {
+function SearchForm({
+  collection,
+  search,
+  onDone,
+}: {
+  collection: Collection;
+  search: CollectionSearchConfig;
+  onDone: (saved: boolean) => void;
+}) {
   const id = useId();
   const toast = useToast();
-  const { search } = collection;
   const [mode, setMode] = useState<SearchMode>(search.search_mode);
   const [k, setK] = useState(String(search.max_results));
   const [weight, setWeight] = useState(String(search.vector_weight));
@@ -113,6 +144,7 @@ function SearchForm({ collection, onDone }: { collection: Collection; onDone: (s
       onDone(true);
     } catch (err) {
       setError(errorMessage(err));
+      announce(`Não foi possível salvar a busca: ${errorMessage(err)}`, { assertive: true });
     } finally {
       setSaving(false);
     }

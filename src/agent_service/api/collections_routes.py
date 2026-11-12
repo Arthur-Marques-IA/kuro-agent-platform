@@ -50,8 +50,8 @@ from agent_service.documents import revisions, versions
 from agent_service.documents.embedder import (
     DEFAULT_EMBEDDER_PROVIDER,
     EMBEDDERS,
+    EmbedderError,
     EmbedderNotConfiguredError,
-    UnknownEmbedderProviderError,
     check_configured,
     resolve_spec,
 )
@@ -266,7 +266,7 @@ def create_collection(body: CollectionIn) -> dict[str, Any]:
                 "— informe também embedder_dimensions (o tamanho do vetor que esse modelo devolve).",
             )
         check_configured(body.embedder_provider, body.embedder_model)
-    except (UnknownEmbedderProviderError, EmbedderNotConfiguredError) as exc:
+    except EmbedderError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     search = {
         "search_mode": body.search_mode,
@@ -421,9 +421,7 @@ class DocumentPage(BaseModel):
 
 
 @router.get("/{collection_name}/documents", response_model=DocumentPage)
-async def list_collection_documents(
-    collection_name: str, limit: int = 50, page: int = 1
-) -> dict[str, Any]:
+async def list_collection_documents(collection_name: str, limit: int = 50, page: int = 1) -> dict[str, Any]:
     """O que está indexado nesta coleção, com o status do processamento.
 
     Paginado porque o console lista isso numa tabela — e porque a tabela de
@@ -448,9 +446,7 @@ async def delete_collection_document(collection_name: str, content_id: str) -> N
     resposta errada que o agente estava citando."""
     _row_or_404(collection_name)
     if not await remove_document(collection_name, content_id):
-        raise HTTPException(
-            status_code=404, detail=f"Documento {content_id!r} não encontrado em {collection_name!r}"
-        )
+        raise HTTPException(status_code=404, detail=f"Documento {content_id!r} não encontrado em {collection_name!r}")
     # Página de um site: sem o registro dela, o próximo sync acharia a página
     # "igual" e não a indexaria de novo — ficaria contada como indexada sem estar.
     # Apagando o registro, ela volta no próximo sync (para tirar de vez, use
@@ -583,7 +579,9 @@ async def replace_collection_document_file(
     file: UploadFile = File(..., description="A versão corrigida do arquivo"),
     note: str | None = Form(default=None),
     created_by: str | None = Form(default=None),
-    resolves: str | None = Form(default=None, description="Ids separados por vírgula; vazio = nenhuma; sem o campo = todas as abertas"),
+    resolves: str | None = Form(
+        default=None, description="Ids separados por vírgula; vazio = nenhuma; sem o campo = todas as abertas"
+    ),
 ) -> ReplaceOut:
     """O mesmo que o `PUT` de texto, com um arquivo (PDF, DOCX, CSV, TXT...)."""
     conteudo = await file.read()

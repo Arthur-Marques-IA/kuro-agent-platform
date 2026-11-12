@@ -129,11 +129,23 @@ def memory_kwargs(mode: str, model: Model | None) -> dict[str, Any]:
       `update_user_memory` e decide quando gravar;
     - `mem0`: tratado à parte (`agents/base.py`)."""
     if mode in ("none", "mem0"):
-        return {"memory_manager": None, "enable_agentic_memory": False, "update_memory_on_run": False,
-                "add_memories_to_context": False}
+        return {
+            "memory_manager": None,
+            "enable_agentic_memory": False,
+            "update_memory_on_run": False,
+            "add_memories_to_context": False,
+        }
     manager = memory_manager(model)
     if mode == "auto":
-        return {"memory_manager": manager, "enable_agentic_memory": False, "update_memory_on_run": True,
-                "add_memories_to_context": True}
-    return {"memory_manager": manager, "enable_agentic_memory": True, "update_memory_on_run": False,
-            "add_memories_to_context": True}
+        return {
+            "memory_manager": manager,
+            "enable_agentic_memory": False,
+            "update_memory_on_run": True,
+            "add_memories_to_context": True,
+        }
+    return {
+        "memory_manager": manager,
+        "enable_agentic_memory": True,
+        "update_memory_on_run": False,
+        "add_memories_to_context": True,
+    }

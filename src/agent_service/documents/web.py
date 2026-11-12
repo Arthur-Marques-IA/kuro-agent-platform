@@ -91,7 +91,9 @@ def normalize_url(url: str) -> str:
     de rastreio e com o host em minúsculas. A barra final fica: `/guia` e `/guia/`
     são URLs diferentes, e nem todo servidor redireciona de uma para a outra."""
     parts = urlsplit(url.strip())
-    query = urlencode([(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not TRACKING_PARAMS.match(k)])
+    query = urlencode(
+        [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not TRACKING_PARAMS.match(k)]
+    )
     return urlunsplit((parts.scheme.lower(), (parts.netloc or "").lower(), parts.path or "/", query, ""))
 
 
@@ -145,7 +147,11 @@ class Fetcher:
             self._last_request[host] = time.monotonic()
 
     async def get(
-        self, url: str, *, accept: tuple[str, ...] = HTML_TYPES + TEXT_TYPES, max_bytes: int = MAX_PAGE_BYTES,
+        self,
+        url: str,
+        *,
+        accept: tuple[str, ...] = HTML_TYPES + TEXT_TYPES,
+        max_bytes: int = MAX_PAGE_BYTES,
         what: str = "página",
     ) -> Fetched:
         current = url
@@ -272,8 +278,10 @@ class Scope:
         if parts.scheme not in ("http", "https") or parts.netloc.lower() != self.host:
             return False
         path = parts.path or "/"
-        if self.same_path and self.prefix not in ("", "/") and not (
-            path == self.prefix.rstrip("/") or path.startswith(self.prefix.rstrip("/") + "/")
+        if (
+            self.same_path
+            and self.prefix not in ("", "/")
+            and not (path == self.prefix.rstrip("/") or path.startswith(self.prefix.rstrip("/") + "/"))
         ):
             return False
         if self.include and not any(fnmatch.fnmatch(path, p) for p in self.include):
@@ -284,8 +292,23 @@ class Scope:
 # -- extração ----------------------------------------------------------------------
 
 REMOVE_TAGS = (
-    "script", "style", "noscript", "template", "svg", "canvas", "iframe", "object", "embed",
-    "form", "button", "input", "select", "textarea", "dialog", "link", "meta",
+    "script",
+    "style",
+    "noscript",
+    "template",
+    "svg",
+    "canvas",
+    "iframe",
+    "object",
+    "embed",
+    "form",
+    "button",
+    "input",
+    "select",
+    "textarea",
+    "dialog",
+    "link",
+    "meta",
 )
 CHROME_TAGS = ("nav", "footer", "aside", "header")
 CHROME_ROLES = ("navigation", "banner", "contentinfo", "complementary", "search", "dialog", "alert")
@@ -453,7 +476,11 @@ class _Markdown:
     def _table(self, el: etree._Element) -> None:
         rows = []
         for tr in el.iter("tr"):
-            cells = [self._clean(_text(c)).replace("|", "\\|") for c in tr if isinstance(c.tag, str) and c.tag.lower() in ("td", "th")]
+            cells = [
+                self._clean(_text(c)).replace("|", "\\|")
+                for c in tr
+                if isinstance(c.tag, str) and c.tag.lower() in ("td", "th")
+            ]
             if any(cells):
                 rows.append(cells)
         if not rows:
@@ -508,7 +535,9 @@ def extract(body: str, url: str) -> Extracted:
         if chrome or _is_noise(el):
             _drop(el)
     markdown = _Markdown().render(root)
-    return Extracted(url=url, title=title, markdown=markdown, links=list(dict.fromkeys(links)), canonical=canonical, lang=lang)
+    return Extracted(
+        url=url, title=title, markdown=markdown, links=list(dict.fromkeys(links)), canonical=canonical, lang=lang
+    )
 
 
 def extract_text_document(body: str, url: str) -> Extracted:

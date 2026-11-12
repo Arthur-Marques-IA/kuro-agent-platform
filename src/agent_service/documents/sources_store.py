@@ -90,6 +90,7 @@ REFRESH_INTERVALS: dict[str, timedelta | None] = {
     "monthly": timedelta(days=30),
 }
 
+
 class SourceNotFoundError(LookupError):
     pass
 
@@ -192,8 +193,14 @@ def delete_source(source_id: str) -> None:
 
 
 def record_sync_cost(
-    *, source_id: str, collection: str, model: str | None, input_tokens: int, output_tokens: int,
-    cost_usd: float | None, ended_at: datetime | None = None,
+    *,
+    source_id: str,
+    collection: str,
+    model: str | None,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float | None,
+    ended_at: datetime | None = None,
 ) -> None:
     with _engine().begin() as conn:
         conn.execute(

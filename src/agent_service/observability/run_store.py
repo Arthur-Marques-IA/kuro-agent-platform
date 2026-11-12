@@ -11,12 +11,16 @@ profunda (ver `tracing.py`). Três tabelas, fora do namespace `agno_*`:
 - `run_scores`: feedback e notas de avaliação (um voto por run/nome/usuário).
 
 A gravação sai do caminho da resposta: `record_run` manda o INSERT para uma
-thread (`_submit`) e não espera — um banco lento atrasa o registro, não o
-usuário. Sessões e estatísticas são `GROUP BY` sobre o histórico inteiro,
+fila própria (`TraceWriter`, uma thread de escrita, até `TRACE_WRITE_QUEUE_MAX`
+pendentes) e não espera — um banco lento atrasa o registro, não o usuário; fila
+cheia descarta e conta (`trace_writes` no `/health`). Sessões e estatísticas são `GROUP BY` sobre o histórico inteiro,
 sem a varredura em memória que a API do Langfuse obrigava.
 """
 
 import logging
+import queue
+import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -108,7 +112,20 @@ runs = Table(
     Column("tool_calls", Integer, nullable=True),
     Column("tool_failures", Integer, nullable=True),
     Column("complexity", Integer, nullable=True),
+    # Entrada estruturada do `/chat` (`agents/structured_input.py`, migração 0016). As três
+    # ficam NULL num run só com `message` (o legado): é assim que se distingue um do outro.
+    # `message` continua com o texto montado que o modelo leu, para filtros e buscas.
+    Column("input_message", Text, nullable=True),
+    # `none_as_null`: o None do legado vira SQL NULL, e não o JSON `null` (o padrão do
+    # SQLAlchemy) — `input_events IS NULL` é o filtro de "run não estruturado".
+    Column("input_events", JSON(none_as_null=True), nullable=True),
+    Column("input_context", JSON(none_as_null=True), nullable=True),
 )
+
+_HEAVY_COLUMNS = ("input_events", "input_context")
+_LIST_COLUMNS = [c for c in runs.c if c.name not in _HEAVY_COLUMNS]
+"""A listagem não carrega os eventos e os blocos de contexto (até 200 e 30 por run):
+eles saem só no detalhe (`get_run`)."""
 
 run_spans = Table(
     "run_spans",
@@ -215,9 +232,49 @@ class RunRecord:
     collection_version: int | None = None
     collection_config_hash: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+    input_message: str | None = None
+    input_events: list[dict[str, Any]] | None = None
+    input_context: list[dict[str, Any]] | None = None
+
+
+def _redacted(record: RunRecord) -> RunRecord:
+    """Cópia do registro com `TRACE_REDACT_KEYS` aplicado (`redaction.py`): entrada da
+    raiz (`dependencies`, anexos), entrada/saída e metadata de cada span e a `metadata`
+    do run. O `record` original — cujos dicts são os mesmos que o modelo e as tools
+    usaram — não muda. Sem chaves configuradas, devolve o próprio `record`."""
+    from dataclasses import replace
+
+    from agent_service.observability.redaction import REDACTED, redact, redact_keys
+
+    keys = redact_keys()
+    if not keys:
+        return record
+    spans = []
+    for span in record.spans:
+        output = redact(span.output, keys)
+        status_message = span.status_message
+        # A falha de uma tool repete no `status_message` o começo do resultado (`tracing._tool_span`).
+        if status_message and output != span.output and status_message == str(span.output or "")[:500]:
+            status_message = str(output or "")[:500]
+        spans.append(
+            replace(
+                span,
+                input=redact(span.input, keys),
+                output=output,
+                status_message=status_message,
+                metadata=redact(span.metadata, keys),
+            )
+        )
+    return replace(
+        record,
+        input=redact(record.input, keys),
+        spans=spans,
+        metadata={k: (REDACTED if k.lower() in keys else v) for k, v in record.metadata.items()},
+    )
 
 
 def _write_run(record: RunRecord) -> None:
+    record = _redacted(record)
     ended_at = record.ended_at or datetime.now(timezone.utc)
     latency = round((ended_at - record.started_at).total_seconds() * 1000, 1)
     root_id = f"{record.run_id}:root"
@@ -284,6 +341,9 @@ def _write_run(record: RunRecord) -> None:
                 status=record.status,
                 status_message=record.status_message,
                 message=record.message,
+                input_message=record.input_message,
+                input_events=record.input_events,
+                input_context=record.input_context,
                 output=record.output,
                 model=record.model,
                 input_tokens=record.input_tokens,
@@ -313,27 +373,231 @@ def _tool_summary(spans: list[SpanRecord]) -> dict[str, int]:
     }
 
 
+class TraceWriter:
+    """Fila própria da gravação de trace: uma thread de escrita e um teto de pendentes.
+
+    Antes a gravação ia para o executor padrão do event loop, o mesmo de todo
+    `run_in_executor`/`to_thread` do processo: um banco lento enchia esse executor e
+    atrasava o resto. Aqui a fila é limitada (`TRACE_WRITE_QUEUE_MAX`); cheia, a
+    gravação é **descartada** e contada — nunca bloqueia nem derruba o `/chat`.
+
+    Ordem: cada run é gravado inteiro numa transação só (`runs`, depois `run_spans`,
+    depois `run_metadata`), então nenhuma gravação depende de outra. Mesmo assim a
+    thread é uma só: a fila sai na ordem em que entrou e ocupa uma conexão do pool,
+    não várias.
+
+    "Pendentes" é `unfinished_tasks`: o que espera na fila mais o que está sendo
+    gravado agora — a mesma conta em `stats()`, no `flush()` e no encerramento.
+    """
+
+    _DROP_LOG_INTERVAL = 10.0
+
+    def __init__(self, max_pending: int, *, name: str = "kuro-trace-writer") -> None:
+        self.max_pending = max(1, int(max_pending))  # maxsize=0 seria fila sem limite
+        self._queue: queue.Queue[Callable[[], None] | None] = queue.Queue(maxsize=self.max_pending)
+        self._name = name
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._accepting = True
+        self.written = 0
+        self.dropped = 0
+        self.failed = 0
+        self._dropped_unlogged = 0
+        self._last_drop_log = float("-inf")
+
+    # -- entrada -----------------------------------------------------------------
+
+    def submit(self, fn: Callable[[], None]) -> bool:
+        """Enfileira `fn` sem esperar. `False` quando descartou (fila cheia ou encerrada)."""
+        if not self._accepting:
+            self._drop("encerrada")
+            return False
+        self._ensure_thread()
+        try:
+            self._queue.put_nowait(fn)
+        except queue.Full:
+            self._drop("cheia")
+            return False
+        return True
+
+    def run_now(self, fn: Callable[[], None]) -> None:
+        """Grava na hora, na thread de quem chamou, com a mesma contagem do worker."""
+        try:
+            fn()
+        except Exception:
+            with self._lock:
+                self.failed += 1
+            label = getattr(fn, "trace_label", None) or "uma gravação"
+            logger.exception("Falha ao gravar %s no trace store local", label)
+        else:
+            with self._lock:
+                self.written += 1
+
+    def _drop(self, reason: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            self.dropped += 1
+            self._dropped_unlogged += 1
+            if now - self._last_drop_log < self._DROP_LOG_INTERVAL:
+                return
+            count, self._dropped_unlogged = self._dropped_unlogged, 0
+            self._last_drop_log = now
+            total = self.dropped
+        logger.warning(
+            "Fila de gravação de trace %s: %d gravação(ões) descartada(s) desde o último aviso "
+            "(%d no total; TRACE_WRITE_QUEUE_MAX=%d)",
+            reason,
+            count,
+            total,
+            self.max_pending,
+        )
+
+    # -- worker ------------------------------------------------------------------
+
+    def _ensure_thread(self) -> None:
+        if self._thread is not None:
+            return
+        with self._lock:
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._loop, name=self._name, daemon=True)
+                self._thread.start()
+
+    def _loop(self) -> None:
+        while True:
+            fn = self._queue.get()
+            try:
+                if fn is None:
+                    return
+                self.run_now(fn)
+            finally:
+                self._queue.task_done()
+
+    # -- saída -------------------------------------------------------------------
+
+    def pending(self) -> int:
+        return self._queue.unfinished_tasks
+
+    def flush(self, timeout: float | None = None) -> bool:
+        """Espera a fila esvaziar (com prazo). `True` se não sobrou nada pendente."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._queue.all_tasks_done:
+            while self._queue.unfinished_tasks:
+                if deadline is None:
+                    self._queue.all_tasks_done.wait()
+                    continue
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._queue.all_tasks_done.wait(remaining)
+        return True
+
+    def shutdown(self, timeout: float) -> int:
+        """Para de aceitar, espera esvaziar até `timeout` e devolve quantas ficaram para trás."""
+        self._accepting = False
+        self.flush(timeout)
+        left = self.pending()
+        if left:
+            logger.warning(
+                "Encerramento: %d gravação(ões) de trace ficaram para trás após %.1fs (TRACE_WRITE_SHUTDOWN_SECONDS)",
+                left,
+                timeout,
+            )
+        try:
+            self._queue.put_nowait(None)  # acorda e encerra a thread, se ela já esvaziou
+        except queue.Full:
+            pass  # thread presa num banco lento: é daemon, morre com o processo
+        return left
+
+    def stats(self) -> dict[str, int]:
+        with self._lock:
+            written, dropped, failed = self.written, self.dropped, self.failed
+        return {
+            "pending": self.pending(),
+            "max_pending": self.max_pending,
+            "written": written,
+            "dropped": dropped,
+            "failed": failed,
+        }
+
+
+_writer: TraceWriter | None = None
+_writer_lock = threading.Lock()
+
+
+def _get_writer() -> TraceWriter:
+    global _writer
+    with _writer_lock:
+        if _writer is None:
+            from agent_service.config import get_settings
+
+            _writer = TraceWriter(get_settings().trace_write_queue_max)
+        return _writer
+
+
+def write_stats() -> dict[str, int]:
+    """Contadores da fila de gravação (o `trace_writes` do `/health`). Não cria o writer."""
+    writer = _writer
+    if writer is None:
+        from agent_service.config import get_settings
+
+        return {
+            "pending": 0,
+            "max_pending": max(1, get_settings().trace_write_queue_max),
+            "written": 0,
+            "dropped": 0,
+            "failed": 0,
+        }
+    return writer.stats()
+
+
+def write_now(fn: Callable[[], None]) -> None:
+    """Grava na thread de quem chamou, contando sucesso e falha. É o caminho dos testes."""
+    _get_writer().run_now(fn)
+
+
+def flush(timeout: float | None = None) -> bool:
+    """Espera as gravações pendentes. `True` se esvaziou dentro do prazo."""
+    writer = _writer
+    return True if writer is None else writer.flush(timeout)
+
+
+def shutdown(timeout: float | None = None) -> int:
+    """Encerramento do app: para de aceitar, esvazia com prazo e solta o writer.
+
+    O próximo `record_run` (outro app no mesmo processo, como nos testes) cria um
+    writer novo — o encerrado não fica descartando tudo em silêncio."""
+    global _writer
+    with _writer_lock:
+        writer, _writer = _writer, None
+    if writer is None:
+        return 0
+    if timeout is None:
+        from agent_service.config import get_settings
+
+        timeout = get_settings().trace_write_shutdown_seconds
+    return writer.shutdown(timeout)
+
+
 def _submit(fn: Callable[[], None]) -> None:
-    """Roda `fn` fora do event loop, sem esperar. Os testes trocam por uma chamada direta."""
+    """Manda `fn` para a fila de gravação, sem esperar. Fora de um event loop (script,
+    CLI) grava na hora. Os testes trocam por `write_now` (`tests/conftest.py`)."""
     import asyncio
 
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
-        fn()
+        write_now(fn)
         return
-    loop.run_in_executor(None, fn)
+    _get_writer().submit(fn)
 
 
 def record_run(record: RunRecord) -> None:
     """Grava a execução em background. Uma falha aqui vira log — nunca derruba o run."""
 
     def write() -> None:
-        try:
-            _write_run(record)
-        except Exception:
-            logger.exception("Falha ao gravar o run %s no trace store local", record.run_id)
+        _write_run(record)  # o writer captura, conta e loga a falha; não propaga
 
+    write.trace_label = f"o run {record.run_id}"  # type: ignore[attr-defined]
     _submit(write)
 
 
@@ -431,7 +695,9 @@ def _filters(query: RunQuery, *, with_session: bool = False) -> list[Any]:
         )
     for key, value in query.metadata:
         conditions.append(
-            exists().where(run_metadata.c.run_id == runs.c.run_id, run_metadata.c.key == key, run_metadata.c.value == value)
+            exists().where(
+                run_metadata.c.run_id == runs.c.run_id, run_metadata.c.key == key, run_metadata.c.value == value
+            )
         )
     conditions.extend(_review_filters(query))
     return conditions
@@ -448,7 +714,9 @@ def _review_filters(query: RunQuery) -> list[Any]:
         conditions.append(runs.c.complexity.in_(query.complexity))
     if query.tool_failed is not None:
         failed = runs.c.tool_failures > 0
-        conditions.append(failed if query.tool_failed else or_(runs.c.tool_failures.is_(None), runs.c.tool_failures == 0))
+        conditions.append(
+            failed if query.tool_failed else or_(runs.c.tool_failures.is_(None), runs.c.tool_failures == 0)
+        )
     if query.side_effect is not None:
         called = exists().where(
             run_spans.c.run_id == runs.c.run_id,
@@ -469,7 +737,9 @@ def _review_filters(query: RunQuery) -> list[Any]:
         conditions.append(
             not_(
                 exists().where(
-                    run_metadata.c.run_id == runs.c.run_id, run_metadata.c.key == "dry_run", run_metadata.c.value == "true"
+                    run_metadata.c.run_id == runs.c.run_id,
+                    run_metadata.c.key == "dry_run",
+                    run_metadata.c.value == "true",
                 )
             )
         )
@@ -480,7 +750,9 @@ def _metadata_of(conn: Any, run_ids: list[str]) -> dict[str, dict[str, str]]:
     found: dict[str, dict[str, str]] = {run_id: {} for run_id in run_ids}
     if run_ids:
         for run_id, key, value in conn.execute(
-            select(run_metadata.c.run_id, run_metadata.c.key, run_metadata.c.value).where(run_metadata.c.run_id.in_(run_ids))
+            select(run_metadata.c.run_id, run_metadata.c.key, run_metadata.c.value).where(
+                run_metadata.c.run_id.in_(run_ids)
+            )
         ):
             found[run_id][key] = value
     return found
@@ -596,6 +868,7 @@ def _summary(
         tool_calls=row.tool_calls,
         tool_failures=row.tool_failures,
         complexity=row.complexity,
+        input_message=row.input_message,
     )
 
 
@@ -603,7 +876,7 @@ class DbTraceStore:
     """`TraceStore` sobre as tabelas acima — o backend padrão do serviço."""
 
     def list_runs(self, query: RunQuery) -> RunPage:
-        stmt = select(runs).where(*_filters(query))
+        stmt = select(*_LIST_COLUMNS).where(*_filters(query))
         if query.sample:
             # Amostra: o que nenhum filtro apontaria também precisa ser visto às vezes.
             with get_db().db_engine.connect() as conn:
@@ -662,7 +935,9 @@ class DbTraceStore:
             )
             run_meta = _metadata_of(conn, [run_id])[run_id]
             run_files = _attachments_of(conn, [run_id])[run_id]
-            reference = conn.execute(select(run_references.c.reference).where(run_references.c.run_id == run_id)).scalar()
+            reference = conn.execute(
+                select(run_references.c.reference).where(run_references.c.run_id == run_id)
+            ).scalar()
         scores = [
             ScoreOut(
                 id=s.id,
@@ -712,6 +987,8 @@ class DbTraceStore:
             scores=scores,
             reference=reference,
             procedure_state=procedure_state if isinstance(procedure_state, dict) else None,
+            input_events=row.input_events,
+            input_context=row.input_context,
         )
 
     def list_sessions(self, query: RunQuery) -> SessionPage:
@@ -751,6 +1028,7 @@ class DbTraceStore:
                     .where(*conditions, in_page, run_scores.c.name == FEEDBACK)
                 ):
                     votes[sid][0 if value else 1] += 1
+            heads = _session_heads(conn, conditions, session_ids)
         items = [
             SessionSummary(
                 session_id=g.session_id,
@@ -764,6 +1042,7 @@ class DbTraceStore:
                 error_count=g.error_count or 0,
                 feedback_up=votes[g.session_id][0],
                 feedback_down=votes[g.session_id][1],
+                **heads.get(g.session_id, {}),
             )
             for g in groups
         ]
@@ -876,6 +1155,166 @@ def referenced_runs(query: RunQuery, *, limit: int = 5000) -> list[dict[str, Any
     return items
 
 
+def _session_heads(conn: Any, conditions: list[Any], session_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """O run mais recente de cada sessão, reduzido ao que o cabeçalho e a listagem
+    mostram: a prévia da última fala, o nome do contato e o canal (`identity.py`). Uma
+    consulta para os runs (com o span raiz, de onde saem as `dependencies`) e uma para a
+    metadata de canal."""
+    from agent_service.observability import identity
+
+    if not session_ids:
+        return {}
+    in_page = runs.c.session_id.in_(session_ids)
+    latest = (
+        select(runs.c.session_id, func.max(runs.c.started_at).label("at"))
+        .where(*conditions, in_page)
+        .group_by(runs.c.session_id)
+        .subquery()
+    )
+    rows = list(
+        conn.execute(
+            select(
+                runs.c.run_id,
+                runs.c.session_id,
+                runs.c.input_message,
+                runs.c.message,
+                runs.c.input_context,
+                run_spans.c.input.label("root_input"),
+            )
+            .join(latest, and_(runs.c.session_id == latest.c.session_id, runs.c.started_at == latest.c.at))
+            .outerjoin(run_spans, run_spans.c.id == runs.c.run_id + ":root")
+            .where(*conditions, in_page)
+            .order_by(runs.c.run_id)
+        )
+    )
+    by_session: dict[str, Any] = {}
+    for row in rows:  # empate no started_at: fica um só, o de maior run_id
+        by_session[row.session_id] = row
+    metadata: dict[str, dict[str, str]] = {}
+    run_ids = [r.run_id for r in by_session.values()]
+    if run_ids:
+        for run_id, key, value in conn.execute(
+            select(run_metadata.c.run_id, run_metadata.c.key, run_metadata.c.value).where(
+                run_metadata.c.run_id.in_(run_ids), run_metadata.c.key.in_(identity.CHANNEL_KEYS)
+            )
+        ):
+            metadata.setdefault(run_id, {})[key] = value
+    heads = {}
+    for sid, row in by_session.items():
+        root = row.root_input if isinstance(row.root_input, dict) else {}
+        deps = root.get("dependencies") if isinstance(root.get("dependencies"), dict) else None
+        context = row.input_context if isinstance(row.input_context, list) else None
+        heads[sid] = {
+            "last_message": identity.preview(row.input_message or row.message),
+            "contact_name": identity.contact_name(deps, context),
+            "channel": identity.channel(metadata.get(row.run_id), deps),
+        }
+    return heads
+
+
+def session_timeline(
+    session_id: str, *, user_id: str | None = None, limit: int = 100, cursor: str | None = None
+) -> dict[str, Any] | None:
+    """O material da linha do tempo de uma sessão (`transcript.build_timeline`), em
+    poucas consultas: o agregado da sessão inteira, uma página de runs em ordem
+    cronológica (`limit`, a partir de `cursor`), os spans de tool desses runs, a
+    classificação `side_effect` das tools chamadas, quais runs são teste (`dry_run`) e o
+    `input_context` do último turno estruturado antes da página — sem ele, o primeiro
+    turno da página 2 seria comparado com nada. `None` se a sessão não tem runs."""
+    from agent_service.tools.store import tool_definitions
+
+    conditions = [runs.c.session_id == session_id]
+    if user_id:
+        conditions.append(runs.c.user_id == user_id)
+    is_error = case((runs.c.status == "error", 1), else_=0)
+    page_stmt = select(runs).where(*conditions)
+    if cursor and (position := _decode_cursor(cursor)):
+        started_at, run_id = position
+        page_stmt = page_stmt.where(
+            or_(runs.c.started_at > started_at, and_(runs.c.started_at == started_at, runs.c.run_id > run_id))
+        )
+    page_stmt = page_stmt.order_by(runs.c.started_at, runs.c.run_id).limit(limit + 1)
+    with get_db().db_engine.connect() as conn:
+        total = conn.execute(
+            select(
+                func.count().label("turns"),
+                func.min(runs.c.user_id).label("user_id"),
+                func.min(runs.c.started_at).label("started_at"),
+                func.max(func.coalesce(runs.c.ended_at, runs.c.started_at)).label("ended_at"),
+                func.coalesce(func.sum(runs.c.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(runs.c.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(runs.c.total_tokens), 0).label("total_tokens"),
+                func.sum(runs.c.cost_usd).label("cost_usd"),
+                func.coalesce(func.sum(is_error), 0).label("error_count"),
+            ).where(*conditions)
+        ).one()
+        if not total.turns:
+            return None
+        agent_types = sorted(a for (a,) in conn.execute(select(runs.c.agent_type).where(*conditions).distinct()))
+        rows = list(conn.execute(page_stmt))
+        page, more = rows[:limit], len(rows) > limit
+        run_ids = [r.run_id for r in page]
+        spans: dict[str, list[Any]] = {r: [] for r in run_ids}
+        seed_context = None
+        dry_run: set[str] = set()
+        if run_ids:
+            for span in conn.execute(
+                select(run_spans)
+                .where(run_spans.c.run_id.in_(run_ids), run_spans.c.type == "TOOL")
+                .order_by(run_spans.c.started_at, run_spans.c.id)
+            ):
+                spans[span.run_id].append(span)
+            first = page[0]
+            seed_context = conn.execute(
+                select(runs.c.input_context)
+                .where(
+                    *conditions,
+                    or_(runs.c.input_context.is_not(None), runs.c.input_events.is_not(None)),
+                    or_(
+                        runs.c.started_at < first.started_at,
+                        and_(runs.c.started_at == first.started_at, runs.c.run_id < first.run_id),
+                    ),
+                )
+                .order_by(runs.c.started_at.desc(), runs.c.run_id.desc())
+                .limit(1)
+            ).first()
+            dry_run = {
+                r
+                for (r,) in conn.execute(
+                    select(run_metadata.c.run_id).where(
+                        run_metadata.c.run_id.in_(run_ids),
+                        run_metadata.c.key == "dry_run",
+                        run_metadata.c.value == "true",
+                    )
+                )
+            }
+        tool_names = {s.name for items in spans.values() for s in items}
+        side_effects = (
+            {
+                name: bool(flag)
+                for name, flag in conn.execute(
+                    select(tool_definitions.c.tool_name, tool_definitions.c.side_effect).where(
+                        tool_definitions.c.tool_name.in_(tool_names)
+                    )
+                )
+            }
+            if tool_names
+            else {}
+        )
+        head = _session_heads(conn, conditions, [session_id]).get(session_id, {})
+    return {
+        "head": head,
+        "total": total._mapping,
+        "agent_types": agent_types,
+        "rows": page,
+        "spans": spans,
+        "seed": None if seed_context is None else (seed_context.input_context or []),
+        "side_effects": side_effects,
+        "dry_run": dry_run,
+        "next_cursor": _encode_cursor(page[-1].started_at, page[-1].run_id) if more else None,
+    }
+
+
 def session_turns(session_id: str, agent_type: str) -> list[dict[str, Any]]:
     """As trocas de uma sessão com um agente, em ordem: `{run_id, message,
     output, status, status_message}`. É a conversa como ela chegou ao agente,
@@ -887,4 +1326,3 @@ def session_turns(session_id: str, agent_type: str) -> list[dict[str, Any]]:
             .order_by(runs.c.started_at)
         ).all()
     return [dict(r._mapping) for r in rows]
-

@@ -194,7 +194,12 @@ function NewCollectionForm({ onClose, onCreated }: { onClose: () => void; onCrea
           />
         </Field>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {/* role="alert": num diálogo modal, a região viva de fora pode ser ignorada pelo leitor de tela. */}
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
       </DialogBody>
 
       <DialogFooter>

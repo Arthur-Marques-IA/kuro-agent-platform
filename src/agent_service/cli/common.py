@@ -86,7 +86,9 @@ def _api_message(exc: ApiError) -> str:
     detail = exc.detail
     if isinstance(detail, list):  # erros de validação do FastAPI
         detail = "; ".join(
-            f"{'.'.join(str(p) for p in d.get('loc', [])[1:]) or 'body'}: {d.get('msg')}" if isinstance(d, dict) else str(d)
+            f"{'.'.join(str(p) for p in d.get('loc', [])[1:]) or 'body'}: {d.get('msg')}"
+            if isinstance(d, dict)
+            else str(d)
             for d in detail
         )
     if exc.status == 401:

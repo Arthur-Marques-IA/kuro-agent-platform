@@ -142,8 +142,12 @@ def test_chat_streams_and_coerces_dependencies(api):
     routes[("GET", "/agents/suporte")] = httpx.Response(200, json=AGENT)
     routes[("POST", "/chat/stream")] = httpx.Response(
         200,
-        content=_sse(("run", {"run_id": "r1", "trace_id": "t1"}), ("message", {"content": "ol"}),
-                     ("message", {"content": "á"}), ("done", {})),
+        content=_sse(
+            ("run", {"run_id": "r1", "trace_id": "t1"}),
+            ("message", {"content": "ol"}),
+            ("message", {"content": "á"}),
+            ("done", {}),
+        ),
         headers={"content-type": "text/event-stream"},
     )
     result = _run("--json", "chat", "suporte", "-m", "oi", "-d", "cpf=123")
@@ -160,12 +164,23 @@ def test_chat_streams_and_coerces_dependencies(api):
 
 def test_chat_with_procedural_agent_returns_and_prints_the_stage(api):
     routes, _ = api
-    routes[("GET", "/agents/abertura")] = httpx.Response(200, json={**AGENT, "agent_type": "abertura", "dependency_fields": []})
-    state = {"stage": "problema", "stage_index": 1, "stages_total": 4, "done": False,
-             "missing": [{"name": "descricao"}], "invalid": {}, "collected": {"cpf": "1"}}
+    routes[("GET", "/agents/abertura")] = httpx.Response(
+        200, json={**AGENT, "agent_type": "abertura", "dependency_fields": []}
+    )
+    state = {
+        "stage": "problema",
+        "stage_index": 1,
+        "stages_total": 4,
+        "done": False,
+        "missing": [{"name": "descricao"}],
+        "invalid": {},
+        "collected": {"cpf": "1"},
+    }
     routes[("POST", "/chat/stream")] = httpx.Response(
         200,
-        content=_sse(("run", {"run_id": "r1"}), ("message", {"content": "E o problema?"}), ("state", state), ("done", {})),
+        content=_sse(
+            ("run", {"run_id": "r1"}), ("message", {"content": "E o problema?"}), ("state", state), ("done", {})
+        ),
         headers={"content-type": "text/event-stream"},
     )
     out = json.loads(_run("--json", "chat", "abertura", "-m", "oi").stdout)
@@ -189,9 +204,15 @@ def test_tool_invoke_ok_false_exits_nonzero(api):
     assert _run("tools", "invoke", "calc", "-a", "x=1").exit_code == 1
 
 
-ANALYST = {**AGENT, "agent_type": "extrator", "kind": "analysis", "dependency_fields": [],
-           "response_schema": [{"name": "valor", "type": "number", "label": "Valor", "description": "",
-                                 "required": True, "default": None}]}
+ANALYST = {
+    **AGENT,
+    "agent_type": "extrator",
+    "kind": "analysis",
+    "dependency_fields": [],
+    "response_schema": [
+        {"name": "valor", "type": "number", "label": "Valor", "description": "", "required": True, "default": None}
+    ],
+}
 
 
 def test_analyze_rejects_non_analysis_agent(api):
@@ -285,16 +306,30 @@ def test_chat_mostra_as_fontes_consultadas(api):
     routes, calls = api
     routes[("GET", "/agents/suporte")] = httpx.Response(200, json={**AGENT, "dependency_fields": []})
     fontes = [
-        {"title": "Trocas", "source_url": "https://docs.ex.com/troca", "content_id": "pg-1", "score": 0.91,
-         "chunk_ids": ["c1"]},
+        {
+            "title": "Trocas",
+            "source_url": "https://docs.ex.com/troca",
+            "content_id": "pg-1",
+            "score": 0.91,
+            "chunk_ids": ["c1"],
+        },
         {"title": "Manual de garantia", "source_url": None, "content_id": "doc-1", "score": 0.72, "chunk_ids": ["c3"]},
-        {"title": "Busca [beta]", "source_url": "https://ex.com/?filtro[]=1", "content_id": "pg-2", "score": None,
-         "chunk_ids": ["c7"]},
+        {
+            "title": "Busca [beta]",
+            "source_url": "https://ex.com/?filtro[]=1",
+            "content_id": "pg-2",
+            "score": None,
+            "chunk_ids": ["c7"],
+        },
     ]
     routes[("POST", "/chat/stream")] = httpx.Response(
         200,
-        content=_sse(("run", {"run_id": "r1"}), ("message", {"content": "12 meses"}),
-                     ("sources", {"sources": fontes}), ("done", {})),
+        content=_sse(
+            ("run", {"run_id": "r1"}),
+            ("message", {"content": "12 meses"}),
+            ("sources", {"sources": fontes}),
+            ("done", {}),
+        ),
         headers={"content-type": "text/event-stream"},
     )
     humano = _run("chat", "suporte", "-m", "garantia?")
@@ -312,7 +347,8 @@ def test_chat_sem_fontes_devolve_lista_vazia(api):
     routes, _ = api
     routes[("GET", "/agents/suporte")] = httpx.Response(200, json={**AGENT, "dependency_fields": []})
     routes[("POST", "/chat/stream")] = httpx.Response(
-        200, content=_sse(("run", {"run_id": "r1"}), ("message", {"content": "oi"}), ("done", {})),
+        200,
+        content=_sse(("run", {"run_id": "r1"}), ("message", {"content": "oi"}), ("done", {})),
         headers={"content-type": "text/event-stream"},
     )
     result = _run("chat", "suporte", "-m", "oi")
@@ -403,10 +439,20 @@ def test_chat_repl_rejects_unknown_slash_command(api, monkeypatch):
 
 
 CREDENTIAL = {
-    "id": "c1", "provider": "google", "provider_label": "Google", "label": "Prod",
-    "configured": True, "key_hint": "…7890", "base_url": None, "enabled": True,
-    "last_tested_at": None, "last_test_ok": None, "last_test_message": None,
-    "agents_using": [], "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+    "id": "c1",
+    "provider": "google",
+    "provider_label": "Google",
+    "label": "Prod",
+    "configured": True,
+    "key_hint": "…7890",
+    "base_url": None,
+    "enabled": True,
+    "last_tested_at": None,
+    "last_test_ok": None,
+    "last_test_message": None,
+    "agents_using": [],
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
 }
 
 
@@ -442,10 +488,15 @@ def test_credential_edit_without_changes_is_usage_error(api):
 # -- tools: criar, editar e remover pela CLI (antes só existia na API/UI) -------
 
 TOOL = {
-    "tool_name": "calc", "kind": "api", "label": "Calculadora", "description": None,
+    "tool_name": "calc",
+    "kind": "api",
+    "label": "Calculadora",
+    "description": None,
     "config": {"method": "GET", "url": "https://exemplo/x", "parameters": []},
-    "enabled": True, "is_seed": False,
-    "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+    "enabled": True,
+    "is_seed": False,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
 }
 
 
@@ -500,9 +551,13 @@ def test_tools_delete_in_use_reports_api_conflict(api):
 # -- sessions: conversas guardadas (rotas do AgentOS, sem depender do Langfuse) --
 
 SESSION = {
-    "session_id": "cli-abc", "session_name": "meu wifi caiu", "agent_id": "suporte",
-    "user_id": "cli", "total_tokens": 120,
-    "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:10:00Z",
+    "session_id": "cli-abc",
+    "session_name": "meu wifi caiu",
+    "agent_id": "suporte",
+    "user_id": "cli",
+    "total_tokens": 120,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:10:00Z",
 }
 
 
@@ -655,7 +710,7 @@ def test_mcp_config_with_ip_profile_hands_over_the_ca(api, monkeypatch, tmp_path
     # O Claude Code (Node) não confia na CA própria: sem MCP por URL no profile `ip`.
     assert data["http_command"] is None
     texto = _run("--url", "http://localhost:8000", "mcp-config").stdout
-    assert "PowerShell" in texto and 'agent-service[mcp] @ git+' in texto
+    assert "PowerShell" in texto and "agent-service[mcp] @ git+" in texto
 
 
 def test_mcp_config_domain_wins_over_ip_profile(api, monkeypatch, tmp_path):
@@ -680,7 +735,9 @@ def test_mcp_config_uses_the_tls_domain_from_env(api, monkeypatch):
     assert data["url"] == "https://outro.example.com" and data["url_source"] == "explicit"
 
 
-CONNECT_URL = "https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py"
+CONNECT_URL = (
+    "https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py"
+)
 
 
 def test_mcp_config_connect_script_follows_the_source(api, monkeypatch):
@@ -689,15 +746,25 @@ def test_mcp_config_connect_script_follows_the_source(api, monkeypatch):
     fork = json.loads(_run("--json", "mcp-config", "--source", "git+https://github.com/eu/kuro.git@v0.3.0").stdout)
     assert fork["ssh_command"].startswith("uv run https://raw.githubusercontent.com/eu/kuro/v0.3.0/src/agent_service/")
     local = json.loads(_run("--json", "mcp-config", "--source", "git+https://gitlab.com/eu/kuro").stdout)
-    assert local["ssh_command"] == 'uvx --from "agent-service[mcp] @ git+https://gitlab.com/eu/kuro" kuro connect usuario@kuro.empresa.com'
+    assert (
+        local["ssh_command"]
+        == 'uvx --from "agent-service[mcp] @ git+https://gitlab.com/eu/kuro" kuro connect usuario@kuro.empresa.com'
+    )
 
 
 def test_sessions_list_title_drops_the_dependencies_block(api):
     """O AgentOS usa a 1ª mensagem como título, e o Agno junta a ela as dependencies:
     o CPF do cliente aparecia no título da conversa."""
     routes, _ = api
-    vazado = {**SESSION, "session_name": 'meu wifi caiu\n\n<additional context>\n{"cpf": "12345678900"}\n</additional context>'}
-    so_contexto = {**SESSION, "session_id": "cli-2", "session_name": '<additional context>{"cpf": "1"}</additional context>'}
+    vazado = {
+        **SESSION,
+        "session_name": 'meu wifi caiu\n\n<additional context>\n{"cpf": "12345678900"}\n</additional context>',
+    }
+    so_contexto = {
+        **SESSION,
+        "session_id": "cli-2",
+        "session_name": '<additional context>{"cpf": "1"}</additional context>',
+    }
     routes[("GET", "/sessions")] = httpx.Response(200, json={"data": [vazado, so_contexto], "meta": {}})
     data = json.loads(_run("--json", "sessions", "list").stdout)["data"]
     assert data[0]["session_name"] == "meu wifi caiu"
@@ -713,16 +780,123 @@ def test_sessions_list_uses_kuro_user_id_env(api, monkeypatch):
     assert calls[-1].url.params["user_id"] == "joana"
 
 
-def test_sessions_show_prints_transcript(api):
-    routes, _ = api
-    routes[("GET", "/sessions/cli-abc/runs")] = httpx.Response(
-        200,
-        json=[{"run_id": "r1", "run_input": "meu wifi caiu", "content": "vamos verificar",
-               "metrics": {"total_tokens": 120}}],
-    )
+TIMELINE = {
+    "session_id": "cli-abc",
+    "user_id": "cli",
+    "agent_types": ["r6"],
+    "started_at": "2026-11-11T12:00:00Z",
+    "ended_at": "2026-11-11T12:05:02Z",
+    "duration_ms": 302000.0,
+    "turns": 2,
+    "error_count": 0,
+    "input_tokens": 200,
+    "output_tokens": 40,
+    "total_tokens": 240,
+    "cost_usd": 0.002,
+    "next_cursor": "2026-11-11T12:05:00+00:00|r2",
+    "items": [
+        {
+            "run_id": "r1",
+            "at": "2026-11-11T12:00:00Z",
+            "agent_type": "r6",
+            "agent_version": 10,
+            "status": "success",
+            "status_message": None,
+            "dry_run": False,
+            "structured": False,
+            "events": [],
+            "message": None,
+            "raw_input": "DADOS: Maria " + "x" * 2000,
+            "context": [],
+            "steps": [],
+            "sources": [],
+            "output": "oi, Maria",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "total_tokens": 120,
+                "cost_usd": 0.001,
+                "latency_ms": 2000.0,
+            },
+        },
+        {
+            "run_id": "r2",
+            "at": "2026-11-11T12:05:00Z",
+            "agent_type": "r6",
+            "agent_version": 10,
+            "status": "success",
+            "status_message": None,
+            "dry_run": False,
+            "structured": True,
+            "events": [
+                {"role": "agent_sent", "content": "recebi seus dados", "speech": False},
+                {"role": "contact", "content": "quero parcelar", "speech": True},
+            ],
+            "message": "quero parcelar",
+            "raw_input": None,
+            "context": [
+                {
+                    "key": "divida",
+                    "title": "Contexto da dívida",
+                    "content": "1 vencida",
+                    "volatile": False,
+                    "hash": "h",
+                    "changed": True,
+                    "previous_content": "nada vencido",
+                }
+            ],
+            "steps": [
+                {
+                    "tool": "regente_r6_decidir",
+                    "args": {"acao": "transferir"},
+                    "ok": True,
+                    "result_preview": "HTTP 200",
+                    "side_effect": True,
+                },
+                {
+                    "tool": "consulta",
+                    "args": {"cpf": "1"},
+                    "ok": False,
+                    "failure": "unavailable",
+                    "error": "HTTP 503: fora",
+                    "side_effect": False,
+                },
+            ],
+            "sources": [],
+            "output": "vou transferir",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "total_tokens": 120,
+                "cost_usd": 0.001,
+                "latency_ms": 2000.0,
+            },
+        },
+    ],
+}
+
+
+def test_sessions_show_prints_the_timeline(api):
+    routes, calls = api
+    routes[("GET", "/observability/sessions/cli-abc/timeline")] = httpx.Response(200, json=TIMELINE)
     result = _run("sessions", "show", "cli-abc")
-    assert result.exit_code == 0
-    assert "vamos verificar" in result.output
+    assert result.exit_code == 0, result.output
+    out = result.output
+    assert "2 turno(s)" in out and "vou transferir" in out and "quero parcelar" in out
+    assert "recebi seus dados" in out and "Contexto da dívida" in out
+    assert "regente_r6_decidir(acao=transferir)" in out and "efeito colateral" in out
+    assert "HTTP 503: fora" in out and "--cursor" in out
+    assert "x" * 1000 not in out  # entrada não estruturada longa só pelo começo
+    assert calls[-1].url.params["user_id"] == "cli"
+
+
+def test_sessions_show_json_is_the_timeline(api):
+    routes, calls = api
+    routes[("GET", "/observability/sessions/cli-abc/timeline")] = httpx.Response(200, json=TIMELINE)
+    result = _run("--json", "sessions", "show", "cli-abc", "--all-users", "-n", "5", "--cursor", "c1")
+    assert json.loads(result.stdout) == TIMELINE
+    assert "user_id" not in calls[-1].url.params
+    assert calls[-1].url.params["limit"] == "5" and calls[-1].url.params["cursor"] == "c1"
 
 
 def test_sessions_delete_requires_yes_without_tty(api):
@@ -740,8 +914,12 @@ def test_sessions_delete_scopes_by_user(api):
 
 STATS = {
     "buckets": [{"date": "2026-01-01", "runs": 3, "errors": 1, "total_tokens": 900, "cost_usd": 0.01}],
-    "status_counts": {"success": 2, "error": 1}, "total_runs": 3, "total_tokens": 900,
-    "total_cost_usd": 0.01, "avg_latency_ms": 1500.0, "scanned": 3,
+    "status_counts": {"success": 2, "error": 1},
+    "total_runs": 3,
+    "total_tokens": 900,
+    "total_cost_usd": 0.01,
+    "avg_latency_ms": 1500.0,
+    "scanned": 3,
 }
 
 
@@ -763,8 +941,15 @@ def test_runs_stats_without_langfuse_exits_one(api):
 
 
 def _run_row(run_id: str) -> dict:
-    return {"run_id": run_id, "trace_id": "t", "agent_type": "suporte", "started_at": "2026-01-01T00:00:00Z",
-            "status": "success", "total_tokens": 10, "latency_ms": 1200.0}
+    return {
+        "run_id": run_id,
+        "trace_id": "t",
+        "agent_type": "suporte",
+        "started_at": "2026-01-01T00:00:00Z",
+        "status": "success",
+        "total_tokens": 10,
+        "latency_ms": 1200.0,
+    }
 
 
 def _json_objects(text: str) -> list[dict]:
@@ -871,13 +1056,32 @@ def test_runs_tail_exits_one_when_langfuse_goes_away(api, monkeypatch):
 # -- analyze aceita texto direto, não só arquivo --------------------------------
 
 ANALYST_NESTED = {
-    **AGENT, "agent_type": "classificador", "kind": "analysis", "dependency_fields": [],
+    **AGENT,
+    "agent_type": "classificador",
+    "kind": "analysis",
+    "dependency_fields": [],
     "response_schema": [
-        {"name": "mensagens", "type": "array", "label": "Mensagens", "description": "", "required": True,
-         "default": None,
-         "items": {"type": "object", "fields": [
-             {"name": "autor", "type": "string", "label": "Autor", "description": "",
-              "required": True, "default": None}]}}
+        {
+            "name": "mensagens",
+            "type": "array",
+            "label": "Mensagens",
+            "description": "",
+            "required": True,
+            "default": None,
+            "items": {
+                "type": "object",
+                "fields": [
+                    {
+                        "name": "autor",
+                        "type": "string",
+                        "label": "Autor",
+                        "description": "",
+                        "required": True,
+                        "default": None,
+                    }
+                ],
+            },
+        }
     ],
 }
 
@@ -909,6 +1113,7 @@ def test_analyze_com_texto_e_arquivo_juntos_e_erro_de_uso(api, tmp_path):
 def test_certificado_recusado_nao_manda_olhar_o_container(monkeypatch):
     """O serviço está de pé; o que falta é confiar na CA. Sugerir
     `docker compose up -d` aqui manda quem opera depurar o lugar errado."""
+
     def handler(request):
         raise httpx.ConnectError(
             "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate",
@@ -992,13 +1197,26 @@ def test_runs_chunk_feedback_marca_e_exporta(api, tmp_path):
     out = _run("--json", "runs", "chunk-feedback", "r1", "c1", "wrong", "--comment", "preço antigo", "--by", "ana")
     assert out.exit_code == 0, out.output
     assert json.loads(calls[-1].content) == {
-        "run_id": "r1", "chunk_id": "c1", "label": "wrong", "span_id": None, "comment": "preço antigo", "created_by": "ana"
+        "run_id": "r1",
+        "chunk_id": "c1",
+        "label": "wrong",
+        "span_id": None,
+        "comment": "preço antigo",
+        "created_by": "ana",
     }
     assert _run("--json", "runs", "chunk-feedback", "r1", "c1", "talvez").exit_code == 2
 
     routes[("GET", "/observability/chunk-feedback/export")] = httpx.Response(
-        200, json=[{"query": "garantia", "collection": "m", "relevant_chunk_ids": ["c1"], "relevant_content_ids": ["d"],
-                    "run_ids": ["r1"]}]
+        200,
+        json=[
+            {
+                "query": "garantia",
+                "collection": "m",
+                "relevant_chunk_ids": ["c1"],
+                "relevant_content_ids": ["d"],
+                "run_ids": ["r1"],
+            }
+        ],
     )
     destino = tmp_path / "gabarito.jsonl"
     out = _run("--json", "runs", "chunk-export", "-c", "m", "-o", str(destino))

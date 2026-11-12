@@ -59,8 +59,11 @@ def test_a_config_chega_ao_pgvector_e_ao_k_da_knowledge(base):
 
     update_collection(base["name"], CollectionUpdateIn(search_mode="hybrid", vector_weight=0.7, max_results=4))
     mod._build_collection.cache_clear()
-    with patch.object(mod, "PgVector", PgVectorFalso), patch.object(mod, "build_embedder", lambda *a: None), \
-            patch.object(mod, "Knowledge", lambda **kw: kw):
+    with (
+        patch.object(mod, "PgVector", PgVectorFalso),
+        patch.object(mod, "build_embedder", lambda *a: None),
+        patch.object(mod, "Knowledge", lambda **kw: kw),
+    ):
         knowledge = get_collection(base["name"])
     mod._build_collection.cache_clear()
     kwargs = knowledge["vector_db"].kwargs
@@ -196,8 +199,16 @@ def _record(run_id, **extra):
     from agent_service.observability.run_store import RunRecord
 
     campos = dict(
-        run_id=run_id, trace_id=run_id, agent_type="a", agent_name="A", prompt_version=1, endpoint="chat",
-        user_id="u", session_id="s", message="oi", started_at=datetime.now(timezone.utc),
+        run_id=run_id,
+        trace_id=run_id,
+        agent_type="a",
+        agent_name="A",
+        prompt_version=1,
+        endpoint="chat",
+        user_id="u",
+        session_id="s",
+        message="oi",
+        started_at=datetime.now(timezone.utc),
     )
     return RunRecord(**{**campos, **extra})
 
@@ -206,8 +217,14 @@ def test_run_grava_a_versao_da_collection(base):
     from agent_service.observability import tracing
 
     run = tracing.RunContext(
-        endpoint="chat", agent_type="a", agent_name="A", prompt_version=1, user_id="u", session_id="s",
-        message="oi", definition={"knowledge_collection": base["name"]},
+        endpoint="chat",
+        agent_type="a",
+        agent_name="A",
+        prompt_version=1,
+        user_id="u",
+        session_id="s",
+        message="oi",
+        definition={"knowledge_collection": base["name"]},
     )
     record = _record("r")
     # Sem busca no run: a versão atual da collection.
@@ -229,8 +246,12 @@ def test_runs_filtram_pela_versao_da_collection():
     for run_id, versao in (("rv1", 1), ("rv2", 2)):
         run_store._write_run(
             _record(
-                run_id, agent_type="filtro-col", started_at=agora,
-                knowledge_collection="busca", collection_version=versao, collection_config_hash=f"h{versao}",
+                run_id,
+                agent_type="filtro-col",
+                started_at=agora,
+                knowledge_collection="busca",
+                collection_version=versao,
+                collection_config_hash=f"h{versao}",
             )
         )
     query = RunQuery(agent_type="filtro-col", knowledge_collection="busca", collection_version=2)
