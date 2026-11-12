@@ -20,6 +20,57 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ---
 
+## Não lançada
+
+O contexto da entrada estruturada vira estado da sessão: o modelo o lê uma vez por turno, no
+prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo histórico.
+
+### Ação necessária
+
+- **O `context` do `/chat` e do `/chat/stream` mudou de comportamento em relação à `0.3.0`.**
+  Na `0.3.0` os blocos eram colados no começo da mensagem do turno, e o histórico da sessão os
+  reenviava por até `num_history_runs` turnos: o modelo via o mesmo contexto até 11 vezes, o antigo
+  ao lado do novo, e um turno sem `context` ficava sem contexto nenhum na mensagem. Agora:
+  - **campo ausente** = vale o último contexto enviado nesta `session_id`;
+  - **uma lista** = passa a ser o contexto inteiro da sessão (não há atualização por bloco);
+  - **`[]`** = a sessão fica sem contexto.
+
+  O contexto vigente vai no prompt de sistema, depois das instruções, com o título `# Contexto`,
+  uma frase fixa ("Este é o contexto atual desta conversa. Ele substitui qualquer versão anterior.")
+  e um `## <title>` por bloco; ele não entra mais na mensagem do turno nem no histórico. Mandar o
+  `context` inteiro em todo turno continua funcionando, e custa o mesmo que mandá-lo só quando muda.
+  **O que fazer:** se as instructions do agente citam a posição do contexto na mensagem ("veja a
+  seção Contexto da mensagem"), reescreva-as no draft; e se uma mesma `session_id` passa a atender
+  outra pessoa, use outra `session_id` (ou mande o `context` dela, ou `[]`), porque o contexto
+  anterior agora é herdado. Ver [Entrada estruturada](integracao.md#entrada-estruturada).
+- **`runs.message` não traz mais o contexto.** Na entrada estruturada ela guarda a mensagem do
+  turno (eventos e fala, com os cabeçalhos de sempre); os blocos ficam em `input_context`, que
+  agora guarda o contexto **vigente** do turno, enviado ou herdado. Quem buscava texto do contexto
+  em `runs.message` (filtro de busca, exportação) passa a ler `input_context`. Uma chamada só com
+  `message` numa sessão que nunca teve contexto continua exatamente como antes (o modelo recebe o
+  mesmo prompt, byte a byte, e as três colunas ficam nulas); numa sessão que já tem contexto, ela
+  herda o contexto e conta como turno estruturado.
+
+### Novo
+
+- **`agent_sent` repetido não se repete no prompt.** Um evento `agent_sent` cujo texto é igual à
+  última resposta do agente na sessão (ignorando espaços nas pontas e diferenças de quebra de linha
+  e de espaço) sai do texto do modelo, porque o histórico já traz essa resposta. Ele continua
+  gravado em `input_events`, com `echo: true`. Diferente da resposta (a instituição editou ou
+  mandou outra coisa), fica no texto, como antes.
+- **Campo `history_tool_calls` no agente**: quantas chamadas de tool dos turnos anteriores voltam
+  ao modelo junto com o histórico (as mais recentes). Vazio (o padrão) = todas, como antes; `0` = o
+  histórico traz só a conversa. Na API, na CLI (`kuro agents set <agente> history_tool_calls=3`), no
+  MCP e no formulário do agente (seção Memória). Recusado com 422 em `kind="analysis"`. Os agentes
+  que já existem não mudam, nem de versão. Ver [conceitos](conceitos.md#histórico-da-conversa).
+
+### Como atualizar
+
+1. A migração `0018` (a coluna `history_tool_calls` em `agent_definitions`, nula) roda sozinha na
+   subida. Para voltar à `0.3.0`, siga o [roteiro de migração](migracao.md#6-voltar-atrás).
+
+---
+
 ## 0.3.0 — 2026-11-12
 
 Entrada estruturada no `/chat` (`events` e `context` em campos), a sessão lida como linha do

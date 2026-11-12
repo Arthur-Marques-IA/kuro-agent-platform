@@ -44,6 +44,7 @@ EDITABLE_FIELDS = (
     "session_summary",
     "plain_text",
     "num_history_runs",
+    "history_tool_calls",
     "kind",
     "response_schema",
     "stages",
@@ -55,7 +56,7 @@ EDITABLE_FIELDS = (
 # Num agente `analysis` estes campos não têm efeito (ele é one-shot, sem sessão
 # nem memória) e a API recusa configurá-los — oferecê-los no JSON editável seria
 # convidar a mexer num campo que só devolve 422.
-INERTES_EM_ANALYSIS = ("num_history_runs", "memory_backend", "session_summary")
+INERTES_EM_ANALYSIS = ("num_history_runs", "history_tool_calls", "memory_backend", "session_summary")
 
 
 def editable(definition: dict[str, Any]) -> dict[str, Any]:
@@ -95,7 +96,9 @@ def _render_agent(a: dict[str, Any]) -> None:
         f"[bold]{a['name']}[/] [dim]({a['agent_type']}{' · seed' if a['is_seed'] else ''} · {kind})[/]",
         f"modelo: {a['model_provider'] or 'padrão'} / {a['model_id'] or 'padrão'}"
         f" · credencial: {a.get('model_credential_id') or 'padrão do provedor'}",
-        f"memória: {a['memory_backend']} · histórico: {a['num_history_runs']} runs · prompt v{a['prompt_version']}",
+        f"memória: {a['memory_backend']} · histórico: {a['num_history_runs']} runs"
+        + (f" (até {a['history_tool_calls']} tools antigas)" if a.get("history_tool_calls") is not None else "")
+        + f" · prompt v{a['prompt_version']}",
         f"tools: {', '.join(a['tools']) or '—'}",
         f"base de conhecimento: {a.get('knowledge_collection') or '—'}",
     ]

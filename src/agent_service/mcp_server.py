@@ -467,7 +467,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         changes: Annotated[
             dict[str, Any],
             Field(
-                description='Só os campos a mudar, ex.: {"num_history_runs": 5}. Aceitos: os de agent_get(editable=true).'
+                description='Só os campos a mudar, ex.: {"num_history_runs": 5, "history_tool_calls": 3}. '
+                "Aceitos: os de agent_get(editable=true)."
             ),
         ],
         dry_run: ValidateOnly = False,

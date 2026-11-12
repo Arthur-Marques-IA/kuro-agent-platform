@@ -140,12 +140,15 @@ _DEPENDENCIES = "Dados que você já tem (cpf, plano...): viram contexto do prom
 _EVENTS = (
     "Entrada estruturada: o que aconteceu desde a última resposta do agente, em ordem (até 200): "
     "[{role: contact | human_agent | agent_sent | system, content, at?, kind?: text | document, attachments?}]. "
+    "Um agent_sent igual à última resposta do agente não se repete no texto do modelo. "
     "Não vale em agente procedural (422)."
 )
 _CONTEXT = (
-    "Entrada estruturada: blocos de texto para o modelo ler (até 30): [{key, title, content, volatile?}], "
-    "key estável e única. Diferente de dependencies, que são valores tipados para tools e validação. "
-    "Não vale em agente procedural (422)."
+    "Entrada estruturada: o contexto da sessão, em blocos (até 30): [{key, title, content, volatile?}], "
+    "key estável e única. Ausente: vale o último enviado nesta session_id. Uma lista: passa a ser o contexto "
+    "inteiro. []: a sessão fica sem contexto. Mande só quando mudar; o modelo o lê uma vez, no prompt de "
+    "sistema, e ele não entra no histórico. Diferente de dependencies, que são valores tipados para tools e "
+    "validação. Não vale em agente procedural (422)."
 )
 
 CHAT_FIELDS = [

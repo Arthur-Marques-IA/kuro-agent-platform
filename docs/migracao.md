@@ -46,7 +46,7 @@ KURO_BUILD_SHA=$(git rev-parse --short HEAD) \
 ```
 
 O serviço e o console sobem juntos, de propósito: um console novo contra um serviço antigo quebra
-telas. Na subida, sob um lock, rodam as migrações que faltarem (até a `0017`), os seeds e a
+telas. Na subida, sob um lock, rodam as migrações que faltarem (até a `0018`), os seeds e a
 montagem do app; a porta só abre depois. A primeira subida pode levar alguns minutos.
 
 O que as migrações fazem com os dados:
@@ -55,6 +55,8 @@ O que as migrações fazem com os dados:
   nos runs que já existem. Nada é reescrito.
 - `0017`: cifra os segredos das tools `api` já gravados. Sem a `CREDENTIALS_ENCRYPTION_KEY` ela
   não falha: deixa em texto plano e avisa no log.
+- `0018`: acrescenta `history_tool_calls` em `agent_definitions`, nula (o agente traz todas as
+  chamadas de tool no histórico, como antes). Nenhum agente muda de versão.
 
 ## 4. Conferir que deu certo
 
@@ -101,7 +103,8 @@ como foi gravado.
 
 ## 6. Voltar atrás
 
-Voltar só a imagem não funciona: o serviço antigo não sobe com o banco na `0017`. O caminho é
+Voltar só a imagem não funciona: o serviço antigo não sobe com o banco numa revisão que ele não
+conhece (`0017` para quem vem da `0.2.0`, `0018` para quem vem da `0.3.0`). O caminho é
 restaurar o dump junto com o código de antes:
 
 ```bash
@@ -121,16 +124,25 @@ isso confira a etapa 4 antes de liberar o tráfego.
 É opcional e pode ser feito sem pressa: enquanto a integração mandar tudo em `message`, o serviço
 funciona como antes e as sessões aparecem como "entrada não estruturada". O mapeamento de cada
 trecho do texto atual para `events` e `context` está em
-[Entrada estruturada](integracao.md#entrada-estruturada). Três cuidados:
+[Entrada estruturada](integracao.md#entrada-estruturada). Os cuidados:
 
-1. **O texto que o modelo lê muda de forma.** O servidor monta um gabarito fixo (`# Contexto`,
-   `## <título do bloco>`, `# Conversa desde a sua última resposta`, `# Mensagem nova do contato`).
-   Instruções e descrições de tool que citam o formato antigo (um bloco `[SISTEMA]`, as marcações
-   `[ALUNO]`/`[ATENDENTE]`) precisam ser reescritas para os títulos dos blocos.
-2. **Faça pelo draft.** `agents promote <agente> --to <agente>-draft`, ajuste o prompt no draft,
+1. **O texto que o modelo lê muda de forma.** O contexto vai no fim do prompt de sistema, uma vez
+   por turno (`# Contexto`, uma frase fixa dizendo que é o contexto atual, `## <título do bloco>`),
+   e a mensagem do turno traz só `# Conversa desde a sua última resposta` e
+   `# Mensagem nova do contato`. Instruções e descrições de tool que citam o formato antigo (um
+   bloco `[SISTEMA]`, as marcações `[ALUNO]`/`[ATENDENTE]`) precisam ser reescritas para os títulos
+   dos blocos.
+2. **O contexto é da sessão.** `context` ausente mantém o último enviado nesta `session_id`; uma
+   lista substitui o contexto inteiro; `[]` limpa. Mande-o quando mudar (mandar em todo turno também
+   funciona). Instruções como "vale sempre o contexto mais recente" deixam de ser necessárias. Se a
+   conversa passa a ser com outra pessoa, use outra `session_id`. Quem já integrava pela entrada
+   estruturada da `0.3.0` não precisa mudar a chamada, mas veja a
+   [Ação necessária](notas-de-versao.md#não-lançada): o contexto deixou de ir na mensagem.
+3. **Faça pelo draft.** `agents promote <agente> --to <agente>-draft`, ajuste o prompt no draft,
    mande a entrada estruturada para o draft em shadow ou com `kuro eval --compare`, e só então
    promova. O passo a passo está em [integração](integracao.md).
-3. **Mande só o que aconteceu desde a última resposta.** O histórico da sessão já guarda os turnos
-   anteriores; repetir a conversa inteira em `events` a cada chamada duplica o que o modelo lê.
-   Agentes procedurais não aceitam `events` nem `context` (422): os dados conhecidos vão em
-   `dependencies`.
+4. **Mande só o que aconteceu desde a última resposta.** O histórico da sessão já guarda os turnos
+   anteriores; repetir a conversa inteira em `events` a cada chamada duplica o que o modelo lê. O
+   `agent_sent` com a última resposta do agente pode ir (o servidor o tira do texto quando é igual à
+   resposta). Agentes procedurais não aceitam `events` nem `context` (422): os dados conhecidos vão
+   em `dependencies`.
