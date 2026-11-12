@@ -51,7 +51,9 @@ test("criar agente, conversar, abrir a sessão e o trace", async ({ page }) => {
   await expect(page.getByText(RESPOSTA(mensagem)).first()).toBeVisible();
 
   // 4. Abrir o trace da execução
-  await page.locator('a[href^="/runs/"]').first().click();
+  // `:visible`: abaixo de `md` a lista de execuções vira cartões, e o cartão (oculto no desktop)
+  // vem antes da linha da tabela no DOM.
+  await page.locator('a[href^="/runs/"]:visible').first().click();
   await expect(page).toHaveURL(/\/runs\/[0-9a-f-]+$/);
   await expect(page.getByRole("heading", { name: /Indexando|não encontrado|Não foi possível/ })).toHaveCount(0, {
     timeout: 30_000,
