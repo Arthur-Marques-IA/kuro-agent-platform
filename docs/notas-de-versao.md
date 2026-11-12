@@ -64,6 +64,16 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Novo
 
+- **`env_credential` em `GET /model-providers`** (campo novo, opcional): quando o provedor tem
+  fallback no ambiente do serviço e ele está definido, vem `{"variable": "GOOGLE_API_KEY",
+  "in_use": true}`, só o nome da variável, nunca o valor. `in_use` é `true` quando nenhuma
+  credencial cadastrada resolve a padrão do provedor, ou seja, quando é a do ambiente que responde.
+  Hoje só o `google` tem esse fallback (`GOOGLE_API_KEY`, ou o Vertex com
+  `GOOGLE_GENAI_USE_VERTEXAI=true`); nos outros provedores o campo vem `null`. O console mostra essa
+  credencial como uma linha somente leitura, em vez de dizer que não há chave nenhuma.
+- **Console: "Chaves de API" virou "Credenciais de modelos"** no menu e no título da tela `/models`
+  (a rota não mudou). A tela avisa que essas não são as chaves de acesso ao Kuro
+  (`ADMIN_API_KEY`/`RUNTIME_API_KEY`).
 - **Conectar o MCP sem instalar o Kuro, em qualquer cliente.** Na sua máquina, só com o uv:
   `uv run https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py root@servidor`.
   O `kuro connect` virou um arquivo só, que usa apenas a biblioteca padrão do Python: começa em
