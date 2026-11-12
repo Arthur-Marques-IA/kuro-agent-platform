@@ -1,0 +1,27 @@
+name: Melhoria
+description: Uma ideia ou algo que falta.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problema
+    attributes:
+      label: Qual é o problema
+      description: O que você está tentando fazer e onde trava hoje. Um caso concreto vale mais que a solução.
+    validations:
+      required: true
+  - type: textarea
+    id: proposta
+    attributes:
+      label: O que você propõe
+      description: Como você imagina que funcionaria (campo, comando, tela). Opcional.
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Como você contorna hoje
+  - type: checkboxes
+    id: roadmap
+    attributes:
+      label: Antes de enviar
+      options:
+        - label: Olhei o ROADMAP.md (inclusive "Fora de propósito") e não achei isto lá.
+          required: true
