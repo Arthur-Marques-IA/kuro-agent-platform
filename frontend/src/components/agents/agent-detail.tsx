@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 import { ArrowUpRight, Copy, Ellipsis, FileSearch, MessageSquare, MessagesSquare, Trash } from "lucide-react";
 import { errorMessage, requestJson } from "@/lib/http";
 import { formatNumber } from "@/lib/format";
-import { MEMORY_BACKENDS, modelLabel } from "@/lib/agent-meta";
+import { modelLabel } from "@/lib/agent-meta";
+import { draftOf } from "@/lib/agent-list";
 import { sessionTitle } from "@/lib/sessions";
 import type { AgentDefinition, PromptVersion } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useConfirm } from "@/components/ui/confirm";
 import { useToast } from "@/components/ui/toast";
 import { AgentAvatar } from "@/components/agents/agent-avatar";
+import { memoryLabel } from "@/components/agents/agent-labels";
 import { AgentForm, type AgentFormPayload } from "@/components/agents/agent-form";
 import { VersionHistory } from "@/components/agents/version-history";
 import { PromoteDialog, RevisionsPanel } from "@/components/agents/revisions-panel";
@@ -49,7 +51,9 @@ export function AgentDetail({
   const router = useRouter();
   const toast = useToast();
   const confirm = useConfirm();
-  const { availableTools, sessions } = useWorkspace();
+  const { agents, availableTools, sessions } = useWorkspace();
+  const draftTarget = draftOf(agent.agent_type);
+  const prodType = draftTarget && agents.some((a) => a.agent_type === draftTarget) ? draftTarget : null;
   const [tab, setTab] = useState<TabValue>(isTab(initialTab) ? initialTab : "config");
   // `key` remonta o formulário quando uma versão antiga é carregada no editor.
   const [draft, setDraft] = useState<{ key: number; instructions?: string[] }>({ key: 0 });
@@ -113,11 +117,16 @@ export function AgentDetail({
   return (
     <Tabs value={tab} onValueChange={changeTab} className="flex min-h-0 flex-1 flex-col">
       <PageHeader
-        breadcrumbs={[{ label: "Agentes", href: "/agents" }, { label: agent.name }]}
+        // O nome já é o título: repeti-lo na trilha só a espremia ("A…" em 375 px). Um draft
+        // mostra de qual agente é.
+        breadcrumbs={[
+          { label: "Agentes", href: "/agents" },
+          ...(prodType ? [{ label: prodType, href: `/agents/${encodeURIComponent(prodType)}` }] : []),
+        ]}
         title={
-          <span className="flex min-w-0 items-center gap-3">
-            <AgentAvatar agentType={agent.agent_type} name={agent.name} size="sm" />
-            <span className="truncate">{agent.name}</span>
+          <span className="flex min-w-0 items-start gap-3">
+            <AgentAvatar agentType={agent.agent_type} name={agent.name} size="sm" className="mt-px" />
+            <span className="min-w-0 break-words">{agent.name}</span>
           </span>
         }
         description={
@@ -135,14 +144,11 @@ export function AgentDetail({
             {agent.kind === "analysis" ? (
               <Badge variant="outline">Analista</Badge>
             ) : (
-              <Badge variant="outline">
-                {agent.memory_backend === "none"
-                  ? "Sem memória longa"
-                  : `Memória ${MEMORY_BACKENDS[agent.memory_backend]?.label ?? agent.memory_backend}`}
-              </Badge>
+              <Badge variant="outline">{memoryLabel(agent)}</Badge>
             )}
             <Badge variant="outline">Prompt v{agent.prompt_version}</Badge>
             {agent.is_seed && <Badge variant="secondary">sistema</Badge>}
+            {draftOf(agent.agent_type) && <Badge variant="warning">draft</Badge>}
             <span className="ml-1 text-xs">
               Atualizado <RelativeTime date={agent.updated_at} />
             </span>
