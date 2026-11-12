@@ -182,15 +182,32 @@ export function Sidebar({
 
 function SessionList({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
-  const { sessions, sessionsLoading, sessionsError, refreshSessions } = useWorkspace();
+  const { sessions, sessionsLoading, sessionsError, refreshSessions, observability } = useWorkspace();
   const activeId = pathname.startsWith("/chat/") ? decodeURIComponent(pathname.slice("/chat/".length)) : null;
   const groups = useMemo(() => groupByRecency(sessions, (s) => s.updated_at ?? s.created_at), [sessions]);
 
   return (
     <div className="mt-5 flex min-h-0 flex-1 flex-col">
-      <p className="px-6 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-        Conversas
-      </p>
+      <div className="flex items-baseline gap-2 pb-1.5 pl-6 pr-4">
+        {/* Só as do Playground com o user_id deste navegador: as de integrações, da CLI e de outras pessoas ficam nos Logs. */}
+        <p
+          className="min-w-0 flex-1 truncate text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
+          title="Só as conversas do Playground feitas neste navegador. As de integrações, da CLI e de outras pessoas estão em Logs › Sessões."
+        >
+          Conversas deste navegador
+        </p>
+        {observability.enabled && (
+          <Link
+            href="/logs/sessions"
+            onClick={onNavigate}
+            aria-label="Todas as sessões"
+            title="Todas as sessões, de qualquer origem (Logs › Sessões)"
+            className="shrink-0 rounded text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Todas
+          </Link>
+        )}
+      </div>
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         {sessionsLoading && (
           <div className="flex flex-col gap-1.5 px-2.5 pt-1" aria-label="Carregando conversas">
@@ -292,7 +309,11 @@ function SessionItem({
         onBlur={commitRename}
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
-          if (e.key === "Escape") setEditing(false);
+          if (e.key === "Escape") {
+            // Um Esc, uma camada: cancela a renomeação sem fechar a gaveta (mobile) em volta.
+            e.stopPropagation();
+            setEditing(false);
+          }
         }}
         className="h-8 w-full rounded-lg border border-ring bg-card px-2.5 text-[13px] outline-none ring-3 ring-ring/20"
       />

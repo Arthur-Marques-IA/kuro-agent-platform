@@ -19,6 +19,7 @@ import { EmptyState, RelativeTime, SectionHeading, Skeleton } from "@/components
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useConfirm } from "@/components/ui/confirm";
 import { useToast } from "@/components/ui/toast";
+import { useReserveMascotSpace } from "@/components/brand/kuro-mascot";
 import { AgentAvatar } from "@/components/agents/agent-avatar";
 import { memoryLabel } from "@/components/agents/agent-labels";
 import { AgentForm, type AgentFormPayload } from "@/components/agents/agent-form";
@@ -58,6 +59,8 @@ export function AgentDetail({
   // `key` remonta o formulário quando uma versão antiga é carregada no editor.
   const [draft, setDraft] = useState<{ key: number; instructions?: string[] }>({ key: 0 });
   const [promoteOpen, setPromoteOpen] = useState(false);
+  // A aba Configuração tem a barra de salvar fixa no rodapé, no canto do Kuro.
+  useReserveMascotSpace(tab === "config");
   const agentSessions = sessions.filter((s) => s.agent_id === agent.agent_type);
   const slug = encodeURIComponent(agent.agent_type);
 

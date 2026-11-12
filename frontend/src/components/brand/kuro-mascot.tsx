@@ -18,6 +18,7 @@ import {
   statusLine,
 } from "@/lib/kuro-mood";
 import type { RunPage } from "@/lib/types";
+import { mascotSpace } from "@/lib/mascot-space";
 import { useLocalStorage } from "@/lib/use-local-storage";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
 import { COLORS, GRID } from "@/components/brand/kuro-crow";
@@ -235,6 +236,29 @@ function useWideScreen() {
   );
 }
 
+/**
+ * Uma tela com controle fixo no rodapé, no canto do Kuro, chama isto enquanto o controle está
+ * na tela (ex.: a barra "Alterações não salvas" do formulário de agente): o corvo sai e para
+ * de consultar, e volta quando a tela desmonta ou `active` vira `false`.
+ */
+export function useReserveMascotSpace(active = true) {
+  useEffect(() => {
+    if (!active) return;
+    return mascotSpace.reserve();
+  }, [active]);
+}
+
+/**
+ * O que o Kuro ocupa da área de conteúdo, contado da borda esquerda dela (ele fica a 12 px da
+ * sidebar e tem ~56 px): um controle que mora no rodapé e pode encostar nessa faixa a partir de
+ * `xl` aplica este recuo, em vez de tirar o Kuro da tela.
+ */
+export const MASCOT_GUTTER = "xl:pl-20";
+
+function useMascotSpaceReserved() {
+  return useSyncExternalStore(mascotSpace.subscribe, mascotSpace.isReserved, () => false);
+}
+
 function clock(at: number) {
   return new Date(at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
@@ -259,8 +283,9 @@ export function KuroMascot({ sidebarCollapsed }: { sidebarCollapsed: boolean }) 
   const reducedMotion = usePrefersReducedMotion();
   const hidden = useDocumentHidden();
   const wide = useWideScreen();
+  const reserved = useMascotSpaceReserved();
   const minimized = pref === "minimized";
-  const asleep = minimized || hidden || !wide;
+  const asleep = minimized || hidden || !wide || reserved;
   // Com a API fora do ar na carga, o layout não leu a config: consulta assim mesmo, para notar a volta.
   const observing = observability.enabled || !backendReachable;
 
@@ -349,6 +374,9 @@ export function KuroMascot({ sidebarCollapsed }: { sidebarCollapsed: boolean }) 
     "fixed bottom-3 z-30 hidden transition-[left] duration-200 ease-out xl:block",
     sidebarCollapsed ? "left-[72px]" : "left-[284px]"
   );
+
+  // A tela atual tem controle fixo no rodapé, neste canto: o corvo (e o corvinho) saem.
+  if (reserved) return null;
 
   if (minimized) {
     return (

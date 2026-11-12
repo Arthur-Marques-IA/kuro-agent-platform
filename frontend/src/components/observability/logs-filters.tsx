@@ -3,6 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { overlayLayers } from "@/lib/overlay-layers";
 import { PERIODS, hasCustomRange, isoDay, localDay, type LogsQuery, type RunStatusValue } from "@/lib/logs-query";
 import { fieldControlClasses } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -165,11 +166,20 @@ function MultiSelect({
 
   useEffect(() => {
     if (!open) return;
+    // Popover passageiro: sai quando outro menu ou a paleta do Ctrl+K abre por cima.
+    // O foco volta ao gatilho, que é para onde ele retorna quando a paleta fechar.
+    const releaseLayer = overlayLayers.open("menu", () => {
+      setOpen(false);
+      triggerRef.current?.focus();
+    });
     function onPointerDown(e: PointerEvent) {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     }
     document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
+    return () => {
+      releaseLayer();
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
   }, [open]);
 
   const selected = options.filter((o) => value.includes(o.value));

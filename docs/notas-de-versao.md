@@ -103,6 +103,13 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   alterado; o modelo salvo aparece sem esperar a lista dos provedores, que cai na lista fixa depois de
   10 s. "Chaves de API" vira "Credenciais de modelos" nos textos do formulário.
   Ver [console](console.md#o-formulário-do-agente).
+- **Console: a busca (`Ctrl+K`) acha tools, bases de conhecimento e ids.** Colar um `run_id` ou um
+  `session_id` leva direto à execução ou à sessão. Um UUID pode ser os dois, então aparecem as duas
+  opções; `analyze-…`, `cli-…` e `mcp-…` são sessão. Com a observabilidade ligada, a busca diz se o id
+  existe, sem atrasar o Enter. A tela de Tools aceita `?q=` para abrir já filtrada. Na busca,
+  "Chaves de API" virou "Credenciais de modelos". A lista "Conversas" da sidebar passa a se chamar
+  "Conversas deste navegador", porque mostra só as do Playground deste navegador, e ganha o atalho
+  **Todas** para as sessões dos Logs. Detalhes em [console.md](console.md#busca-global-ctrlk-e-a-barra-lateral).
 - **Conectar o MCP sem instalar o Kuro, em qualquer cliente.** Na sua máquina, só com o uv:
   `uv run https://raw.githubusercontent.com/Arthur-Marques-IA/kuro-agent-platform/master/src/agent_service/kuro_connect.py root@servidor`.
   O `kuro connect` virou um arquivo só, que usa apenas a biblioteca padrão do Python: começa em
@@ -523,6 +530,10 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   ar? (docker compose up -d)", que manda olhar o lugar errado. Agora a CLI, o MCP e o painel dizem
   que a porta parece bloqueada por um firewall no caminho (o do painel do provedor, por exemplo) e
   sugerem o `kuro connect`; e não tentam de novo, o que dobrava a espera.
+- Console: camadas sobrepostas. O Kuro do canto não cobre mais a barra "Alterações não salvas" do
+  agente (sai da tela enquanto o formulário está aberto) nem o anexo do Playground com os detalhes
+  abertos (o composer recua). Abrir a busca (`Ctrl+K`) ou um diálogo fecha o menu que estava aberto
+  (Preferências, filtros de Logs), e cada `Esc` fecha uma camada só.
 
 ### Como atualizar
 

@@ -47,6 +47,7 @@ import { useWorkspace } from "@/components/workspace/workspace-provider";
 import { AgentEditSheet } from "@/components/chat/agent-edit-sheet";
 import { ChatInspector } from "@/components/chat/chat-inspector";
 import { Composer } from "@/components/chat/composer";
+import { MASCOT_GUTTER } from "@/components/brand/kuro-mascot";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import { ProcedureStrip } from "@/components/chat/procedure-progress";
 
@@ -308,7 +309,8 @@ export function Conversation({
           }
         />
 
-        <div className="shrink-0 px-3 pb-3 sm:px-6 sm:pb-5">
+        {/* Com os detalhes abertos o composer ocupa a largura toda: recua do canto do Kuro. */}
+        <div className={cn("shrink-0 px-3 pb-3 sm:px-6 sm:pb-5", inspectorOpen && MASCOT_GUTTER)}>
           <div className="mx-auto w-full max-w-3xl">
             <Composer
               onSend={handleSend}
