@@ -208,5 +208,6 @@ lista cada operação e as poucas exceções. Componentes e o fluxo de uma mensa
 | [docs/operacao.md](docs/operacao.md) | configuração, HTTPS, deploy, segurança e limitações |
 | [docs/desenvolvimento.md](docs/desenvolvimento.md) | rodar os testes, estrutura do código, como contribuir |
 | [docs/notas-de-versao.md](docs/notas-de-versao.md) | o que mudou em cada versão e como atualizar |
+| [docs/migracao.md](docs/migracao.md) | roteiro para atualizar uma instalação em operação, e o que acontece com as sessões já gravadas |
 | [AGENTS.md](AGENTS.md) | receitas curtas da CLI para agentes de IA |
 | [ROADMAP.md](ROADMAP.md) | o plano: diagnóstico, prioridades e o que cortar |

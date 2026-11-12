@@ -297,5 +297,6 @@ arquivo. A versão no ar sai de `pyproject.toml` e aparece em `GET /health` (`ve
 Este arquivo é só a receita rápida da CLI. Conceitos em `docs/conceitos.md`, comandos em
 `docs/cli.md`, o servidor MCP em `docs/mcp.md`, o painel `kuro dash` (só para humanos, precisa
 de TTY) em `docs/tui.md`, integração em `docs/integracao.md`, configuração e segurança em
-`docs/operacao.md`, testes e estrutura do código em `docs/desenvolvimento.md`. O índice está
+`docs/operacao.md`, atualizar uma instalação em operação em `docs/migracao.md`, testes e
+estrutura do código em `docs/desenvolvimento.md`. O índice está
 no `README.md`. Links relativos entre documentos são conferidos por `tests/test_docs_links.py`.

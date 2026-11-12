@@ -594,6 +594,11 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Corrigido
 
+- **Depois de um reboot, o serviço ficava reiniciando em laço.** O `postgres` do
+  `docker-compose.yml` não tinha política de reinício: quando o servidor (ou o Docker) reiniciava,
+  o agent-service e o console voltavam sozinhos e o banco não, e o serviço caía repetidamente com
+  `failed to resolve host 'postgres'`. O `postgres` agora tem `restart: unless-stopped`. Numa
+  instalação que já está assim, `docker compose up -d` traz o banco de volta.
 - **Base de conhecimento quebrando com o console mais novo que o serviço.** Com um serviço que não
   devolve a configuração de busca da collection, a tela caía com "Cannot read properties of
   undefined (reading 'search_mode')". Agora ela abre e diz que o serviço parece mais antigo que o
@@ -667,6 +672,9 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Como atualizar
 
+- **Instalação em operação: siga o [roteiro de migração](migracao.md).** Ele junta, em ordem, o
+  backup, o que conferir no `.env` e nas tools, o comando, a conferência, o que acontece com as
+  sessões já gravadas e como voltar atrás.
 - **Profile `tls`: defina o login do console antes de subir.** Variáveis novas, obrigatórias com o
   profile: `CONSOLE_BASIC_AUTH_USER` e `CONSOLE_BASIC_AUTH_HASH` (bcrypt, entre aspas simples no
   `.env`). Depois, `docker compose --profile tls up -d` (o container do Caddy é recriado com o

@@ -59,7 +59,9 @@ KURO_BUILD_SHA=$(git rev-parse --short HEAD) \
 uv run kuro health                                 # `version` do serviço
 ```
 
-Leia antes a seção **Como atualizar** das [notas de versão](notas-de-versao.md). `docker compose
+Leia antes a seção **Como atualizar** das [notas de versão](notas-de-versao.md); para uma
+instalação em operação, siga o [roteiro de migração](migracao.md) (backup, o que conferir no
+`.env`, como voltar atrás). `docker compose
 build agent-service` sozinho (ou `up -d` sem `--profile ui`) deixa a imagem do console para trás.
 
 **Conferir:** o rodapé da barra lateral do console mostra `console <hash> · serviço <versão>`. O
