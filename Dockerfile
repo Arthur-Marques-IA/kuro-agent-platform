@@ -31,7 +31,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 ARG KURO_EXTRAS=""
 
 # Instala dependências primeiro (cache separado do código-fonte)
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 RUN uv sync --frozen --no-install-project --no-dev $KURO_EXTRAS
 
 COPY src ./src
