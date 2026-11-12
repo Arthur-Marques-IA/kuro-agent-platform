@@ -47,6 +47,15 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
     `KURO_TLS_ALLOW_OPEN=1` pula a verificação, só para teste local.
   - Fora do compose (`uv run uvicorn`, Kubernetes, outra orquestração) o padrão é fechado: defina as
     chaves ou `ALLOW_OPEN=1`.
+- **A imagem do agent-service roda sem root (uid/gid `10001`) e sem compilador.** Reconstrua
+  (`docker compose up -d --build`). `docker compose exec agent-service kuro ...` segue igual, agora
+  como o usuário `kuro`. Nenhum volume do compose precisa de ajuste (o serviço não escreve em
+  nenhum); se o seu `docker-compose.override.yml` monta uma pasta ou volume em que o serviço
+  escreve, passe o dono para `10001:10001` (comando em [operação](operacao.md#imagem-do-serviço)).
+- **Senha do Postgres por variável: `POSTGRES_PASSWORD`** (padrão `postgres`, o valor de antes,
+  então nada muda sem ela). Ela só vale na criação do volume: num banco que já existe, rode o
+  `ALTER USER` **antes** de definir a variável, ou o agent-service e o Langfuse não conectam
+  ([operação](operacao.md#senha-do-postgres)).
 - **`kuro connect --json` e `kuro mcp-config --json` mudaram de formato.** No `kuro connect`,
   `registered` e `replaced` deixam de ser `true`/`false` e passam a ser listas com os clientes
   (`["claude-code", "vscode"]`; vazia quando nada foi registrado), e entram `wrapper`, `codex` e
@@ -166,6 +175,12 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   recebendo o valor real. Com o Langfuse ligado, o mesmo mascaramento vale para o que é enviado a
   ele. A retenção não alcança as sessões do Agno, memórias, estado de procedurais nem o Langfuse:
   ver [operação](operacao.md#retenção-e-dados-pessoais).
+- **Limite de requisições por chave: `RATE_LIMIT_PER_MINUTE`** (vazio ou 0 = desligado, o padrão).
+  Ligado, cada chave de API (ou cada IP, com o serviço aberto) faz até N chamadas por minuto no
+  `/chat`, `/chat/stream` e `/analyze`, somados; acima disso, **429** com `Retry-After` e
+  `{"detail", "error": "rate_limited"}`. A contagem é em memória e por processo (N processos = N
+  vezes o limite). O contrato de integração ganha a linha do 429. Ver
+  [operação](operacao.md#limite-de-requisições) e [integração](integracao.md#4-erros-e-fallback).
 
 - **Gravação de trace com fila própria.** O registro de cada execução sai do executor padrão do
   processo e vai para uma fila só dele (uma thread, `kuro-trace-writer`), limitada por
@@ -658,6 +673,8 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   script `docker/caddy-tls.sh`). Confira: o console pede usuário e senha, e
   `curl https://<KURO_API_DOMAIN>/health` responde sem eles. Se o Caddy não subir,
   `docker compose --profile tls logs caddy` diz o que falta.
+- Variáveis novas, opcionais: `POSTGRES_PASSWORD` (`postgres`) e `RATE_LIMIT_PER_MINUTE` (desligado).
+  O `--build` do `up` é obrigatório para a imagem nova (dois estágios, usuário `10001`).
 - **O repositório agora se chama `kuro-agent-platform`**
   (`https://github.com/Arthur-Marques-IA/kuro-agent-platform`). O `kuro connect` e o `uvx --from`
   da documentação já apontam para o nome novo. O GitHub redireciona o endereço antigo, mas atualize

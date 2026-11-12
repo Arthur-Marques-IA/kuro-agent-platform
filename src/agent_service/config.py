@@ -111,6 +111,17 @@ class Settings(BaseSettings):
             return 0 if info.field_name == "run_retention_days" else "delete"
         return value.strip() if isinstance(value, str) else value
 
+    rate_limit_per_minute: int = 0
+    """Chamadas por minuto por chave de API (ou por IP, com o serviço aberto) no
+    `/chat`, `/chat/stream` e `/analyze`; acima disso, 429 com `Retry-After`. Vazio ou
+    0 desliga (o padrão). Contado em memória, por processo (`api/rate_limit.py`)."""
+
+    @field_validator("rate_limit_per_minute", mode="before")
+    @classmethod
+    def _vazio_desliga(cls, value: object) -> object:
+        # `RATE_LIMIT_PER_MINUTE=` no .env chega como "" e não vira int sozinho.
+        return 0 if value is None or (isinstance(value, str) and not value.strip()) else value
+
     idempotency_ttl_hours: int = 24
     """Por quanto tempo um `Idempotency-Key` de `/chat`/`/analyze` devolve a resposta
     guardada (`api/idempotency.py`). Passou disso, a mesma chave roda de novo."""

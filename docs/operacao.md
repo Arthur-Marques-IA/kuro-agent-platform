@@ -237,6 +237,7 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `RUN_RETENTION_DAYS` | — (sem prazo) | prazo do trace store local, em dias; vazio ou `0` desliga. Ver [retenção e dados pessoais](#retenção-e-dados-pessoais) |
 | `RUN_RETENTION_MODE` | `delete` | o que a retenção faz com o run vencido: `delete` (apaga com os dependentes) ou `anonymize` (mantém os números, apaga o conteúdo) |
 | `TRACE_REDACT_KEYS` | — (nada) | chaves mascaradas na gravação do trace, separadas por vírgula (`cpf,telefone`): o valor vira `[redigido]`. Só por chave, nunca em texto livre |
+| `RATE_LIMIT_PER_MINUTE` | — (desligado) | chamadas por minuto por chave de API no `/chat`, `/chat/stream` e `/analyze`; acima disso, 429 com `Retry-After`. Em memória, por processo. Ver [limite de requisições](#limite-de-requisições) |
 | `QUEUE_MAX_WAIT_SECONDS` | `30` | espera máxima na fila antes do 503; `0` desliga a fila. Deixe abaixo do timeout de quem chama |
 | `CORS_ORIGINS` | — (a lista do AgentOS) | páginas, em outro domínio, que podem ler as respostas da API no navegador; `none` fecha. Ver [segurança](#segurança-e-limitações-atuais) |
 | `IDEMPOTENCY_TTL_HOURS` | `24` | por quanto tempo um `Idempotency-Key` no `/chat`/`/analyze` devolve a resposta guardada ([integração](integracao.md#repetir-sem-duplicar-idempotency-key)) |
@@ -247,6 +248,7 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `CREDENTIALS_ENCRYPTION_KEY` | — | chave Fernet que cifra as credenciais de modelo; **obrigatória** para cadastrar chaves |
 | `DEFAULT_MODEL_PROVIDER` / `DEFAULT_MODEL_ID` | `google` / `gemini-2.5-flash` | modelo de quem não define um |
 | `DATABASE_URL` | localhost | sobrescrito dentro do compose |
+| `POSTGRES_PASSWORD` | `postgres` | senha do Postgres do compose (o banco, e a URL de conexão do agent-service e do Langfuse). Só vale na criação do volume: ver [senha do Postgres](#senha-do-postgres) |
 | `MAX_ATTACHMENT_MB` | `20` | limite por anexo |
 | `MAX_INPUT_CHARS` | `200000` | teto do texto de entrada (`message` do `/chat`, `document` do `/analyze`) |
 | `CUSTOM_PYTHON_TOOLS_ENABLED` | `false` | liga a execução de tools `python` |
@@ -322,6 +324,67 @@ depois da subida, então até lá uma conexão é recusada, como antes. Quem rod
 `--lifespan off` pula a subida inteira: toda requisição recebe 503 `O serviço ainda está subindo.` Um container que trava esperando o lock
 é outra réplica migrando (ou uma sessão que segurou o lock): `SELECT * FROM pg_locks WHERE
 locktype = 'advisory'` mostra quem.
+
+## Imagem do serviço
+
+O `Dockerfile` tem dois estágios: o `builder` (com `build-essential` e o `uv`) instala as
+dependências em `/app/.venv`, e a imagem final copia só o `/app` para uma `python:3.12-slim`
+limpa, sem compilador. Nenhuma biblioteca de sistema a mais é preciso em runtime (o
+`psycopg[binary]` traz a própria libpq).
+
+O processo roda como o usuário **`kuro`, uid/gid `10001`**, não como root. O código e o venv
+são do root e só leitura para ele. O que o container escreve em disco:
+
+- `/tmp`: arquivos temporários das tools;
+- `/home/kuro` (o `HOME`): a sessão do `kuro chat` rodado no container (`~/.kuro/sessions.json`).
+  Some quando o container é recriado, como antes;
+- nenhum volume do compose: o agent-service só monta o `kuro_public` em modo leitura (o Caddy do
+  profile `ip` grava nele com permissão 644). Os dados ficam no Postgres.
+
+`docker compose exec agent-service kuro ...` continua funcionando, agora como o uid 10001. Se um
+`docker-compose.override.yml` seu monta um volume ou pasta em que o serviço **escreve**, o dono
+dele precisa ser o 10001, porque o volume já existente foi criado pelo root:
+
+```bash
+docker compose run --rm --no-deps --user root --entrypoint chown agent-service -R 10001:10001 /caminho/no/container
+```
+
+Para depurar como root: `docker compose exec --user root agent-service sh`.
+
+## Senha do Postgres
+
+`POSTGRES_PASSWORD` (padrão `postgres`, o valor de antes) é lida pelo serviço `postgres` e pelas
+URLs de conexão do agent-service e do Langfuse, todas montadas pelo compose. Use uma senha que não
+quebre a URL (sem `@ : / # ?`, nem `$`, que o compose interpreta), por exemplo
+`python -c "import secrets; print(secrets.token_hex(24))"`. Rodando o serviço fora do Docker
+(`uv run`), troque também a senha no `DATABASE_URL` do `.env`.
+
+A imagem do Postgres só aplica `POSTGRES_PASSWORD` quando cria o volume (PGDATA vazio). Numa
+instalação que já existe, mudar a variável sozinha deixa o agent-service sem conseguir conectar.
+Troque a senha no banco **antes**:
+
+```bash
+docker compose exec postgres psql -U postgres -c "ALTER USER postgres PASSWORD 'a-senha-nova';"
+# depois: POSTGRES_PASSWORD=a-senha-nova no .env
+docker compose up -d     # recria o agent-service (e o Langfuse, se em uso) com a URL nova
+```
+
+## Limite de requisições
+
+`RATE_LIMIT_PER_MINUTE=N` limita cada chave de API a N chamadas no `/chat`, `/chat/stream` e
+`/analyze` (somadas) em qualquer janela de 60 s. Passou disso, a resposta é **429** com
+`Retry-After` (os segundos até uma vaga abrir) e `{"detail", "error": "rate_limited"}`; a chamada
+recusada não conta. Vazio ou `0`, o padrão, desliga. As outras rotas não são limitadas.
+
+- **Por chave:** cada chave tem a sua cota (numa rotação, a nova e a antiga contam separado). A
+  chave guardada na memória é um hash, nunca a chave. O console usa a chave admin para todo
+  mundo que está nele, então divide uma cota só com a CLI e o MCP.
+- **Serviço aberto** (sem chave configurada): conta por IP de quem conectou. Atrás do Caddy
+  (profiles `tls` e `ip`) é o IP do proxy, e todo o tráfego cai numa cota só; o
+  `X-Forwarded-For` é ignorado de propósito.
+- **Por processo, em memória:** não é compartilhado entre workers ou réplicas (N processos = N
+  vezes o limite) e zera num restart. É uma trava contra um cliente em loop gastando token, não
+  uma cota contratual. Para cota entre réplicas, limite no proxy da frente.
 
 ## Gravação de trace
 
