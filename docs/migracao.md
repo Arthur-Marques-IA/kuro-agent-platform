@@ -1,7 +1,7 @@
 # Migrando uma instalação em operação
 
 Roteiro para levar um Kuro que está no ar (a partir da `0.2.0`) para o código atual. As mudanças
-uma a uma estão nas [notas de versão](notas-de-versao.md), seção **Não lançada**; aqui está a
+uma a uma estão nas [notas de versão](notas-de-versao.md), seção **0.3.0**; aqui está a
 ordem de fazer, o que conferir e o que acontece com o que já está gravado.
 
 Resumo do risco: o contrato do `/chat` e do `/analyze` não mudou (todo campo novo é opcional), as

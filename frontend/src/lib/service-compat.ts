@@ -11,7 +11,7 @@
  * Suba esta constante quando o console passar a depender de algo de uma versão nova do
  * serviço (o número sai de `docs/notas-de-versao.md`). Roda com `npm test`.
  */
-export const MIN_SERVICE_VERSION = "0.2.0";
+export const MIN_SERVICE_VERSION = "0.3.0";
 
 /** Hash do build do console (`NEXT_PUBLIC_BUILD_SHA`, assado no build); `dev` fora da imagem. */
 export const CONSOLE_BUILD = process.env.NEXT_PUBLIC_BUILD_SHA || "dev";

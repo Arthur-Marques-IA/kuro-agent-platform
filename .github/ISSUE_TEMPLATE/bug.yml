@@ -1,0 +1,51 @@
+name: Defeito
+description: Algo não funciona como a documentação diz.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Falha de segurança? Não abra issue: use **Security › Report a vulnerability** (ver SECURITY.md).
+        Não cole chaves de API, tokens nem dados pessoais de conversas.
+  - type: textarea
+    id: o-que
+    attributes:
+      label: O que aconteceu
+      description: O que você fez, o que esperava e o que veio. Cole a mensagem de erro inteira.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduzir
+    attributes:
+      label: Como reproduzir
+      description: Os comandos (`kuro --json ...`) ou a chamada à API, do começo ao erro.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: versao
+    attributes:
+      label: Versão
+      description: O `version` de `uv run kuro --json health` (ou de `GET /health`).
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: porta
+    attributes:
+      label: Por onde
+      multiple: true
+      options:
+        - API
+        - CLI (kuro)
+        - MCP (kuro-mcp)
+        - Console web
+        - kuro dash
+        - Deploy (compose, Caddy, imagens)
+    validations:
+      required: true
+  - type: textarea
+    id: ambiente
+    attributes:
+      label: Ambiente
+      description: Sistema operacional, profiles do compose em uso (ui, tls, ip, observability) e provedor de modelo.

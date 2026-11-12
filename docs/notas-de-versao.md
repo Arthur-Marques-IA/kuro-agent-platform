@@ -20,7 +20,13 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ---
 
-## Não lançada
+## 0.3.0 — 2026-11-12
+
+Entrada estruturada no `/chat` (`events` e `context` em campos), a sessão lida como linha do
+tempo, o serviço que não sobe aberto, segredos de tools cifrados, o console revisto e tudo o
+que vinha acumulado desde a `0.2.0`: fila de jobs, sites na base de conhecimento, busca híbrida,
+agente procedural e o MCP sem instalar. Para atualizar uma instalação em operação, siga o
+[roteiro de migração](migracao.md).
 
 ### Ação necessária
 
@@ -896,13 +902,15 @@ deploy. Refatoração interna, teste e ajuste visual do console não entram.
 1. Durante o desenvolvimento, as linhas vão para uma seção `## Não lançada` no topo, nas mesmas
    subseções.
 2. No lançamento, troque `Não lançada` pelo número e pela data, suba a `version` do
-   `pyproject.toml` (é o que o `/health` mostra) e crie a tag: `git tag v0.3.0`.
+   `pyproject.toml` (é o que o `/health` mostra) e crie a tag: `git tag v0.4.0`. Se o console
+   passou a depender de algo desta versão do serviço, suba também `MIN_SERVICE_VERSION` em
+   `frontend/src/lib/service-compat.ts`.
 3. Regra para escolher o número: precisa de ação de quem integra → MENOR; só correção → CORREÇÃO.
 
 Modelo de entrada:
 
 ```markdown
-## 0.3.0 — AAAA-MM-DD
+## 0.4.0 — AAAA-MM-DD
 
 Uma frase sobre o tema da versão.
 

@@ -12,6 +12,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Arthur-Marques-IA/kuro-agent-platform/actions/workflows/ci.yml"><img src="https://github.com/Arthur-Marques-IA/kuro-agent-platform/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
+  <a href="https://github.com/Arthur-Marques-IA/kuro-agent-platform/releases/latest"><img src="https://img.shields.io/github/v/release/Arthur-Marques-IA/kuro-agent-platform?label=vers%C3%A3o" alt="Versão mais recente"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-Apache--2.0-blue" alt="Licença Apache-2.0"></a>
+</p>
+
+<p align="center">
   <a href="docs/quickstart.md">Quickstart</a> ·
   <a href="docs/mcp.md">MCP</a> ·
   <a href="docs/conceitos.md">Conceitos</a> ·
@@ -211,3 +217,21 @@ lista cada operação e as poucas exceções. Componentes e o fluxo de uma mensa
 | [docs/migracao.md](docs/migracao.md) | roteiro para atualizar uma instalação em operação, e o que acontece com as sessões já gravadas |
 | [AGENTS.md](AGENTS.md) | receitas curtas da CLI para agentes de IA |
 | [ROADMAP.md](ROADMAP.md) | o plano: diagnóstico, prioridades e o que cortar |
+
+---
+
+## Contribuindo
+
+Issues e pull requests são bem-vindos. O [guia de contribuição](CONTRIBUTING.md) diz como
+preparar o ambiente, o que precisa passar e as regras da casa; a convivência segue o
+[código de conduta](CODE_OF_CONDUCT.md). O que já está planejado está no [ROADMAP](ROADMAP.md).
+
+## Segurança
+
+Achou uma falha? Não abra uma issue pública: siga a [política de segurança](SECURITY.md). Os
+limites conhecidos de quem expõe o serviço estão em
+[Segurança e limitações atuais](docs/operacao.md#segurança-e-limitações-atuais).
+
+## Licença
+
+[Apache-2.0](LICENSE).
