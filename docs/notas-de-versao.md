@@ -68,7 +68,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   `section`. CSV continua uma linha por trecho. Os trechos ficam menores: se um agente passar a
   receber pouco contexto, suba o `max_results` (k) da collection. Os documentos já indexados não
   mudam até serem recortados (`POST /collections/{nome}/reindex`, `kuro collections reindex`).
-
 - **Fila no limite de execuções.** Acima de `MAX_CONCURRENT_RUNS`, a chamada **espera**
   na fila (até `QUEUE_MAX_WAIT_SECONDS`, 30 s) em vez de receber 503 na hora, e só então o run começa
   a contar o `timeout_seconds`. O timeout do seu cliente precisa cobrir as duas esperas
@@ -85,7 +84,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   sendo sandbox: é redução de superfície. **O que fazer:** se alguma tool Python sua usa nome com
   `_` de um módulo, troque pelo equivalente público e salve de novo; `kuro tools invoke <tool>`
   confere.
-
 - **Tools não alcançam mais a faixa CGNAT (`100.64.0.0/10`).** A trava de egress só deixava de fora
   o que o Python chama de "privado", e essa faixa não entra nessa conta: `100.64.0.1` e
   `100.100.100.200` (metadata da Alibaba Cloud) passavam. Agora uma tool só alcança endereço
@@ -93,6 +91,24 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   link-local...) é recusado como "faixa de uso especial". O site-local do IPv6 (`fec0::/10`), que o
   Python dá como público, também passa a ser recusado. Se uma tool sua fala com um serviço nessa
   faixa (Tailscale usa `100.64.0.0/10`, por exemplo), libere o host em `TOOL_EGRESS_ALLOWLIST`.
+- **`kuro sessions show` e a tool MCP `session_show` passam a ler a linha do tempo da sessão.**
+  O `--json` de `kuro sessions show` deixa de ser a lista de runs do Agno (`run_input`, `content`,
+  `metrics`) e passa a ser o envelope de `GET /observability/sessions/{id}/timeline` (`items` com
+  um turno por run). O `session_show` do MCP deixa de devolver `resumo_da_sessao` e
+  `memorias_do_contato` (continuam em `GET /observability/sessions/{id}/transcript`); `raw=true`
+  segue devolvendo os runs crus do Agno. `kuro sessions show` filtra pelo `user_id` como antes
+  (`cli` ou `KURO_USER_ID`), agora pelo `user_id` gravado no run; `--all-users` tira o filtro.
+- **`GET /observability/sessions/{id}/transcript` não recorta mais a entrada.** Cada item perde
+  `fala`, `contexto`, `contexto_igual_ao_anterior` e `temporal` (que saíam de marcadores de texto
+  como `[FALA DO CONTATO]`) e traz a entrada inteira em `entrada`. O resumo da sessão e as memórias
+  do contato não mudam. A conversa separada em campos é a linha do tempo, abaixo.
+- **Segredos de tools `api` passam a ser cifrados com a `CREDENTIALS_ENCRYPTION_KEY`.** Sem a chave
+  configurada nada quebra: a tool é gravada em texto plano, como antes, com um aviso no log e
+  `secrets_at_rest: "plaintext"` na leitura. Mas defina a chave (ver "Como atualizar") — e
+  **guarde-a**: perder ou trocar a chave depois de cifrar faz as tools com segredo responderem
+  "Erro de configuração da tool: o segredo em auth.token está cifrado e não pôde ser decifrado..."
+  (`failure: "config"`, sem chamar o destino) até o segredo ser cadastrado de novo. A mesma chave
+  já cifra as credenciais de modelo.
 
 ### Novo
 
@@ -119,27 +135,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   "Chaves de API" virou "Credenciais de modelos". A lista "Conversas" da sidebar passa a se chamar
   "Conversas deste navegador", porque mostra só as do Playground deste navegador, e ganha o atalho
   **Todas** para as sessões dos Logs. Detalhes em [console.md](console.md#busca-global-ctrlk-e-a-barra-lateral).
-- **`kuro sessions show` e a tool MCP `session_show` passam a ler a linha do tempo da sessão.**
-  O `--json` de `kuro sessions show` deixa de ser a lista de runs do Agno (`run_input`, `content`,
-  `metrics`) e passa a ser o envelope de `GET /observability/sessions/{id}/timeline` (`items` com
-  um turno por run). O `session_show` do MCP deixa de devolver `resumo_da_sessao` e
-  `memorias_do_contato` (continuam em `GET /observability/sessions/{id}/transcript`); `raw=true`
-  segue devolvendo os runs crus do Agno. `kuro sessions show` filtra pelo `user_id` como antes
-  (`cli` ou `KURO_USER_ID`), agora pelo `user_id` gravado no run; `--all-users` tira o filtro.
-- **`GET /observability/sessions/{id}/transcript` não recorta mais a entrada.** Cada item perde
-  `fala`, `contexto`, `contexto_igual_ao_anterior` e `temporal` (que saíam de marcadores de texto
-  como `[FALA DO CONTATO]`) e traz a entrada inteira em `entrada`. O resumo da sessão e as memórias
-  do contato não mudam. A conversa separada em campos é a linha do tempo, abaixo.
-- **Segredos de tools `api` passam a ser cifrados com a `CREDENTIALS_ENCRYPTION_KEY`.** Sem a chave
-  configurada nada quebra: a tool é gravada em texto plano, como antes, com um aviso no log e
-  `secrets_at_rest: "plaintext"` na leitura. Mas defina a chave (ver "Como atualizar") — e
-  **guarde-a**: perder ou trocar a chave depois de cifrar faz as tools com segredo responderem
-  "Erro de configuração da tool: o segredo em auth.token está cifrado e não pôde ser decifrado..."
-  (`failure: "config"`, sem chamar o destino) até o segredo ser cadastrado de novo. A mesma chave
-  já cifra as credenciais de modelo.
-
-### Novo
-
 - **`kuro dash`: fala pura, contexto, sessão e conteúdo completo no trace.** A coluna mensagem do
   Ao vivo e a caixa do trace mostram a fala (`input_message`); num run antigo, a mensagem inteira,
   como antes. A caixa tem altura máxima e rolagem própria, e não empurra mais os spans. No trace,
@@ -147,7 +142,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   run (a linha do tempo, um turno por bloco, com as tools), Enter num span alterna entre a prévia e
   a entrada e a saída completas (espaço passa a abrir e fechar o span) e `y` copia o `run_id`.
   Ver [tui.md](tui.md). As capturas de `docs/telas/` agora saem de `docs/telas/gerar.py`.
-
 - **Console: teclado, leitor de tela, toque e contraste.** Nas listas de execuções e de sessões,
   `j`/`k` movem a seleção (com anel de foco na linha) e `Enter` abre; na tela de uma execução ou
   de uma sessão, `Esc` volta para a lista de onde se veio. Os atalhos ficam quietos digitando,
@@ -188,7 +182,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   `{"detail", "error": "rate_limited"}`. A contagem é em memória e por processo (N processos = N
   vezes o limite). O contrato de integração ganha a linha do 429. Ver
   [operação](operacao.md#limite-de-requisições) e [integração](integracao.md#4-erros-e-fallback).
-
 - **Gravação de trace com fila própria.** O registro de cada execução sai do executor padrão do
   processo e vai para uma fila só dele (uma thread, `kuro-trace-writer`), limitada por
   `TRACE_WRITE_QUEUE_MAX` (1000): com o banco lento, a fila cheia descarta a gravação e conta, sem
@@ -205,7 +198,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   gravação da config. `GET /tools` e `GET /tools/{nome}` trazem `secrets_at_rest` (`encrypted`,
   `plaintext` ou `null` quando a tool não tem segredo). Cifrar não muda a versão da configuração
   dos agentes: o hash continua sendo do texto plano.
-
 - **Linha do tempo da sessão: `GET /observability/sessions/{id}/timeline`.** Um turno por run, em
   ordem cronológica, já separado: `events` (como gravados, com `kind`, `attachments` e `speech`),
   `message` (a fala pura), `context` (cada bloco com `changed` contra o turno estruturado anterior e,
@@ -243,7 +235,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   **Código** mostra a chamada com `context` e `events` quando usados. Sem blocos nem atendente o
   corpo enviado é o de antes. Agente procedural não oferece os dois controles (o servidor os recusa
   com 422). Detalhes em [console.md](console.md#entrada-estruturada-no-playground).
-
 - **Entrada estruturada no `/chat` e no `/chat/stream`.** Campos opcionais `events` (o que aconteceu
   desde a última resposta do agente: `role` `contact` | `human_agent` | `agent_sent` | `system`,
   `content`, `at`, `kind`, `attachments`) e `context` (blocos `{key, title, content, volatile}`), em
@@ -306,7 +297,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   contagem de cada um: buscaram na base, busca sem trecho nenhum (a base não cobre a pergunta) e
   trecho marcado errado ainda aberto, filtráveis por collection. API: `rag=searched|empty|flagged`
   em `GET /observability/runs` e `/stats` (que também aceita `knowledge_collection`).
-
 - **Investigar runs que não são conversa.** Três adições aditivas à observabilidade, sem migração:
   - O trace de um turno de agente procedural (`GET /observability/runs/{id}/trace`) traz
     `procedure_state`: o `state` como o turno terminou (etapa, `collected`, `missing`, `invalid`,
@@ -364,7 +354,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   chunk-feedback|chunk-unmark|chunk-marks|chunk-flagged|chunk-export`. MCP: `run_chunk_feedback`,
   `chunk_feedback_flagged` e `chunk_feedback_export`.
   Ver [conceitos](conceitos.md#feedback-por-trecho).
-
 - **A coleta de sites indexa os arquivos linkados.** PDF, DOCX, PPTX e XLSX linkados nas páginas,
   do mesmo escopo da fonte e dentro de `max_pages` (depois das páginas), entram na collection lidos
   pelos leitores do Agno, sem o agente formatador; cada trecho de PDF leva `page` (e o de PPTX, o
@@ -593,14 +582,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
   mudou. Editar agente, tool ou nota continua valendo na requisição seguinte, em qualquer worker ou
   réplica. O que é por processo (cache, vagas de execução, fila de espera) e o que isso implica com
   mais de um worker está em [operação](operacao.md#mais-de-um-worker-ou-réplica).
-
-### Corrigido
-
-- **Base de conhecimento quebrando com o console mais novo que o serviço.** Com um serviço que não
-  devolve a configuração de busca da collection, a tela caía com "Cannot read properties of
-  undefined (reading 'search_mode')". Agora ela abre e diz que o serviço parece mais antigo que o
-  console. A tela de erro do console também deixou de mostrar só a mensagem crua do JavaScript:
-  explica em português o que conferir, e o detalhe técnico fica recolhido, com botão de copiar.
 - **Réplicas subindo juntas, uma de cada vez.** A migração, os seeds e a montagem do app saíram
   do import do módulo para a subida (o lifespan), sob um `pg_advisory_lock`: com várias réplicas
   (ou `--workers N`) subindo juntas, uma sobe por vez, e as outras logam `Esperando outra
@@ -613,10 +594,14 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ### Corrigido
 
+- **Base de conhecimento quebrando com o console mais novo que o serviço.** Com um serviço que não
+  devolve a configuração de busca da collection, a tela caía com "Cannot read properties of
+  undefined (reading 'search_mode')". Agora ela abre e diz que o serviço parece mais antigo que o
+  console. A tela de erro do console também deixou de mostrar só a mensagem crua do JavaScript:
+  explica em português o que conferir, e o detalhe técnico fica recolhido, com botão de copiar.
 - **Duas réplicas subindo juntas podiam derrubar uma delas.** As duas migravam ao mesmo tempo, e o
   `CREATE EXTENSION IF NOT EXISTS vector` do Agno em paralelo cai com `duplicate key value
   violates unique constraint "pg_extension_name_index"`. Agora a subida é serializada pelo lock.
-
 - **Console: agente aberto já aparecia com "Alterações não salvas".** O formulário comparava o que
   mostrava com a resposta crua da API: uma instrução salva com quebra de linha dentro ou espaço
   sobrando (o editor normaliza uma por linha) já contava como prompt alterado ("será salvo como v2"),
@@ -659,7 +644,6 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 - O link "OpenAPI" da aba Integração e o "Referência OpenAPI" do menu do console abriam o `/docs`,
   que dá 403 sem a chave admin. Agora abrem o OpenAPI de integração pelo console.
 - `kuro agents integrate` num agente analista imprimia `streaming (SSE): POST None`.
-
 - O título de uma conversa com `dependencies` mostrava os dados do cliente: sem nome definido, o
   AgentOS usa a primeira mensagem como título, e o Agno junta a ela o bloco
   `<additional context>{...}` (CPF, nome...). O console, a CLI (`kuro sessions list`) e o MCP
