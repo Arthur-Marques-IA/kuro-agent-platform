@@ -35,7 +35,9 @@ test("criar agente, conversar, abrir a sessão e o trace", async ({ page }) => {
   const composer = page.getByPlaceholder(`Mensagem para ${nome}…`);
   await composer.fill(mensagem);
   await page.getByRole("button", { name: "Enviar mensagem" }).click();
-  await expect(page.getByText(RESPOSTA(mensagem))).toBeVisible();
+  // `.first()`: quando a resposta termina, o anunciador do leitor de tela repete o começo dela
+  // numa região viva invisível, e o texto passa a existir em dois lugares.
+  await expect(page.getByText(RESPOSTA(mensagem)).first()).toBeVisible();
   // O primeiro envio fixa a conversa na URL: /chat/<session_id>.
   await expect(page).toHaveURL(/\/chat\/[^/?]+$/);
   const sessionId = decodeURIComponent(new URL(page.url()).pathname.split("/").pop()!);
