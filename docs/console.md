@@ -192,6 +192,16 @@ têm 40 px de altura para o toque.
 `/runs/{run_id}` abre de qualquer lista (Logs, sessão, aba Execuções do agente). Além dos spans,
 ela se adapta ao tipo de run:
 
+- **Composição do prompt**: uma barra empilhada e uma tabela (parte, caracteres, percentual) com o
+  que foi para o modelo na primeira chamada: instruções, contexto da sessão, histórico, tools do
+  histórico, mensagem do turno... A tabela repete a barra em texto, então a cor não é o único
+  sinal. Os tokens são estimativa (`chars/4`). Runs anteriores à medição não têm o cartão.
+- **Chamadas ao modelo**: cada ida ao modelo é uma span ("chamada 1", "chamada 2"), na ordem em
+  relação às tools, com a latência, os tokens e os tokens lidos do cache. O cartão de Tokens mostra
+  quantos vieram do cache. Nas **Execuções**, o total de tokens ganha "N% cache" quando houve leitura
+  de cache; nos Logs, a tabela de agentes traz as colunas **Cache** e **Prompt** (tamanho médio e
+  fração de histórico).
+
 - **Analista (`/analyze`)**: a **Entrada** é o `document`, com as quebras de linha preservadas, e a
   **Saída** é a árvore dos campos do `result` (objetos e arrays aninhados, na ordem e com os rótulos
   do `response_schema`; o caminho de cada campo, como `parcelas[0].valor`, aparece ao passar o mouse

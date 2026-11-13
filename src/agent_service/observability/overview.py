@@ -47,6 +47,17 @@ class OverviewTotals(BaseModel):
     tool_failures: int = 0
     sessions: int = 0
     total_tokens: int = 0
+    input_tokens: int = 0
+    cache_read_tokens: int = 0
+    """Tokens do prompt lidos do cache (runs novos; os anteriores à 0019 contam 0)."""
+    cache_fraction: float | None = None
+    """`cache_read_tokens / input_tokens` dos runs do recorte, 0–1; `None` sem tokens de entrada.
+    No Claude `input_tokens` não inclui o cache, então a fração sai um pouco otimista."""
+    avg_prompt_chars: float | None = None
+    """Média do tamanho do prompt da primeira chamada, em caracteres, dos runs que foram medidos
+    (`runs.prompt_chars`); `None` se nenhum foi."""
+    avg_history_fraction: float | None = None
+    """Que fração desse prompt é histórico (conversa e tools antigas), 0–1, nos runs medidos."""
     cost_usd: float | None = None
     """Custo dos runs e, no panorama geral (sem `agent_type`), também o da coleta de sites."""
     ingestion_cost_usd: float | None = None
@@ -212,6 +223,11 @@ def _totals(conn: Any, conditions: list[Any]) -> OverviewTotals:
             func.coalesce(func.sum(runs.c.tool_failures), 0).label("tool_failures"),
             func.count(func.distinct(runs.c.session_id)).label("sessions"),
             func.coalesce(func.sum(runs.c.total_tokens), 0).label("tokens"),
+            func.coalesce(func.sum(runs.c.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(runs.c.cache_read_tokens), 0).label("cache_read_tokens"),
+            func.avg(runs.c.prompt_chars).label("avg_prompt_chars"),
+            func.sum(runs.c.prompt_chars).label("sum_prompt_chars"),
+            func.sum(runs.c.history_chars).label("sum_history_chars"),
             func.sum(runs.c.cost_usd).label("cost"),
         ).where(*conditions)
     ).one()
@@ -229,6 +245,13 @@ def _totals(conn: Any, conditions: list[Any]) -> OverviewTotals:
         tool_failures=row.tool_failures,
         sessions=row.sessions,
         total_tokens=row.tokens,
+        input_tokens=row.input_tokens,
+        cache_read_tokens=row.cache_read_tokens,
+        cache_fraction=row.cache_read_tokens / row.input_tokens if row.input_tokens else None,
+        avg_prompt_chars=round(float(row.avg_prompt_chars), 1) if row.avg_prompt_chars is not None else None,
+        avg_history_fraction=(
+            float(row.sum_history_chars or 0) / float(row.sum_prompt_chars) if row.sum_prompt_chars else None
+        ),
         cost_usd=row.cost,
         p50_latency_ms=_percentile(latencies, 0.5),
         p95_latency_ms=_percentile(latencies, 0.95),

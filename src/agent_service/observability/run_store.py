@@ -50,6 +50,7 @@ from sqlalchemy import (
 )
 
 from agent_service.db import get_db
+from agent_service.observability.prompt_composition import history_chars
 from agent_service.tools.failures import complexity
 from agent_service.observability.trace_store import (
     RunPage,
@@ -120,9 +121,17 @@ runs = Table(
     # SQLAlchemy) — `input_events IS NULL` é o filtro de "run não estruturado".
     Column("input_events", JSON(none_as_null=True), nullable=True),
     Column("input_context", JSON(none_as_null=True), nullable=True),
+    # Tokens do prompt lidos do cache e escritos nele, e a composição do prompt da primeira
+    # chamada (`prompt_composition.py`, migração 0019). `prompt_chars`/`history_chars` repetem dois
+    # números da composição para o panorama somar sem abrir o JSON.
+    Column("cache_read_tokens", Integer, nullable=False, default=0),
+    Column("cache_write_tokens", Integer, nullable=False, default=0),
+    Column("prompt_composition", JSON(none_as_null=True), nullable=True),
+    Column("prompt_chars", Integer, nullable=True),
+    Column("history_chars", Integer, nullable=True),
 )
 
-_HEAVY_COLUMNS = ("input_events", "input_context")
+_HEAVY_COLUMNS = ("input_events", "input_context", "prompt_composition")
 _LIST_COLUMNS = [c for c in runs.c if c.name not in _HEAVY_COLUMNS]
 """A listagem não carrega os eventos e os blocos de contexto (até 200 e 30 por run):
 eles saem só no detalhe (`get_run`)."""
@@ -223,6 +232,9 @@ class RunRecord:
     output_tokens: int = 0
     total_tokens: int = 0
     cost_usd: float | None = None
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    prompt_composition: dict[str, Any] | None = None
     ended_at: datetime | None = None
     spans: list[SpanRecord] = field(default_factory=list)
     tenant_id: str = DEFAULT_TENANT
@@ -350,6 +362,11 @@ def _write_run(record: RunRecord) -> None:
                 output_tokens=record.output_tokens,
                 total_tokens=record.total_tokens,
                 cost_usd=record.cost_usd,
+                cache_read_tokens=record.cache_read_tokens,
+                cache_write_tokens=record.cache_write_tokens,
+                prompt_composition=record.prompt_composition,
+                prompt_chars=(record.prompt_composition or {}).get("chars"),
+                history_chars=history_chars(record.prompt_composition),
                 latency_ms=latency,
                 started_at=record.started_at,
                 ended_at=ended_at,
@@ -861,6 +878,9 @@ def _summary(
         output_tokens=row.output_tokens,
         total_tokens=row.total_tokens,
         cost_usd=row.cost_usd,
+        cache_read_tokens=row.cache_read_tokens or 0,
+        cache_write_tokens=row.cache_write_tokens or 0,
+        prompt_chars=row.prompt_chars,
         feedback_up=up,
         feedback_down=down,
         metadata=meta or {},
@@ -989,6 +1009,7 @@ class DbTraceStore:
             procedure_state=procedure_state if isinstance(procedure_state, dict) else None,
             input_events=row.input_events,
             input_context=row.input_context,
+            prompt_composition=row.prompt_composition,
         )
 
     def list_sessions(self, query: RunQuery) -> SessionPage:

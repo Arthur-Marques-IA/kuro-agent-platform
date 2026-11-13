@@ -14,6 +14,41 @@ from agent_service.cli.common import EXIT_USAGE, call, console, emit, fail, fail
 app = typer.Typer(help="Execuções: listar, acompanhar ao vivo, ver trace, resumir, registrar score.")
 
 
+PART_LABELS = {
+    "instructions": "instruções",
+    "session_context": "contexto da sessão",
+    "memories": "memórias",
+    "session_summary": "resumo da sessão",
+    "history": "histórico",
+    "history_tools": "tools do histórico",
+    "turn": "mensagem do turno",
+    "dependencies": "dependencies",
+    "other": "outras",
+}
+
+
+def _cache_note(run: dict[str, Any]) -> str:
+    """` · 84% do cache` quando o run leu do cache de prompt."""
+    read, total = run.get("cache_read_tokens") or 0, run.get("input_tokens") or 0
+    if not read:
+        return ""
+    return f" · {read} do cache ({min(read / total, 1):.0%})" if total else f" · {read} do cache"
+
+
+def _composition_lines(composition: dict[str, Any] | None) -> list[str]:
+    """O prompt da primeira chamada, parte a parte (caracteres exatos; tokens são estimativa)."""
+    if not composition or not composition.get("chars"):
+        return []
+    total = composition["chars"]
+    parts = composition.get("parts") or {}
+    shown = [f"{PART_LABELS.get(name, name)} {chars} ({chars / total:.0%})" for name, chars in parts.items() if chars]
+    lines = [f"[dim]prompt: {total} caracteres (~{composition.get('tokens_estimate', 0)} tokens, estimativa)[/]"]
+    lines.append("[dim]  " + " · ".join(shown) + "[/]")
+    if composition.get("attachments"):
+        lines.append(f"[dim]  anexos: {composition['attachments']}[/]")
+    return lines
+
+
 def _runs_table(rows: list[dict[str, Any]], *, header: bool = True) -> Table:
     table = Table(show_edge=False, header_style="bold", show_header=header)
     for column in ("início", "run_id", "agente", "status", "tokens", "latência"):
@@ -26,7 +61,7 @@ def _runs_table(rows: list[dict[str, Any]], *, header: bool = True) -> Table:
             r["run_id"],
             r["agent_type"],
             status,
-            str(r["total_tokens"]),
+            str(r["total_tokens"]) + _cache_note(r).replace(" do cache", "c").replace(" · ", " "),
             latency,
         )
     return table
@@ -41,8 +76,10 @@ def _render_runs(page: dict[str, Any]) -> None:
 def _render_trace(trace: dict[str, Any]) -> None:
     run = trace["run"]
     console.print(
-        f"[bold]{run['agent_type']}[/] [dim]run {run['run_id']} · {run['status']} · {run['total_tokens']} tokens[/]"
+        f"[bold]{run['agent_type']}[/] [dim]run {run['run_id']} · {run['status']} · {run['total_tokens']} tokens{_cache_note(run)}[/]"
     )
+    for line in _composition_lines(trace.get("prompt_composition")):
+        console.print(line, highlight=False)
     if run.get("input_message") is not None:
         # Entrada estruturada: a fala, os eventos e os blocos em vez do texto montado.
         for block in trace.get("input_context") or []:
