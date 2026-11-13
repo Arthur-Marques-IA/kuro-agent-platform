@@ -71,6 +71,20 @@ _JSON_SCHEMA_TYPE: dict[ParamType, str] = {
     "array": "array",
 }
 _METHODS: set[str] = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+_READ_METHODS = {"GET", "HEAD"}
+
+
+def suggest_side_effect(kind: str, config: dict[str, Any]) -> bool | None:
+    """Sugestão de `side_effect` pelo método HTTP de uma tool `kind="api"`: GET/HEAD não
+    mudam nada; POST/PUT/PATCH/DELETE mudam. Só sugere — nunca é gravada sozinha, porque um
+    POST de consulta (busca com corpo) ou um GET que dispara ação existem. `None` para
+    builtin e python, onde não há método para olhar."""
+    if kind != "api":
+        return None
+    method = str((config or {}).get("method") or "GET").upper()  # GET é o padrão de `validate_config`
+    return method not in _READ_METHODS
+
+
 _MAX_RESPONSE_CHARS = 8000
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _MAX_TIMEOUT_SECONDS = 60.0

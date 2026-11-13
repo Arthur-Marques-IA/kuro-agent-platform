@@ -50,6 +50,7 @@ EDITABLE_FIELDS = (
     "stages",
     "model_params",
     "timeout_seconds",
+    "checks",
 )
 
 
@@ -108,6 +109,11 @@ def _render_agent(a: dict[str, Any]) -> None:
     if kind == "analysis" and a.get("response_schema"):
         campos = ", ".join(f"{f['name']}:{f['type']}{'*' if f['required'] else ''}" for f in a["response_schema"])
         lines.append(f"response_schema: {campos}  [dim](* obrigatório)[/]")
+    if a.get("checks"):
+        lines.append(
+            "checagens: "
+            + ", ".join(f"{c['name']} ({c['field']} {c['op']}, {c.get('severity', 'fail')})" for c in a["checks"])
+        )
     lines.append("\n[bold]instructions[/]")
     lines += [f"  {i + 1}. {text}" for i, text in enumerate(a["instructions"])]
     console.print(Panel("\n".join(lines), expand=False))

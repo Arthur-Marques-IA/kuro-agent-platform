@@ -30,7 +30,15 @@ from pydantic import BaseModel
 from sqlalchemy import and_, case, exists, func, not_, select
 
 from agent_service.db import get_db
-from agent_service.observability.run_store import FEEDBACK, run_metadata, run_scores, run_spans, runs
+from agent_service.observability.run_store import (
+    CHECK_PREFIX,
+    CHECK_SOURCE,
+    FEEDBACK,
+    run_metadata,
+    run_scores,
+    run_spans,
+    runs,
+)
 
 Granularity = Literal["hour", "day", "week"]
 DEFAULT_TIMEZONE = "America/Sao_Paulo"
@@ -88,6 +96,19 @@ class VersionRow(BaseModel):
     last_seen: datetime
 
 
+class CheckRateRow(BaseModel):
+    """Uma checagem automática do agente no período (`observability/checks.py`)."""
+
+    name: str
+    evaluated: int
+    """Runs em que a checagem foi avaliada (o `when` valeu e a avaliação não deu erro)."""
+    failed: int
+    failure_rate: float
+    """`failed / evaluated`."""
+    errors: int = 0
+    """Avaliações que levantaram erro (padrão ou campo inválido): defeito da checagem, não do run."""
+
+
 class AgentRow(BaseModel):
     agent_type: str
     agent_name: str | None = None
@@ -98,6 +119,8 @@ class AgentRow(BaseModel):
     """Execuções por balde, alinhado com `Overview.buckets`."""
     versions: list[VersionRow]
     """As versões da configuração que rodaram no período, da mais nova para a mais antiga."""
+    checks: list[CheckRateRow] = []
+    """Taxa de reprovação de cada checagem do agente no período, a pior primeiro. Vazio sem checagens."""
 
 
 class ToolFailureRow(BaseModel):
@@ -386,6 +409,7 @@ def build_overview(
             bucket.ingestion_cost_usd = round(bucket.ingestion_cost_usd, 6)
 
         version_votes = _feedback(conn, conditions, group=[runs.c.agent_type, runs.c.agent_version])
+        check_rates = _check_rates(conn, conditions)
 
         agents: list[AgentRow] = []
         for agent_type_key, agent in per_agent.items():
@@ -421,6 +445,7 @@ def build_overview(
                     last_run_at=agent["last"],
                     trend=agent["trend"],
                     versions=versions,
+                    checks=check_rates.get(agent_type_key, []),
                 )
             )
         agents.sort(key=lambda a: a.totals.runs, reverse=True)
@@ -439,6 +464,35 @@ def build_overview(
         agents=agents,
         tool_failures=tool_failures,
     )
+
+
+def _check_rates(conn: Any, conditions: list[Any]) -> dict[str, list[CheckRateRow]]:
+    """Reprovação por checagem e por agente: uma linha por (agente, checagem, resultado)."""
+    counts: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: {"passed": 0, "failed": 0, "error": 0})
+    for agent_type, name, value, total in conn.execute(
+        select(runs.c.agent_type, run_scores.c.name, run_scores.c.value, func.count())
+        .select_from(run_scores.join(runs, runs.c.run_id == run_scores.c.run_id))
+        .where(run_scores.c.source == CHECK_SOURCE, *conditions)
+        .group_by(runs.c.agent_type, run_scores.c.name, run_scores.c.value)
+    ):
+        counts[(agent_type, name[len(CHECK_PREFIX) :])][
+            "passed" if value > 0 else "failed" if value == 0 else "error"
+        ] += total
+    rates: dict[str, list[CheckRateRow]] = defaultdict(list)
+    for (agent_type, name), c in counts.items():
+        evaluated = c["passed"] + c["failed"]
+        rates[agent_type].append(
+            CheckRateRow(
+                name=name,
+                evaluated=evaluated,
+                failed=c["failed"],
+                failure_rate=round(c["failed"] / evaluated, 4) if evaluated else 0.0,
+                errors=c["error"],
+            )
+        )
+    for rows in rates.values():
+        rows.sort(key=lambda r: (r.failure_rate, r.failed), reverse=True)
+    return rates
 
 
 def _tool_failures(conn: Any, conditions: list[Any]) -> list[ToolFailureRow]:

@@ -794,7 +794,7 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         rules: Annotated[
             list[dict[str, Any]] | None,
             Field(
-                description='Regras de negócio: [{"name", "field", "op": eq|ne|in|not_in|lt|lte|gt|gte|exists|not_exists, '
+                description='Regras de negócio: [{"name", "field", "op": eq|ne|in|not_in|lt|lte|gt|gte|exists|not_exists|contains|matches, '
                 '"value" (ou {"$dep": "campo"}), "when"?}]. Violação reprova o caso.'
             ),
         ] = None,
@@ -806,6 +806,13 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         ] = None,
         min_pass: Annotated[float, Field(description="Taxa de acerto mínima (0 a 1) para verdict.ok.")] = 0.9,
         tolerance: Annotated[float, Field(description="Diferença aceita entre números (relativa).")] = 0.01,
+        agent_checks: Annotated[
+            bool,
+            Field(
+                description="Soma às regras as checagens do próprio agente que leem result, output, status e "
+                "dependencies (as que leem tools, latência ou metadata ficam fora: skipped_checks)."
+            ),
+        ] = False,
         dry_run: DryRun = True,
     ) -> dict[str, Any]:
         """Avalia um agente analista contra um dataset, campo a campo (o mesmo que
@@ -834,6 +841,7 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
                 min_pass=min_pass,
                 tolerance=tolerance,
                 dry_run=dry_run,
+                agent_checks=agent_checks,
             )
         except (EvalInputError, ValueError) as exc:
             raise ToolError(str(exc)) from exc
@@ -848,7 +856,7 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     @server.tool(annotations=READ)
     def tools_list() -> dict[str, Any]:
         """Tools cadastradas (as que um agente pode usar em `tools`)."""
-        keys = ("tool_name", "kind", "label", "enabled", "side_effect", "is_seed")
+        keys = ("tool_name", "kind", "label", "enabled", "side_effect", "side_effect_suggested", "is_seed")
         return {"items": [{k: t.get(k) for k in keys} for t in _call(client.list_tools)]}
 
     @server.tool(annotations=READ)
@@ -966,6 +974,10 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         ] = None,
         tool_failed: Annotated[bool, Field(description="Só os em que alguma tool falhou.")] = False,
         side_effect: Annotated[bool, Field(description="Só os que chamaram tool com efeito colateral.")] = False,
+        check_failed: Annotated[
+            bool, Field(description="Só os com alguma checagem automática do agente reprovada.")
+        ] = False,
+        check: Annotated[str | None, Field(description="Só os em que esta checagem (pelo nome) reprovou.")] = None,
         feedback: Annotated[
             Literal["up", "down", "none"] | None,
             Field(description="Pelo feedback: positivo (up), negativo (down) ou sem nota (none)."),
@@ -981,7 +993,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         cursor: Annotated[str | None, Field(description="O next_cursor da página anterior.")] = None,
     ) -> dict[str, Any]:
         """Execuções mais recentes, com filtros de revisão: `complexity` (1–3),
-        `tool_failed`, `side_effect`, `feedback`, `sample` (amostra aleatória),
+        `tool_failed`, `side_effect`, `check_failed`/`check` (checagens automáticas do agente
+        reprovadas; o resultado de cada uma vem em `checks` de cada run), `feedback`, `sample` (amostra aleatória),
         `meta` (metadata que quem chamou mandou, ex.: {"conversation_id": "98231"}).
         Os testes em dry_run (como o chat daqui) ficam de fora, a menos que `include_tests=true`
         ou que se filtre por `session_id`. Detalhe: run_show."""
@@ -999,6 +1012,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             complexity=complexity or None,
             tool_failed=True if tool_failed else None,
             side_effect=True if side_effect else None,
+            check_failed=True if check_failed else None,
+            check=check,
             feedback=feedback,
             # Numa conversa específica o teste é o que se procura: o run que o chat acabou de criar.
             include_dry_run=None if include_tests or session_id else False,
