@@ -56,6 +56,20 @@ prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo h
   seguintes herdaria contexto nenhum. E os turnos gravados pela `0.3.0` trazem o contexto colado na
   mensagem, que continua voltando pelo histórico até sair da janela de `num_history_runs`.
 
+- **As `dependencies` do `/chat` agora chegam ao modelo no prompt de sistema, não na mensagem do
+  usuário.** Até a `0.3.0` o Agno colava `<additional context>{...}</additional context>` no fim da
+  mensagem do turno; ela era gravada na sessão e voltava como histórico: as dependencies de cada
+  turno se repetiam por até `num_history_runs` turnos, o valor antigo ao lado do novo. Agora o mesmo
+  bloco, com o mesmo formato (JSON) e o mesmo rótulo, vai uma vez por chamada no fim do prompt de
+  sistema, depois do contexto da sessão, e não entra na mensagem nem no histórico. Elas continuam
+  valendo só para o turno que as enviou. As tools (`source="dependency"`, `dependencies.dry_run`), as
+  variáveis `{campo}` das instructions e o Mem0 (`dependencies.mem0_memories`) não mudam. O agente
+  procedural também (o `procedimento` de cada turno), e o `kind="analysis"`, sem histórico, segue com
+  o bloco na mensagem. **O que fazer:** instructions que mandam "olhe o additional context da
+  mensagem" devem passar a dizer "do contexto adicional" (ou só citar os campos); revise no draft. Os
+  turnos já gravados mantêm o bloco antigo dentro da mensagem até saírem da janela de
+  `num_history_runs`; o histórico não é reescrito.
+
 ### Novo
 
 - **`agent_sent` repetido não se repete no prompt.** Um evento `agent_sent` cujo texto é igual à

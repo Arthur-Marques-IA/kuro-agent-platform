@@ -11,7 +11,11 @@ from typing import Any, Literal
 from agno.agent import Agent
 from pydantic import BaseModel
 
-from agent_service.agents.system_context import current_system_context, without_system_context
+from agent_service.agents.system_context import (
+    current_system_context,
+    current_system_dependencies,
+    without_system_context,
+)
 from agent_service.db import get_db
 from agent_service.documents.collections import get_collection, resolve_search
 from agent_service.documents.retrieval import make_retriever
@@ -25,21 +29,23 @@ AgentKind = Literal["conversational", "analysis", "procedural"]
 
 
 class KuroAgent(Agent):
-    """O `Agent` do Agno com o contexto vigente da sessão no prompt de sistema.
+    """O `Agent` do Agno com o contexto vigente da sessão e as `dependencies` no prompt de sistema.
 
     `additional_context` é o texto que o Agno põe no fim do prompt de sistema, depois
     das instruções e depois de resolver as variáveis de template. Aqui ele soma ao
     valor configurado (nenhum, nos agentes do Kuro) o texto do run em curso, lido de
-    um `ContextVar` (`agents/system_context.py`) — o agente em cache não muda. Fora
-    de um run com contexto, é o valor configurado e mais nada: o prompt de quem não
-    manda contexto é o mesmo de sempre, byte a byte."""
+    um `ContextVar` (`agents/system_context.py`) — o agente em cache não muda: primeiro o
+    contexto da sessão, depois o bloco `<additional context>` com as `dependencies`.
+    Fora de um run com contexto ou dependencies, é o valor configurado e mais nada: o
+    prompt de quem não manda nada disso é o mesmo de sempre, byte a byte."""
 
     @property  # type: ignore[override]
     def additional_context(self) -> str | None:
         configured: str | None = self.__dict__.get("_configured_additional_context")
-        extra = current_system_context()
-        if not extra:
+        parts = [part for part in (current_system_context(), current_system_dependencies()) if part]
+        if not parts:
             return configured
+        extra = "\n".join(parts)
         return extra if configured is None else f"{configured}\n{extra}"
 
     @additional_context.setter
@@ -99,14 +105,12 @@ def build_agent(
 
     pre_hooks = []
     post_hooks = []
-    add_dependencies_to_context = False
 
     if memory_backend == "mem0" and not is_analysis:
         from agent_service.memory.mem0_hooks import mem0_post_hook, mem0_pre_hook
 
         pre_hooks = [mem0_pre_hook]
         post_hooks = [mem0_post_hook]
-        add_dependencies_to_context = True
         instructions = [
             *instructions,
             "Se houver memórias em `dependencies.mem0_memories`, use-as para personalizar sua resposta ao usuário.",
@@ -138,7 +142,6 @@ def build_agent(
         max_tool_calls_from_history=history_tool_calls,
         pre_hooks=pre_hooks or None,
         post_hooks=post_hooks or None,
-        add_dependencies_to_context=add_dependencies_to_context,
         output_schema=output_schema,
         # Sem isto o Agno acrescenta "Use markdown to format your answers." ao prompt —
         # num canal de texto puro (WhatsApp) o `**negrito**` chega cru ao contato.

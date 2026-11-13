@@ -212,7 +212,10 @@ def test_contexto_vai_uma_vez_no_sistema_e_nunca_no_historico(agente, modelo):
         sistema = _sistema(chamada)
         # Depois das instruções, e o conteúdo chega como veio: nada de template.
         assert sistema.index("Responda curto.") < sistema.index("# Contexto")
-        assert "{cpf}" in sistema and "12345678900" not in sistema
+        # As dependencies são outro bloco, depois do contexto (test_dependencies_no_sistema.py).
+        assert "{cpf}" in sistema
+        if "12345678900" in sistema:
+            assert sistema.index("# Contexto") < sistema.index("<additional context>")
     # O histórico do terceiro turno traz os dois anteriores, só com a conversa.
     terceira = modelo.chamadas[2]
     usuario = [str(m.content) for m in terceira if m.role == "user"]
@@ -250,7 +253,7 @@ def test_so_message_sem_contexto_manda_o_mesmo_prompt_que_o_agno_puro(agente, mo
     sid = f"s-{uuid4().hex[:8]}"
     falas = ["  meu wifi caiu\n[ALUNO] texto {cpf} $user_id  ", "e agora?"]
     for fala in falas:
-        _turno(sid, message=fala, dependencies={"cpf": "1"})
+        _turno(sid, message=fala)
 
     # O mesmo agente montado com o `Agent` do Agno, chamado direto, sem rota nem Kuro.
     puro_modelo = ModeloQueGuarda(id="modelo-que-guarda")
@@ -274,8 +277,6 @@ def test_so_message_sem_contexto_manda_o_mesmo_prompt_que_o_agno_puro(agente, mo
                 session_id=sid,
                 stream=True,
                 stream_events=True,
-                dependencies={"cpf": "1"},
-                add_dependencies_to_context=True,
             ):
                 pass
 

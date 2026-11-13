@@ -511,15 +511,26 @@ A cada turno o modelo recebe, nesta ordem:
    o que o Agno acrescenta (o aviso de markdown, a tool de busca, as memórias, o resumo) e, por
    último, o **contexto vigente da sessão**, uma vez só — os blocos de `context` que o sistema
    integrado mandou por último nesta `session_id` (ver
-   [Entrada estruturada](integracao.md#entrada-estruturada)). O prompt de sistema não volta como
-   histórico: um contexto que mudou some do prompt, sem cópia antiga ao lado da nova;
+   [Entrada estruturada](integracao.md#entrada-estruturada)) — e depois dele as **`dependencies`
+   deste turno**, num bloco `<additional context>` com o JSON. O prompt de sistema não volta como
+   histórico: um contexto que mudou some do prompt, sem cópia antiga ao lado da nova; e as
+   `dependencies` valem só para o turno que as mandou (não são estado da sessão: cada chamada manda
+   as suas, e uma chamada sem elas não herda as do turno anterior);
 2. **o histórico**: os últimos `num_history_runs` turnos da sessão, cada um com a mensagem do
-   usuário daquele turno (os eventos e a fala; as `dependencies`, quando vieram), a resposta e as
+   usuário daquele turno (os eventos e a fala; as `dependencies` não vão aqui, ver o item 1), a resposta e as
    chamadas de tool com os resultados. `history_tool_calls` limita estas últimas às N mais
    recentes; vazio (o padrão) traz todas, `0` deixa o histórico só com a conversa — útil quando as
    tools devolvem JSON grande que não serve mais para nada depois do turno;
 3. **a mensagem do turno**: os eventos desde a última resposta e a fala nova. Um `agent_sent` igual
    à resposta anterior do agente não se repete aqui, porque o histórico já a traz.
+
+`dependencies` e `context` aparecem os dois no prompt de sistema, mas são coisas diferentes: `context` é
+texto livre que **permanece** na sessão até ser trocado; `dependencies` são valores tipados que as tools
+também recebem e que só existem no turno em que vieram. Antes, o Agno colava as `dependencies` no fim da
+mensagem do usuário, e o histórico as reenviava por até `num_history_runs` turnos, o valor antigo ao lado
+do novo; agora elas ficam fora da mensagem e do histórico. O agente `kind="analysis"` (sem histórico)
+segue como antes, com o bloco no fim da mensagem. Turnos gravados antes dessa mudança mantêm o bloco
+dentro da mensagem até saírem da janela do histórico; o histórico não é reescrito.
 
 `memory_backend` escolhe como a memória de longo prazo funciona:
 
