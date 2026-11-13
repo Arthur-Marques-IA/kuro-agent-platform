@@ -63,6 +63,7 @@ const COMPARED: { label: string; fields: Record<string, (a: AgentDefinition) => 
     fields: {
       memory_backend: (a) => a.memory_backend,
       num_history_runs: (a) => a.num_history_runs,
+      history_tool_calls: (a) => a.history_tool_calls ?? null,
       session_summary: (a) => a.session_summary ?? false,
     },
   },

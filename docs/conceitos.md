@@ -47,11 +47,13 @@ estruturada — seria aceito no cadastro e falharia em toda chamada.
 
 Campos de um agente: `agent_type` (slug), `name`, `instructions`, `tools`,
 `model_provider`, `model_id`, `model_credential_id`, `knowledge_collection`,
-`dependency_fields`, `memory_backend`, `num_history_runs`, `kind`,
-`response_schema` e `stages`. O agente `conversational` é criado automaticamente no
+`dependency_fields`, `memory_backend`, `session_summary`, `plain_text`, `num_history_runs`,
+`history_tool_calls` (quantas chamadas de tool antigas voltam no histórico; ver
+[Histórico da conversa](#histórico-da-conversa)), `kind`, `response_schema`, `stages`,
+`model_params` e `timeout_seconds`. O agente `conversational` é criado automaticamente no
 primeiro boot.
 
-> Num agente `analysis`, `num_history_runs` e `memory_backend` não fazem nada —
+> Num agente `analysis`, `num_history_runs`, `history_tool_calls` e `memory_backend` não fazem nada —
 > ele é one-shot, sem sessão, histórico nem memória — e a nota de feedback não
 > se aplica (ela só orienta agentes conversacionais). Mandar qualquer um deles
 > dá 422, em vez de aceitar calado algo que não teria efeito.
@@ -496,9 +498,28 @@ A mudança vale na próxima busca, sem reiniciar e sem mudar a versão do agente
 
 | Camada | Alcance | Como liga |
 |---|---|---|
-| Histórico da sessão | a conversa atual (`session_id`) | sempre, `num_history_runs` mensagens |
+| Histórico da sessão | a conversa atual (`session_id`) | sempre, os últimos `num_history_runs` turnos |
+| Contexto da sessão | a conversa atual, o vigente | `context` do `/chat` (entrada estruturada) |
 | Resumo da sessão | o que já saiu da janela do histórico | `session_summary: true` |
 | Memória de longo prazo | o usuário (`user_id`), entre sessões | `memory_backend` |
+
+### Histórico da conversa
+
+A cada turno o modelo recebe, nesta ordem:
+
+1. **o prompt de sistema**, remontado a cada execução: as `instructions` (com a nota de feedback),
+   o que o Agno acrescenta (o aviso de markdown, a tool de busca, as memórias, o resumo) e, por
+   último, o **contexto vigente da sessão**, uma vez só — os blocos de `context` que o sistema
+   integrado mandou por último nesta `session_id` (ver
+   [Entrada estruturada](integracao.md#entrada-estruturada)). O prompt de sistema não volta como
+   histórico: um contexto que mudou some do prompt, sem cópia antiga ao lado da nova;
+2. **o histórico**: os últimos `num_history_runs` turnos da sessão, cada um com a mensagem do
+   usuário daquele turno (os eventos e a fala; as `dependencies`, quando vieram), a resposta e as
+   chamadas de tool com os resultados. `history_tool_calls` limita estas últimas às N mais
+   recentes; vazio (o padrão) traz todas, `0` deixa o histórico só com a conversa — útil quando as
+   tools devolvem JSON grande que não serve mais para nada depois do turno;
+3. **a mensagem do turno**: os eventos desde a última resposta e a fala nova. Um `agent_sent` igual
+   à resposta anterior do agente não se repete aqui, porque o histórico já a traz.
 
 `memory_backend` escolhe como a memória de longo prazo funciona:
 

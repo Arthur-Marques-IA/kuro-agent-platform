@@ -75,6 +75,8 @@ kuro --json chat suporte -m "fecha o acordo" --dry-run   # teste: tools recebem 
 # Entrada estruturada (pela API): `events` [{role: contact|human_agent|agent_sent|system, content, at}]
 # e `context` [{key, title, content, volatile}] no /chat em vez de tudo em `message`; o run guarda
 # input_message/input_events/input_context (`runs show`). Procedural recusa (422). docs/integracao.md.
+# `context` é estado da sessão: ausente herda o último da session_id, lista substitui, [] limpa;
+# vai uma vez no prompt de sistema, fora do histórico. `history_tool_calls` (agente) limita as tools antigas.
 
 # Anexos: imagem, áudio, vídeo ou arquivo (PDF, DOCX, CSV, TXT...) direto ao modelo
 kuro --json chat suporte -m "o que tem nessa foto?" --attach foto.png       # -a, repetível

@@ -55,7 +55,15 @@ function fullAgent(extra: Partial<AgentDefinition> = {}): AgentDefinition {
 /** Serviço antigo: não devolve os campos opcionais que vieram depois. */
 function legacyAgent(): AgentDefinition {
   const agent = fullAgent() as unknown as Record<string, unknown>;
-  for (const key of ["stages", "model_params", "timeout_seconds", "session_summary", "plain_text", "response_schema"]) {
+  for (const key of [
+    "stages",
+    "model_params",
+    "timeout_seconds",
+    "session_summary",
+    "plain_text",
+    "response_schema",
+    "history_tool_calls",
+  ]) {
     delete agent[key];
   }
   // E alguns que eram nulos/vazios chegavam sem a chave.
@@ -117,6 +125,15 @@ describe("buildUpdate — edição real", () => {
     assert.deepEqual(buildUpdate({ ...values, numHistoryRuns: 3 }, initial, agent, ctx), { num_history_runs: 3 });
   });
 
+  it("tools no histórico: definir manda o número, apagar manda null; serviço antigo abre vazio", () => {
+    const agent = fullAgent({ history_tool_calls: 3 });
+    const { initial, values } = open(agent);
+    assert.equal(initial.historyToolCalls, "3");
+    assert.deepEqual(buildUpdate({ ...values, historyToolCalls: "0" }, initial, agent, ctx), { history_tool_calls: 0 });
+    assert.deepEqual(buildUpdate({ ...values, historyToolCalls: " " }, initial, agent, ctx), { history_tool_calls: null });
+    assert.equal(open(legacyAgent()).initial.historyToolCalls, "");
+  });
+
   it("editar o prompt manda as instruções, uma por linha", () => {
     const agent = fullAgent();
     const { initial, values } = open(agent);
@@ -172,6 +189,7 @@ describe("buildCreate", () => {
     assert.equal(body.model_id, ctx.defaultModel.id);
     assert.equal("memory_backend" in body, false);
     assert.equal("num_history_runs" in body, false);
+    assert.equal("history_tool_calls" in body, false);
   });
 });
 
@@ -179,7 +197,16 @@ describe("sectionStatus e formSections", () => {
   it("liga cada campo alterado e cada erro à seção dele", () => {
     const status = sectionStatus(
       { name: "x", model_params: {}, tools: [] },
-      { name: null, agentType: null, instructions: "Escreva", numHistoryRuns: null, modelParams: null, responseSchema: null, stages: null }
+      {
+        name: null,
+        agentType: null,
+        instructions: "Escreva",
+        numHistoryRuns: null,
+        historyToolCalls: null,
+        modelParams: null,
+        responseSchema: null,
+        stages: null,
+      }
     );
     assert.deepEqual([...status.changed].sort(), ["identidade", "modelo", "tools"]);
     assert.deepEqual([...status.invalid], ["prompt"]);

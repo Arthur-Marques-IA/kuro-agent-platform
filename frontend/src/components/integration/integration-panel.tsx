@@ -35,6 +35,7 @@ export function IntegrationPanel({
   sessionId = "session-abc",
   dependencies,
   context,
+  contextInherited = false,
   events,
   showReference = false,
 }: {
@@ -42,8 +43,11 @@ export function IntegrationPanel({
   userId?: string;
   sessionId?: string;
   dependencies?: Record<string, unknown> | null;
-  /** Blocos de `context` em uso na tela (Playground); vazio fica fora do exemplo. */
+  /** O `context` que a próxima mensagem do Playground manda (`contextToSend`): `undefined`
+   * fica fora do exemplo (o servidor herda o da sessão), `[]` limpa. */
   context?: ContextBlockPayload[];
+  /** A conversa já mandou o contexto e ele não mudou: o exemplo vai sem `context`, com aviso. */
+  contextInherited?: boolean;
   /** Eventos (`human_agent`) que vão junto da fala; vazio fica fora do exemplo. */
   events?: ChatEventPayload[];
   showReference?: boolean;
@@ -87,7 +91,7 @@ export function IntegrationPanel({
     // Entrada estruturada só quando a tela usa: chamada sem ela continua igual à de sempre.
     if (contract.kind !== "analysis" && contract.kind !== "procedural") {
       if (events?.length) body.events = events;
-      if (context?.length) body.context = context;
+      if (context !== undefined) body.context = context;
     }
     return body;
   }, [contract, context, dependencies, events, hasRealDependencies, includeDependencies, sessionId, userId]);
@@ -165,6 +169,13 @@ export function IntegrationPanel({
           </p>
         )}
         <CodeBlock code={code} title={`POST ${endpoint} · ${languageLabel}`} />
+        {contextInherited && (
+          <p className="text-xs text-muted-foreground">
+            Sem <code className="font-mono">context</code>: os blocos não mudaram desde a última mensagem, e o
+            servidor usa o contexto que já tem desta sessão. Mande a lista inteira quando ela mudar, ou{" "}
+            <code className="font-mono">[]</code> para limpar.
+          </p>
+        )}
       </div>
 
       {contract.warnings.length > 0 && (

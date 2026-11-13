@@ -120,6 +120,7 @@ export function AgentForm({
     instructions: instructionLines.length > 0 ? null : "Escreva ao menos uma instrução.",
     numHistoryRuns:
       values.kind === "analysis" || values.numHistoryRuns >= 0 ? null : "Use um número maior ou igual a zero.",
+    historyToolCalls: values.kind === "analysis" ? null : numberProblem("historyToolCalls", values.historyToolCalls),
     modelParams:
       numberProblem("temperature", values.temperature) ??
       numberProblem("topP", values.topP) ??

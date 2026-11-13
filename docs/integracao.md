@@ -120,16 +120,37 @@ No `/chat/stream`, o mesmo campo chega no evento `sources` (`{"sources": [...]}`
 ### Entrada estruturada
 
 No `/chat` e no `/chat/stream`, cada trecho do que o seu sistema sabe pode ir no seu próprio campo,
-em vez de tudo concatenado em `message`. O servidor monta o texto que o modelo lê com um gabarito
-fixo, e o run guarda os trechos separados: o console e a transcrição mostram a fala, o histórico e
-o contexto sem precisar adivinhar onde cada um começa. Os campos são opcionais: uma chamada só com
-`message` continua exatamente como antes.
+em vez de tudo concatenado em `message`. O servidor monta o que o modelo lê com gabaritos fixos, e
+o run guarda os trechos separados: o console e a transcrição mostram a fala, o histórico e o
+contexto sem precisar adivinhar onde cada um começa. Os campos são opcionais: uma chamada só com
+`message`, numa sessão que nunca teve contexto, continua exatamente como antes.
 
 | Campo | O que é |
 |---|---|
 | `message` | A fala nova do contato. Passa a ser opcional quando `events` traz ao menos um evento `contact`: aí a fala é o último deles. Com os dois, `message` é a fala e `events` é o que veio antes dela. Sem nenhum dos dois, 422 |
 | `events` | O que aconteceu **desde a última resposta do agente**, em ordem (até 200). `role`: `contact` (o contato), `human_agent` (um atendente humano), `agent_sent` (o que a instituição de fato enviou em nome do agente, que pode diferir do que ele respondeu) ou `system`. Cada item aceita `content`, `at` (ISO 8601), `kind` (`text` ou `document`) e `attachments` |
-| `context` | Blocos de texto para o modelo ler (até 30): `key` (identificador estável, o mesmo a cada turno e único na requisição), `title` (o rótulo, que vira o título do bloco no prompt), `content` e `volatile` (`true` no bloco que muda todo turno, como o contexto temporal: ele não conta como "o contexto mudou") |
+| `context` | O **contexto da sessão**, em blocos de texto (até 30): `key` (identificador estável, o mesmo a cada turno e único na requisição), `title` (o rótulo, que vira o título do bloco no prompt), `content` e `volatile` (`true` no bloco que muda todo turno, como o contexto temporal: ele não conta como "o contexto mudou") |
+
+**O contexto é estado da sessão.** O servidor lembra o último contexto de cada `session_id`, e o
+campo diz o que fazer com ele:
+
+| Na requisição | O contexto da sessão |
+|---|---|
+| `context` ausente | continua o último enviado nesta `session_id` (nenhum, se nunca houve) |
+| `context: [blocos]` | passa a ser exatamente essa lista: não há atualização de um bloco só, mande todos |
+| `context: []` | a sessão fica sem contexto |
+
+- **O modelo lê o contexto uma vez por turno, no prompt de sistema**, depois das instruções, e não
+  na mensagem. Por isso ele **não entra no histórico**: um bloco que mudou aparece só com o valor
+  novo, sem a versão antiga ao lado, e um turno sem `context` não perde o contexto. Mande o
+  `context` quando ele mudar; mandá-lo inteiro em todo turno também funciona, e custa o mesmo.
+- **Uma `session_id` é uma conversa.** Se o canal passa a atender outra pessoa, use outra
+  `session_id`: na mesma, o contexto (e o histórico) da pessoa anterior continuaria valendo até
+  você mandar outro `context` ou `[]`.
+- **Uma chamada só com `message` numa sessão que já tem contexto** herda esse contexto, como um
+  `context` ausente, e conta como turno estruturado.
+
+Regras dos campos:
 
 - **`context` não é `dependencies`.** `dependencies` são valores tipados (`cpf`, `canal`), validados
   contra os `dependency_fields` do agente e entregues às tools por `source="dependency"`. `context` é
@@ -150,17 +171,25 @@ o contexto sem precisar adivinhar onde cada um começa. Os campos são opcionais
 - `GET /agents/{t}/integration` traz `structured_request_example`, e o OpenAPI do agente descreve os
   campos (`InputEvent`, `ContextBlock`).
 
-O gabarito, para uma chamada com os três campos (cada seção vazia some):
+Os gabaritos. No fim do prompt de sistema, depois das instruções, o contexto vigente (some quando
+a sessão não tem contexto):
 
 ```text
 # Contexto
+
+Este é o contexto atual desta conversa. Ele substitui qualquer versão anterior.
 
 ## <title do bloco 1>
 <content do bloco 1>
 
 ## <title do bloco 2>
 <content do bloco 2>
+```
 
+O conteúdo dos blocos chega ao modelo como veio: chaves (`{cpf}`) e `$` não são lidos como
+variáveis. A mensagem do turno, que é o que vai para o histórico (cada seção vazia some):
+
+```text
 # Conversa desde a sua última resposta
 
 [Enviado em seu nome · 2026-11-11T12:36:10Z]
@@ -178,7 +207,10 @@ Os papéis aparecem como `Contato`, `Atendente humano`, `Enviado em seu nome` e 
 fuso sai em UTC; um evento `kind="document"` ganha `· documento` no rótulo e cada anexo uma linha
 `(anexo: nome, tipo)`. Se o último evento for `contact` com o mesmo texto de `message`, ele é a fala
 e não se repete na conversa. Sem `message`, a fala é o último evento `contact`, e o que veio depois
-dele entra numa seção `# Depois dessa mensagem`.
+dele entra numa seção `# Depois dessa mensagem`. Um evento `agent_sent` com o mesmo texto da última
+resposta do agente na sessão (ignorando espaços nas pontas e diferenças de quebra de linha e de
+espaço) não entra no texto, porque o histórico já traz essa resposta; ele fica gravado com
+`echo: true`. Diferente (a instituição editou a resposta ou mandou outra coisa), entra como sempre.
 
 #### Antes e depois: uma chamada do Regente
 
@@ -215,6 +247,10 @@ Depois, cada trecho no seu campo:
 }
 ```
 
+No turno seguinte, se nada no contexto mudou, a chamada vai sem `context` (o servidor usa o desta
+sessão); quando a dívida mudar, vai a lista inteira de novo, com o bloco `divida` atualizado. O
+`agent_sent` acima, se for exatamente a última resposta do agente, não se repete no texto do modelo.
+
 #### Guia de migração
 
 Cada trecho do texto de hoje tem um lugar. Monte cada campo direto da fonte que já gera o trecho
@@ -225,35 +261,49 @@ Cada trecho do texto de hoje tem um lugar. Monte cada campo direto da fonte que 
 | Configuração da conversa (EFETIVAÇÃO, chaves liga/desliga) | `context`, `key: "configuracao"` |
 | Dados do aluno | `context`, `key: "dados_aluno"`. O CPF ou o id que uma tool usa continua **também** em `dependencies` |
 | Contexto da dívida | `context`, `key: "divida"` |
-| Anotações internas | `context`, `key: "anotacoes"` |
+| Anotações internas | `context`, `key: "anotacoes"`: um bloco como os outros. Quando uma anotação nova chega, mande a lista de blocos com o `anotacoes` atualizado |
 | Linha temporal (`CONTEXTO TEMPORAL: ...`, janela 24h) | `context`, `key: "temporal"`, com `volatile: true` |
 | Histórico com `[ALUNO]` / `[ATENDENTE]` | `events`: `[ALUNO]` vira `role: "contact"`; `[ATENDENTE]` vira `human_agent` quando foi uma pessoa, ou `agent_sent` quando foi a mensagem do agente que o Regente enviou. Mande só o que aconteceu **depois da última resposta do agente** |
 | A fala nova (`[FALA DO CONTATO]`, `ÚLTIMA MENSAGEM DO ALUNO:`) | `message` (ou o último evento `contact`) |
 
 - **Não reenvie a conversa inteira em `events`.** Com `num_history_runs > 0`, o histórico da sessão já
-  devolve ao modelo os turnos anteriores (cada um com o texto montado daquele turno). Reenviar tudo
-  em `events` a cada turno faz o modelo ver o mesmo turno duas vezes. Se o agente roda com
-  `num_history_runs: 0` e o seu sistema é a fonte do histórico, aí sim mande o histórico em `events`.
+  devolve ao modelo os turnos anteriores (cada um com os eventos e a fala daquele turno, sem o
+  contexto). Reenviar tudo em `events` a cada turno faz o modelo ver o mesmo turno duas vezes. Se o
+  agente roda com `num_history_runs: 0` e o seu sistema é a fonte do histórico, aí sim mande o
+  histórico em `events`.
+- **Mande o `context` quando ele mudar** (ou em todo turno, se for mais simples de montar: o custo é
+  o mesmo). Instruções do tipo "vale sempre o contexto mais recente" ou "ignore o contexto de
+  mensagens anteriores" deixam de ser necessárias: o modelo só vê o contexto vigente. Pode tirá-las
+  do prompt no draft.
+- **Conversa nova, `session_id` nova.** Se o número de WhatsApp passa a falar com outra pessoa (ou
+  outro atendimento começa), use outra `session_id`, em vez de reaproveitar a da conversa anterior:
+  na mesma, o contexto e o histórico da pessoa anterior seguiriam valendo.
 - Mantenha as `key` iguais de um turno para o outro: é por elas (e pelo hash de cada bloco, que o run
   guarda) que o console diz se o contexto mudou.
 - Teste num draft antes (`kuro agents promote r6 --to r6-draft`, eval com casos no formato novo): o
   texto que o modelo lê muda de forma, e as instructions que citam os rótulos antigos ("veja a
-  seção HISTÓRICO DA CONVERSA") precisam citar os novos.
+  seção HISTÓRICO DA CONVERSA") precisam citar os novos. O contexto agora fica no fim do prompt de
+  sistema, sob `# Contexto`, e não mais na mensagem.
 
 #### O que o run guarda
 
-`runs.message` continua com o texto que o modelo leu (o montado, na entrada estruturada), para os
-filtros e buscas de sempre. Três colunas novas guardam os trechos, e saem no detalhe do run
-(`GET /observability/runs/{run_id}/trace`, `kuro runs show`):
+`runs.message` guarda a mensagem do turno que o modelo leu (na entrada estruturada, os eventos e a
+fala montados pelo gabarito, **sem o contexto**), para os filtros e buscas de sempre. Três colunas
+guardam os trechos, e saem no detalhe do run (`GET /observability/runs/{run_id}/trace`,
+`kuro runs show`):
 
 - `run.input_message`: a fala pura (também na listagem de runs);
 - `input_events`: os eventos na ordem recebida, `{role, content, at, kind, attachments, speech}`;
-  `speech: true` marca o evento que é a fala nova, quando ela veio como evento;
-- `input_context`: os blocos, `{key, title, content, volatile, hash}`, com `hash` = sha256 do `content`.
+  `speech: true` marca o evento que é a fala nova, quando ela veio como evento, e `echo: true` o
+  `agent_sent` igual à última resposta, que ficou fora do texto do modelo;
+- `input_context`: o contexto **vigente** no turno (o enviado, ou o herdado da sessão quando o
+  `context` não veio), `{key, title, content, volatile, hash}`, com `hash` = sha256 do `content`. É
+  daqui que o servidor tira o contexto da sessão: o do run mais recente que tem contexto.
 
-Numa chamada só com `message`, as três ficam nulas. Os runs e as sessões de antes desta versão
-ficam como **entrada não estruturada**: não há retrocarga, porque separar o texto antigo seria
-adivinhar.
+Numa chamada só com `message` numa sessão sem contexto, as três ficam nulas. Os runs e as sessões de
+antes da `0.3.0` ficam como **entrada não estruturada**: não há retrocarga, porque separar o texto
+antigo seria adivinhar. Os runs estruturados gravados pela `0.3.0` guardam em `runs.message` o texto
+com o contexto colado, como era; o contexto deles continua em `input_context`.
 
 #### Linha do tempo da sessão
 
@@ -295,12 +345,13 @@ por run, do mais antigo ao mais novo — é o que o console, o `kuro sessions sh
   páginas). No primeiro turno estruturado nenhum bloco conta como mudado. Bloco que aparece
   depois disso é `changed: true` com `previous_content: null`; bloco que mudou traz o texto anterior
   em `previous_content`, para mostrar a diferença sem outra chamada. Bloco `volatile` nunca é
-  `changed`.
+  `changed`. `context` é o contexto vigente do turno: num turno que não mandou `context`, vem o
+  herdado, com `changed: false` em todos os blocos.
 - **`steps`**: cada chamada de tool, na ordem. `ok: false` segue o critério de `tool_failures`
   (argumento inválido, auth, indisponível, configuração, exceção); um 404 é `ok: true` com
   `failure: "not_found"`. `side_effect` vem da classificação atual da tool (não classificada =
   `false`). `result_preview` é o começo do resultado; o inteiro está no trace do run.
-- **Run não estruturado** (só `message`, ou anterior a esta entrada): `structured: false`, `events` e
+- **Run não estruturado** (só `message` numa sessão sem contexto, ou anterior a esta entrada): `structured: false`, `events` e
   `context` vazios, `message: null` e o texto inteiro em `raw_input`. Nada é recortado.
 - Os totais do envelope (`turns`, tokens, custo, `agent_types`, início e fim) são da sessão inteira,
   não só da página.

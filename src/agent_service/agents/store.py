@@ -70,6 +70,9 @@ agent_definitions = Table(
     # Resposta em texto puro: desliga o "Use markdown" que o Agno põe no prompt (WhatsApp).
     Column("plain_text", Boolean, nullable=False, default=False),
     Column("num_history_runs", Integer, nullable=False, default=10),
+    # Quantas chamadas de tool dos turnos anteriores voltam no histórico (as mais
+    # recentes, `max_tool_calls_from_history` do Agno); None = todas.
+    Column("history_tool_calls", Integer, nullable=True),
     # "conversational" (padrão, com histórico/memória) ou "analysis" (one-shot,
     # devolve `response_schema` validado em vez de texto — ver `agents/response_model.py`).
     Column("kind", String, nullable=False, default="conversational"),
@@ -179,6 +182,7 @@ def create_definition(
     session_summary: bool = False,
     plain_text: bool = False,
     num_history_runs: int = 10,
+    history_tool_calls: int | None = None,
     kind: str = "conversational",
     response_schema: list[dict[str, Any]] | None = None,
     stages: list[dict[str, Any]] | None = None,
@@ -203,6 +207,7 @@ def create_definition(
                 session_summary=session_summary,
                 plain_text=plain_text,
                 num_history_runs=num_history_runs,
+                history_tool_calls=history_tool_calls,
                 kind=kind,
                 response_schema=response_schema or [],
                 stages=stages or [],
@@ -245,6 +250,7 @@ def update_definition(
     session_summary: bool | None = None,
     plain_text: bool | None = None,
     num_history_runs: int | None = None,
+    history_tool_calls: int | None = _UNSET,
     kind: str | None = None,
     response_schema: list[dict[str, Any]] | None = None,
     stages: list[dict[str, Any]] | None = None,
@@ -278,6 +284,8 @@ def update_definition(
         values["plain_text"] = plain_text
     if num_history_runs is not None:
         values["num_history_runs"] = num_history_runs
+    if history_tool_calls is not _UNSET:
+        values["history_tool_calls"] = history_tool_calls
     if kind is not None:
         values["kind"] = kind
     if response_schema is not None:
