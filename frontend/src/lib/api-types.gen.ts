@@ -2181,7 +2181,7 @@ export interface components {
             label: string;
             /**
              * Language
-             * @description Dicionário do full-text do Postgres (portuguese por padrão). Fixo depois de criada.
+             * @description Dicionário do full-text do Postgres (portuguese por padrão). Muda depois com PUT.
              */
             language?: string | null;
             /**
@@ -2251,6 +2251,11 @@ export interface components {
             updated_at: string;
             /** Version */
             version?: number | null;
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: string[];
         };
         /** CollectionUpdateIn */
         CollectionUpdateIn: {
@@ -2260,7 +2265,7 @@ export interface components {
             label?: string | null;
             /**
              * Language
-             * @description Não muda depois da criação: só aceita o valor atual.
+             * @description Dicionário do full-text do Postgres (validado em pg_ts_config). Muda quais trechos casam no híbrido; não exige reindexar. Não aceita null.
              */
             language?: string | null;
             /** Max Results */
@@ -2985,6 +2990,17 @@ export interface components {
         };
         /** OverviewTotals */
         OverviewTotals: {
+            /** Avg History Fraction */
+            avg_history_fraction?: number | null;
+            /** Avg Prompt Chars */
+            avg_prompt_chars?: number | null;
+            /** Cache Fraction */
+            cache_fraction?: number | null;
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
             /** Cost Usd */
             cost_usd?: number | null;
             /**
@@ -3009,6 +3025,11 @@ export interface components {
              * @default 0
              */
             ingestion_tokens: number;
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
             /**
              * Interrupted
              * @default 0
@@ -3432,6 +3453,16 @@ export interface components {
                 [key: string]: unknown;
             }[];
             /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
+            /**
+             * Cache Write Tokens
+             * @default 0
+             */
+            cache_write_tokens: number;
+            /**
              * Checks
              * @default []
              */
@@ -3491,6 +3522,8 @@ export interface components {
              * @default 0
              */
             output_tokens: number;
+            /** Prompt Chars */
+            prompt_chars?: number | null;
             /** Prompt Version */
             prompt_version?: number | null;
             /** Run Id */
@@ -3537,6 +3570,10 @@ export interface components {
             procedure_state?: {
                 [key: string]: unknown;
             } | null;
+            /** Prompt Composition */
+            prompt_composition?: {
+                [key: string]: unknown;
+            } | null;
             /** Reference */
             reference?: unknown;
             run: components["schemas"]["RunSummary"];
@@ -3580,6 +3617,11 @@ export interface components {
         SearchConfigOut: {
             /** Language */
             language: string;
+            /**
+             * Language Legacy
+             * @default false
+             */
+            language_legacy: boolean;
             /** Max Results */
             max_results: number;
             /** Reranker */
