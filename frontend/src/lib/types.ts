@@ -556,6 +556,8 @@ export interface AgentDefinition {
   session_summary?: boolean;
   /** Resposta sem markdown (WhatsApp). */
   plain_text?: boolean;
+  /** Checagens determinísticas avaliadas em toda execução real. */
+  checks?: AgentCheck[];
   is_seed: boolean;
   prompt_version: number;
   created_at: string;
@@ -584,6 +586,7 @@ export interface AgentDefinitionInput {
   timeout_seconds?: number | null;
   session_summary?: boolean;
   plain_text?: boolean;
+  checks?: AgentCheck[];
 }
 
 /** `GET /agents/{tipo}/versions` — as versões do prompt. Gerado do OpenAPI. */
@@ -604,6 +607,7 @@ export interface AgentRevision {
     feedback_rules?: string[];
     response_schema?: SchemaField[];
     knowledge_collection?: string | null;
+    checks?: AgentCheck[];
     [key: string]: unknown;
   };
   created_at: string;
@@ -693,6 +697,9 @@ export interface ToolSummary {
   is_seed: boolean;
   /** A tool muda algo no sistema chamado? `null` = ainda não classificada. */
   side_effect?: boolean | null;
+  /** Só `kind: "api"`: o que o método HTTP sugere (GET/HEAD = não muda; POST/PUT/PATCH/DELETE = muda).
+   *  É só uma sugestão: nunca é gravada sozinha. */
+  side_effect_suggested?: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -881,6 +888,48 @@ export interface UsageMetrics {
 
 export type RunStatus = "success" | "error" | "interrupted";
 
+export type CheckSeverity = "warn" | "fail";
+
+/** Um campo do run lido por uma checagem, e os operadores aceitos (`observability/checks.py`). */
+export type CheckOperator =
+  | "eq"
+  | "ne"
+  | "in"
+  | "not_in"
+  | "lt"
+  | "lte"
+  | "gt"
+  | "gte"
+  | "exists"
+  | "not_exists"
+  | "contains"
+  | "matches";
+
+export interface CheckCondition {
+  field: string;
+  op: CheckOperator;
+  value?: unknown;
+}
+
+/** Uma checagem determinística do agente, avaliada em toda execução real (sem modelo). */
+export interface AgentCheck extends CheckCondition {
+  name: string;
+  when?: CheckCondition | null;
+  severity: CheckSeverity;
+}
+
+/** O resultado de uma checagem em um run: `error` = a avaliação levantou (defeito da checagem, não do run). */
+export interface RunCheck {
+  name: string;
+  status: "passed" | "failed" | "error";
+  severity: CheckSeverity;
+  field?: string | null;
+  op?: string | null;
+  expected?: unknown;
+  actual?: unknown;
+  error?: string | null;
+}
+
 /** Uma execução de agente, lida do Langfuse pelo backend (`GET /observability/agents/{type}/runs`). */
 export interface RunSummary {
   run_id: string;
@@ -926,6 +975,8 @@ export interface RunSummary {
   /** Entrada estruturada: a fala pura do contato (`message` é o texto montado que o modelo leu).
    *  `null` em run só com `message` (legado). */
   input_message?: string | null;
+  /** As checagens automáticas do agente avaliadas neste run; vazio = o agente não tem. */
+  checks?: RunCheck[];
 }
 
 export interface RunPage {
@@ -1041,6 +1092,8 @@ export interface TimelineTurn {
   context: TimelineContextBlock[];
   steps: TimelineStep[];
   sources: ChatSource[];
+  /** As checagens automáticas do agente avaliadas neste turno. */
+  checks?: RunCheck[];
   output?: string | null;
   usage: {
     input_tokens: number;
@@ -1215,6 +1268,16 @@ export interface OverviewAgent {
   trend: number[];
   /** Da versão mais nova para a mais antiga. */
   versions: OverviewVersion[];
+  /** Taxa de reprovação de cada checagem do agente no período, a pior primeiro. */
+  checks?: OverviewCheck[];
+}
+
+export interface OverviewCheck {
+  name: string;
+  evaluated: number;
+  failed: number;
+  failure_rate: number;
+  errors: number;
 }
 
 export interface OverviewToolFailure {

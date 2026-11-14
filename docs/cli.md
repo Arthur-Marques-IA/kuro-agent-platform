@@ -155,7 +155,9 @@ uv run kuro agents feedback suporte --rollback 2    # volta para as regras da v2
 
 ```bash
 uv run kuro runs list --agent suporte           # execuções com latência, tokens, custo e status
-uv run kuro runs show <run_id>                  # chamadas ao modelo, tools e avaliações
+uv run kuro runs show <run_id>                  # chamadas ao modelo, tools, avaliações e checagens
+uv run kuro runs list -a suporte --check-failed # só runs em que uma checagem automática do agente reprovou
+uv run kuro tools audit                         # tools sem classificação de efeito colateral e quem as usa
 uv run kuro runs score <run_id> 1 --comment "resposta correta"
 uv run kuro runs chunk-feedback <run_id> <chunk_id> wrong --comment "tabela de 2023"   # relevant | irrelevant | wrong
 uv run kuro runs chunk-flagged -c manuais       # documentos com marcações abertas de errado, com os runs

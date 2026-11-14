@@ -46,7 +46,7 @@ KURO_BUILD_SHA=$(git rev-parse --short HEAD) \
 ```
 
 O serviço e o console sobem juntos, de propósito: um console novo contra um serviço antigo quebra
-telas. Na subida, sob um lock, rodam as migrações que faltarem (até a `0018`), os seeds e a
+telas. Na subida, sob um lock, rodam as migrações que faltarem (até a `0019`), os seeds e a
 montagem do app; a porta só abre depois. A primeira subida pode levar alguns minutos.
 
 O que as migrações fazem com os dados:
@@ -57,6 +57,9 @@ O que as migrações fazem com os dados:
   não falha: deixa em texto plano e avisa no log.
 - `0018`: acrescenta `history_tool_calls` em `agent_definitions`, nula (o agente traz todas as
   chamadas de tool no histórico, como antes). Nenhum agente muda de versão.
+- `0019`: acrescenta `checks` em `agent_definitions` (nula = nenhuma checagem) e `source` em
+  `run_scores` (nula = nota humana ou do eval, o que sempre foi). Nada é reescrito e nenhum agente
+  muda de versão.
 
 ## 4. Conferir que deu certo
 
@@ -104,7 +107,7 @@ como foi gravado.
 ## 6. Voltar atrás
 
 Voltar só a imagem não funciona: o serviço antigo não sobe com o banco numa revisão que ele não
-conhece (`0017` para quem vem da `0.2.0`, `0018` para quem vem da `0.3.0`). O caminho é
+conhece (`0017` para quem vem da `0.2.0`, `0018` para quem vem da `0.3.0`, `0019` para quem já está na próxima). O caminho é
 restaurar o dump junto com o código de antes:
 
 ```bash

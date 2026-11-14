@@ -199,7 +199,7 @@ subiu; quem confirma que ele alcança o serviço é a tool `health`.
 | Executar | `chat`, `analyze`, `eval`, `tool_invoke` |
 | Feedback | `feedback_show`, `feedback_versions`, `feedback_send`, `feedback_remove`, `feedback_rollback`, `feedback_clear`\* |
 | Tools | `tools_list`, `tool_get`, `tool_catalog`, `tool_apply`, `tool_invoke`, `tool_delete`\* |
-| Execuções | `runs_list`, `run_show`, `run_related`, `run_feedback`, `runs_stats`, `runs_overview`, `runs_sessions`, `run_score` |
+| Execuções | `runs_list` (com `check_failed`/`check`), `run_show`, `run_related`, `run_feedback`, `runs_stats`, `runs_overview`, `runs_sessions`, `run_score` |
 | Modo shadow | `runs_agreement`, `runs_reference`, `runs_export` |
 | Feedback por trecho do RAG | `run_chunk_feedback`, `chunk_feedback_list`, `chunk_feedback_status`, `chunk_feedback_flagged`, `chunk_feedback_export` |
 | Conversas | `sessions_list`, `session_show`, `session_delete`\* |

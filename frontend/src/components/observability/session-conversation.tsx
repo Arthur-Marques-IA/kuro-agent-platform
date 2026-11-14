@@ -206,6 +206,21 @@ function Turn({ turn, previousOutput, sessionId }: { turn: TimelineTurn; previou
           ))}
         </ul>
       )}
+      {(turn.checks ?? []).some((c) => c.status !== "passed") && (
+        <div className="flex flex-wrap items-center gap-1.5 pl-11 text-xs" aria-label="Checagens deste turno">
+          {(turn.checks ?? [])
+            .filter((c) => c.status !== "passed")
+            .map((c) => (
+              <Badge
+                key={c.name}
+                variant={c.status === "error" ? "outline" : c.severity === "fail" ? "destructive" : "warning"}
+                title={c.status === "error" ? (c.error ?? undefined) : `${c.field} ${c.op} ${JSON.stringify(c.expected)} · veio ${JSON.stringify(c.actual)}`}
+              >
+                {c.status === "error" ? "checagem com erro" : "checagem reprovou"}: {c.name}
+              </Badge>
+            ))}
+        </div>
+      )}
       <div className="flex flex-col gap-0.5">
         <p className="pl-11 text-[11px] text-muted-foreground">{formatTime(turn.at)}</p>
         <MessageBubble

@@ -171,6 +171,9 @@ kuro --json runs list --agent r8 --version 7    # só runs de uma versão da con
 # Fila de revisão: o que vale um humano olhar (complexidade 1–3 pelas tools de negócio distintas)
 kuro --json runs list -a r8 -c 3 --no-tests      # complexidade 3, sem os testes do Playground
 kuro --json runs list -a r8 --tool-failed        # o agente respondeu, mas alguma tool falhou
+kuro --json runs list -a r8 --check-failed --no-tests   # checagens automáticas do agente (`checks`) reprovadas
+kuro --json runs list -a r8 --check "resposta curta"      # só essa checagem
+kuro --json tools audit                                   # tools sem `side_effect` e os agentes que as usam
 kuro --json runs list -a r8 --side-effect --min-chars 20   # chamou tool com efeito colateral; sem "ok"/"oi"
 kuro --json runs list -a r8 --feedback down      # com 👎
 kuro --json runs list -a r8 --sample 20 --no-tests   # amostra aleatória (pega o erro que nenhum filtro aponta)

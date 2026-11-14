@@ -121,6 +121,25 @@ export function ToolsIndex({ initialQuery = "" }: { initialQuery?: string }) {
     }
   }
 
+  /** Aceita a sugestão pelo método HTTP: é o operador que grava, a sugestão nunca é gravada sozinha. */
+  async function handleClassify(tool: ToolSummary, sideEffect: boolean) {
+    setToggling(tool.tool_name);
+    try {
+      const payload: ToolUpdateInput = { side_effect: sideEffect };
+      await requestJson(`/api/tools/${encodeURIComponent(tool.tool_name)}`, {
+        method: "PUT",
+        json: payload,
+        fallbackError: "Falha ao classificar a tool"
+      });
+      toast({ title: sideEffect ? "Classificada: tem efeito colateral" : "Classificada: sem efeito colateral", variant: "success" });
+      refresh();
+    } catch (err) {
+      toast({ title: "Não foi possível classificar", description: errorMessage(err), variant: "error" });
+    } finally {
+      setToggling(null);
+    }
+  }
+
   async function handleDelete(tool: ToolSummary) {
     const confirmed = await confirm({
       title: `Excluir "${tool.label}"?`,
@@ -292,6 +311,7 @@ export function ToolsIndex({ initialQuery = "" }: { initialQuery?: string }) {
                       onEdit={() => setEditing(tool)}
                       onInvoke={() => setInvoking(tool)}
                       onToggleEnabled={() => void handleToggleEnabled(tool)}
+                      onClassify={(value) => void handleClassify(tool, value)}
                       onDelete={() => void handleDelete(tool)}
                     />
                   ))}
@@ -415,6 +435,7 @@ function ToolRow({
   onEdit,
   onInvoke,
   onToggleEnabled,
+  onClassify,
   onDelete
 }: {
   tool: ToolSummary;
@@ -425,6 +446,7 @@ function ToolRow({
   onEdit: () => void;
   onInvoke: () => void;
   onToggleEnabled: () => void;
+  onClassify: (sideEffect: boolean) => void;
   onDelete: () => void;
 }) {
   const endpoint = apiEndpoint(tool);
@@ -455,7 +477,7 @@ function ToolRow({
               {tool.label}
             </button>
             <span className="font-mono text-xs text-muted-foreground">{tool.tool_name}</span>
-            <StatusBadges tool={tool} />
+            <StatusBadges tool={tool} busy={busy} onClassify={onClassify} />
           </div>
           {summary.head ? (
             <p className="line-clamp-2 text-[13px] text-muted-foreground" title={tool.description ?? undefined}>
@@ -516,7 +538,16 @@ function ToolRow({
   );
 }
 
-function StatusBadges({ tool }: { tool: ToolSummary }) {
+function StatusBadges({
+  tool,
+  busy,
+  onClassify
+}: {
+  tool: ToolSummary;
+  busy: boolean;
+  onClassify: (sideEffect: boolean) => void;
+}) {
+  const suggested = tool.side_effect_suggested;
   return (
     <>
       {!tool.enabled && <Badge variant="secondary">desligada</Badge>}
@@ -529,6 +560,17 @@ function StatusBadges({ tool }: { tool: ToolSummary }) {
         <Badge variant="warning" title={UNCLASSIFIED_HINT}>
           não classificada
         </Badge>
+      )}
+      {isUnclassified(tool) && suggested != null && (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() => onClassify(suggested)}
+          title={`Pelo método HTTP (${String((tool.config as { method?: string }).method ?? "GET").toUpperCase()}). Só grava quando você clica.`}
+        >
+          Aceitar sugestão: {suggested ? "tem efeito colateral" : "sem efeito colateral"}
+        </Button>
       )}
     </>
   );

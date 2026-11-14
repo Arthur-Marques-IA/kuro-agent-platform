@@ -205,6 +205,7 @@ describe("sectionStatus e formSections", () => {
         historyToolCalls: null,
         modelParams: null,
         responseSchema: null,
+        checks: null,
         stages: null,
       }
     );
