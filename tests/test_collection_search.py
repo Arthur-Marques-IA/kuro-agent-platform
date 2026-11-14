@@ -22,7 +22,13 @@ from agent_service.api.collections_routes import (
 )
 from agent_service.documents import retrieval
 from agent_service.documents.collections import get_collection, resolve_search
-from agent_service.documents.search import SearchConfig, SearchConfigError, snapshot, validate_language
+from agent_service.documents.search import (
+    DEFAULT_LANGUAGE,
+    SearchConfig,
+    SearchConfigError,
+    snapshot,
+    validate_language,
+)
 from agent_service.documents.versions import config_hash
 from agent_service.migrations import _config
 
@@ -41,12 +47,13 @@ def test_collection_nova_nasce_vetorial_em_portugues_na_v1(base):
     assert base["search"] == {
         "search_mode": "vector",
         "language": "portuguese",
+        "language_legacy": False,
         "max_results": 10,
         "vector_weight": 0.5,
         "reranker": None,
         "score_kind": "similarity",
     }
-    assert base["version"] == 1
+    assert base["version"] == 1 and base["warnings"] == []
 
 
 def test_a_config_chega_ao_pgvector_e_ao_k_da_knowledge(base):
@@ -86,12 +93,71 @@ def test_mudar_a_busca_gera_versao_e_voltar_reaproveita(base):
     assert get_collection_version(base["name"], 2)["config"]["vector_weight"] == 0.5
 
 
-def test_idioma_nao_muda_depois_de_criada(base):
-    with pytest.raises(HTTPException) as exc:
-        update_collection(base["name"], CollectionUpdateIn(language="english"))
-    assert exc.value.status_code == 422
-    # Mandar o mesmo valor (ex.: um apply do que o GET devolveu) passa.
+def test_idioma_muda_depois_de_criada_e_vira_versao(base):
+    v2 = update_collection(base["name"], CollectionUpdateIn(language="english"))
+    assert (v2["version"], v2["search"]["language"]) == (2, "english")
+    assert get_collection_version(base["name"], 2)["config"]["language"] == "english"
+    # A próxima busca monta a Knowledge com o idioma novo: a chave do cache é a config inteira.
+    from agent_service.documents.store import get_collection_row
+
+    assert SearchConfig.from_row(get_collection_row(base["name"])).content_language == "english"
+    # Mandar o mesmo valor (ex.: um apply do que o GET devolveu) não gera versão.
+    assert update_collection(base["name"], CollectionUpdateIn(language="english"))["version"] == 2
+    # Voltar reaproveita a v1.
     assert update_collection(base["name"], CollectionUpdateIn(language="portuguese"))["version"] == 1
+
+
+def test_idioma_nao_aceita_nulo_nem_formato_invalido(base):
+    for valor in (None, "", "portuguese'; drop table x; --"):
+        with pytest.raises(HTTPException) as exc:
+            update_collection(base["name"], CollectionUpdateIn(language=valor))
+        assert exc.value.status_code == 422, valor
+    assert update_collection(base["name"], CollectionUpdateIn(label="x"))["search"]["language"] == "portuguese"
+
+
+def test_idioma_e_conferido_no_pg_ts_config_ao_trocar(base, monkeypatch):
+    from agent_service.api import collections_routes
+
+    def recusa(language, engine):
+        raise SearchConfigError(f"language {language!r} não é um dicionário de full-text deste Postgres")
+
+    monkeypatch.setattr(collections_routes, "validate_language", recusa)
+    with pytest.raises(HTTPException) as exc:
+        update_collection(base["name"], CollectionUpdateIn(language="klingon"))
+    assert exc.value.status_code == 422 and "klingon" in exc.value.detail
+    assert get_collection_version(base["name"], 1)["config"]["language"] == "portuguese"
+
+
+def test_collection_legada_mostra_o_aviso_e_a_troca_resolve():
+    from agent_service.db import get_db
+    from agent_service.documents.store import document_collections
+
+    nome = f"legada-{uuid.uuid4().hex[:8]}"
+    created = create_collection(CollectionIn(name=nome, label="Legada"))
+    try:
+        with get_db().db_engine.begin() as conn:
+            conn.execute(
+                sa.update(document_collections).where(document_collections.c.name == nome).values(language=None)
+            )
+        legada = next(c for c in list_collections() if c["name"] == nome)
+        assert legada["search"]["language"] == "english" and legada["search"]["language_legacy"] is True
+        assert len(legada["warnings"]) == 1 and f"language={DEFAULT_LANGUAGE}" in legada["warnings"][0]
+        resolvida = update_collection(nome, CollectionUpdateIn(language="portuguese"))
+        assert resolvida["warnings"] == [] and resolvida["search"]["language_legacy"] is False
+        assert created["name"] == nome
+    finally:
+        delete_collection(nome)
+
+
+def test_a_collection_padrao_de_uma_instalacao_nova_nasce_em_portugues():
+    from agent_service.db import get_db
+    from agent_service.documents.store import SEED_COLLECTION, document_collections, seed_default_collection
+
+    with get_db().db_engine.begin() as conn:
+        conn.execute(sa.delete(document_collections).where(document_collections.c.name == SEED_COLLECTION))
+    seed_default_collection()
+    row = next(c for c in list_collections() if c["name"] == SEED_COLLECTION)
+    assert row["search"]["language"] == "portuguese" and row["warnings"] == []
 
 
 def test_reranker_e_so_gancho(base):

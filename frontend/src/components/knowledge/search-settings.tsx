@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useId, useState } from "react";
 import { History, Pencil, SlidersHorizontal, TriangleAlert } from "lucide-react";
 import { announce } from "@/lib/announce";
-import { collectionSearch } from "@/lib/collection-search";
+import { collectionSearch, LANGUAGE_OPTIONS } from "@/lib/collection-search";
 import { errorMessage, requestJson } from "@/lib/http";
 import type { Collection, CollectionSearchConfig, CollectionVersion, SearchMode } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
@@ -79,10 +79,27 @@ export function SearchSettings({ collection, onSaved }: { collection: Collection
               <dt className="text-muted-foreground">Trechos (k)</dt>
               <dd className="tabular-nums">{search.max_results}</dd>
               <dt className="text-muted-foreground">Idioma</dt>
-              <dd className="font-mono text-[12px]">{search.language}</dd>
+              <dd className="font-mono text-[12px]">
+                {search.language}
+                {search.language_legacy && (
+                  <Badge variant="outline" className="ml-2 font-sans" title="Nunca foi escolhido: veio de antes da coluna">
+                    legado
+                  </Badge>
+                )}
+              </dd>
               <dt className="text-muted-foreground">Score</dt>
               <dd title={SCORE_KIND_LABEL[search.score_kind].long}>{SCORE_KIND_LABEL[search.score_kind].short}</dd>
             </dl>
+            {search.language_legacy && (
+              <p className="flex gap-2 text-[13px] text-muted-foreground" role="status">
+                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+                <span>
+                  {collection.warnings?.[0] ??
+                    "O idioma desta coleção é o inglês de antes da coluna existir: no modo híbrido o full-text usaria o dicionário errado para texto em português."}{" "}
+                  Troque em Editar; não precisa reindexar.
+                </span>
+              </p>
+            )}
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
                 <Pencil /> Editar
@@ -111,6 +128,7 @@ function SearchForm({
   const id = useId();
   const toast = useToast();
   const [mode, setMode] = useState<SearchMode>(search.search_mode);
+  const [language, setLanguage] = useState(search.language);
   const [k, setK] = useState(String(search.max_results));
   const [weight, setWeight] = useState(String(search.vector_weight));
   const [saving, setSaving] = useState(false);
@@ -132,6 +150,8 @@ function SearchForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           search_mode: mode,
+          // Só quando mudou: mandar o legado "english" de volta o gravaria como escolha.
+          ...(language !== search.language ? { language } : {}),
           max_results: kNumber,
           ...(mode === "hybrid" ? { vector_weight: weightNumber } : {}),
         }),
@@ -176,9 +196,20 @@ function SearchForm({
           </Field>
         )}
       </div>
-      <p className="text-[12px] text-muted-foreground">
-        Idioma <span className="font-mono">{search.language}</span> e embedder são fixos: para trocar, crie outra coleção.
-      </p>
+      <Field
+        label="Idioma do texto"
+        htmlFor={`${id}-language`}
+        hint="Dicionário do full-text: muda quais trechos casam no modo híbrido, sem reindexar."
+      >
+        <Select id={`${id}-language`} value={language} onChange={(e) => setLanguage(e.target.value)}>
+          {[...LANGUAGE_OPTIONS, ...(LANGUAGE_OPTIONS.some((o) => o.value === search.language) ? [] : [{ value: search.language, label: search.language }])].map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <p className="text-[12px] text-muted-foreground">O embedder é fixo: para trocar, crie outra coleção.</p>
       {error && <p className="text-sm text-destructive">{error}</p>}
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={saving || Boolean(kError) || (mode === "hybrid" && Boolean(weightError))}>

@@ -213,7 +213,8 @@ kuro --json collections retest manuais <content_id>          # a pergunta marcad
 kuro --json collections reindex manuais --yes                # recorta tudo pela regra de trechos atual (a dos sites)
 kuro --json runs chunk-dismiss <feedback_id> -m "não procedia"
 kuro --json collections search manuais "prazo de garantia"   # o mesmo que o agente enxerga (score, documento, origem)
-# Busca: --mode vector|hybrid, --k, --vector-weight e --language (fixo) no create; o resto muda com set.
+# Busca: --mode vector|hybrid, --k, --vector-weight e --language no create; tudo muda com set, inclusive language
+# (sem reindexar; `language=portuguese` resolve o aviso de idioma legado em collections antigas).
 # Cada mudança vira versão (`collections versions`); o run grava collection_version e o trace o score_kind.
 kuro --json collections set manuais search_mode=hybrid vector_weight=0.7 max_results=8
 kuro --json collections versions manuais

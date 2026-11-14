@@ -37,7 +37,7 @@ from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from pydantic import BaseModel
 
 from agent_service.agents import session_context
-from agent_service.agents.system_context import set_system_context
+from agent_service.agents.system_context import set_system_context, set_system_dependencies
 from agent_service.config import get_settings
 from agent_service.documents import retrieval
 from agent_service.observability import prompt_composition
@@ -251,6 +251,12 @@ def _agent_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOutputEvent
     # O contexto vigente vai no prompt de sistema (ver `agents/system_context.py`). Setado
     # a cada run, mesmo vazio: o de um run anterior na mesma task não sobra para este.
     set_system_context(run.system_context)
+    # As dependencies também vão ao prompt de sistema, uma vez por chamada, e não na mensagem
+    # do usuário (que o Agno grava e reenvia como histórico). Só o analista, que é one-shot e
+    # sem histórico, segue como o Agno faz: no fim da mensagem, e o prompt de sistema fica
+    # igual entre as chamadas (cache do provedor).
+    one_shot = (run.definition or {}).get("kind") == "analysis"
+    set_system_dependencies(None if one_shot else run.dependencies)
     failures.start_run()
     retrieval.start_run()
     return agent.arun(
@@ -261,7 +267,7 @@ def _agent_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOutputEvent
         stream=True,
         stream_events=True,
         dependencies=run.dependencies,
-        add_dependencies_to_context=True if run.dependencies else None,
+        add_dependencies_to_context=True if (one_shot and run.dependencies) else None,
         images=list(run.images) or None,
         audio=list(run.audio) or None,
         videos=list(run.videos) or None,

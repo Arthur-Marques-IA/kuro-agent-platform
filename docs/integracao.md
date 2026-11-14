@@ -155,7 +155,10 @@ Regras dos campos:
 - **`context` não é `dependencies`.** `dependencies` são valores tipados (`cpf`, `canal`), validados
   contra os `dependency_fields` do agente e entregues às tools por `source="dependency"`. `context` é
   texto livre para o modelo ler, sem validação nem uso pelas tools. Um dado que uma tool precisa
-  continua em `dependencies`; um parágrafo sobre a situação do contato vai em `context`.
+  continua em `dependencies`; um parágrafo sobre a situação do contato vai em `context`. Onde cada um
+  aparece: os dois vão ao modelo no prompt de sistema, `context` num bloco `# Contexto` que a sessão
+  herda até você trocá-lo, `dependencies` num bloco `<additional context>` (JSON) logo depois, só no
+  turno em que foram enviadas. Nenhum dos dois entra na mensagem do usuário nem no histórico.
 - **`attachments` de um evento só descrevem** o arquivo (`filename`, `mime_type`, `url`,
   `size_bytes`); o modelo vê a descrição, não o conteúdo. Para o modelo ler o arquivo, mande-o em
   `attachments` do corpo, como sempre. Um `content_base64` dentro de um evento é recusado (422).

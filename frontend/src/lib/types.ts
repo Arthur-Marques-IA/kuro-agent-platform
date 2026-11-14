@@ -638,8 +638,10 @@ export type SearchMode = "vector" | "hybrid";
 /** Configuração de busca de uma collection, com os padrões resolvidos. */
 export interface CollectionSearchConfig {
   search_mode: SearchMode;
-  /** Dicionário do full-text do Postgres; fixo na criação. */
+  /** Dicionário do full-text do Postgres; muda depois, sem reindexar. */
   language: string;
+  /** `language` nulo no cadastro: o inglês legado de antes da coluna, nunca escolhido. */
+  language_legacy?: boolean;
   /** Trechos por busca (k). */
   max_results: number;
   /** No híbrido, o peso do vetor (o resto é do full-text). */
@@ -663,6 +665,8 @@ export interface Collection {
   /** Versão atual da configuração — a que os runs gravam em `collection_version`. */
   version?: number | null;
   config_hash?: string | null;
+  /** Avisos de configuração, ex.: o idioma legado em inglês. */
+  warnings?: string[];
   /** Fixo na criação: a tabela de vetores é de um embedder só. */
   embedder_provider: string;
   embedder_model: string;

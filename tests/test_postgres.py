@@ -369,6 +369,28 @@ def test_busca_hibrida_soma_vetor_e_texto(collection_hibrida):
     assert 0.05 < beta < 0.5  # quase só o texto × 0,5
 
 
+def test_trocar_o_idioma_muda_o_que_casa_no_hibrido_sem_reindexar(collection_hibrida):
+    from agent_service.documents.search import SearchConfigError, validate_language
+
+    nome = collection_hibrida
+    asyncio.run(collections.add_text(nome, text="beta: a garantia cobre defeitos de fabricação.", name="garantia"))
+
+    def texto(language: str) -> float:
+        knowledge = collections._build_collection(
+            nome, None, None, None, SearchConfig(search_mode="hybrid", language=language, vector_weight=0.0)
+        )
+        return asyncio.run(knowledge.asearch(query="fabricações", max_results=5))[0].meta_data["similarity_score"]
+
+    # "fabricações" casa com "fabricação" só com o radical do português; em inglês o texto não pesa.
+    # O mesmo conteúdo indexado, sem reindexar: só o dicionário da consulta mudou.
+    assert texto("portuguese") > 0.05
+    assert texto("english") == pytest.approx(0.0)
+    # O nome é conferido no pg_ts_config de verdade.
+    validate_language("portuguese", get_db().db_engine)
+    with pytest.raises(SearchConfigError, match="pg_ts_config"):
+        validate_language("klingon", get_db().db_engine)
+
+
 # -- trace store --------------------------------------------------------------------
 
 
