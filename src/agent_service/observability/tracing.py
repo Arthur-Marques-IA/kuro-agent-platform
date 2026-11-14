@@ -33,13 +33,14 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.run.agent import RunEvent, RunOutputEvent
+from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from pydantic import BaseModel
 
 from agent_service.agents import session_context
 from agent_service.agents.system_context import set_system_context
 from agent_service.config import get_settings
 from agent_service.documents import retrieval
+from agent_service.observability import prompt_composition
 from agent_service.tools import failures
 from agent_service.tools.context import set_dependencies, set_dry_run
 
@@ -265,6 +266,9 @@ def _agent_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOutputEvent
         audio=list(run.audio) or None,
         videos=list(run.videos) or None,
         files=list(run.files) or None,
+        # No fim do stream o Agno entrega o `RunOutput`, de onde sai a composição do prompt
+        # (`prompt_composition.py`); `_recorded_events` o consome e não o repassa.
+        yield_run_output=True,
     )
 
 
@@ -276,14 +280,21 @@ def _ms(seconds: float | None) -> float | None:
     return round(seconds * 1000, 1) if seconds else None
 
 
-def _model_spans(metrics: Any, started_at: datetime) -> list[Any]:
-    """Uma span por modelo chamado, das métricas agregadas do Agno (`RunMetrics.details`)."""
+def _model_spans(metrics: Any, started_at: datetime, call_spans: list[Any] | None = None) -> list[Any]:
+    """Spans de modelo das métricas agregadas do Agno (`RunMetrics.details`): uma por modelo
+    chamado. Com `call_spans` (uma por chamada, de `ModelCalls`) que fecham com o agregado do
+    modelo principal, elas entram no lugar dele; o agregado dos demais (memória, resumo...)
+    continua, porque o Agno não expõe essas chamadas uma a uma."""
     from agent_service.observability.run_store import SpanRecord
 
     from agent_service.models.pricing import estimate_cost
 
-    spans = []
-    for model_type, entries in (getattr(metrics, "details", None) or {}).items():
+    details = getattr(metrics, "details", None) or {}
+    per_call = bool(call_spans) and ModelCalls.matches(call_spans or [], details.get("model"))
+    spans: list[Any] = list(call_spans or []) if per_call else []
+    for model_type, entries in details.items():
+        if per_call and model_type == "model":
+            continue
         for entry in entries or []:
             provider = getattr(entry, "provider", "") or "model"
             cost = getattr(entry, "cost", None)
@@ -294,6 +305,8 @@ def _model_spans(metrics: Any, started_at: datetime) -> list[Any]:
                     input_tokens=getattr(entry, "input_tokens", 0) or 0,
                     output_tokens=getattr(entry, "output_tokens", 0) or 0,
                     reasoning_tokens=getattr(entry, "reasoning_tokens", 0) or 0,
+                    cache_read_tokens=getattr(entry, "cache_read_tokens", 0) or 0,
+                    cache_write_tokens=getattr(entry, "cache_write_tokens", 0) or 0,
                 )
             spans.append(
                 SpanRecord(
@@ -310,6 +323,90 @@ def _model_spans(metrics: Any, started_at: datetime) -> list[Any]:
                 )
             )
     return spans
+
+
+class ModelCalls:
+    """Uma span `GENERATION` por chamada ao modelo principal do run.
+
+    A fonte são os eventos `ModelRequestStarted`/`ModelRequestCompleted` do stream do Agno:
+    o de término traz os tokens da chamada (entrada, saída, raciocínio, cache). O `created_at`
+    do evento é em segundos, sem precisão para latência, então o início e o fim são o instante
+    em que cada evento passa por aqui (a latência inclui o tempo de quem consome o stream
+    entre eventos, desprezível fora de um consumidor travado)."""
+
+    def __init__(self) -> None:
+        self.spans: list[Any] = []
+        self._started: tuple[datetime, float] | None = None
+
+    def started(self) -> None:
+        self._started = (datetime.now(timezone.utc), time.monotonic())
+
+    def completed(self, event: Any) -> None:
+        from agent_service.models.pricing import estimate_cost
+        from agent_service.observability.run_store import SpanRecord
+
+        ended = datetime.now(timezone.utc)
+        started, began = self._started or (ended, time.monotonic())
+        self._started = None
+        provider = getattr(event, "model_provider", None) or "model"
+        model = getattr(event, "model", None) or None
+        input_tokens = getattr(event, "input_tokens", None) or 0
+        output_tokens = getattr(event, "output_tokens", None) or 0
+        reasoning = getattr(event, "reasoning_tokens", None) or 0
+        cache_read = getattr(event, "cache_read_tokens", None) or 0
+        cache_write = getattr(event, "cache_write_tokens", None) or 0
+        metadata: dict[str, Any] = {"call": len(self.spans) + 1}
+        metadata.update(
+            {
+                name: value
+                for name, value in (
+                    ("cache_read_tokens", cache_read),
+                    ("cache_write_tokens", cache_write),
+                    ("reasoning_tokens", reasoning),
+                )
+                if value
+            }
+        )
+        if ttft := _ms(getattr(event, "time_to_first_token", None)):
+            metadata["time_to_first_token_ms"] = ttft
+        self.spans.append(
+            SpanRecord(
+                type="GENERATION",
+                name=f"{provider}.model",
+                started_at=started,
+                ended_at=ended,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=getattr(event, "total_tokens", None) or input_tokens + output_tokens,
+                cost_usd=estimate_cost(
+                    provider=provider,
+                    model_id=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    reasoning_tokens=reasoning,
+                    cache_read_tokens=cache_read,
+                    cache_write_tokens=cache_write,
+                ),
+                latency_ms=round((time.monotonic() - began) * 1000, 1),
+                metadata=metadata,
+            )
+        )
+
+    @staticmethod
+    def matches(call_spans: list[Any], entries: Any) -> bool:
+        """As chamadas fecham com o agregado do Agno para o modelo principal? Só então elas o
+        substituem: tokens de entrada e saída iguais, e nenhum custo informado pelo Agno (que
+        não dá para repartir por chamada)."""
+        entries = list(entries or [])
+        if not entries or any(getattr(e, "cost", None) is not None for e in entries):
+            return False
+        entry_in = sum(getattr(e, "input_tokens", 0) or 0 for e in entries)
+        entry_out = sum(getattr(e, "output_tokens", 0) or 0 for e in entries)
+        return (
+            sum(s.input_tokens for s in call_spans) == entry_in
+            and sum(s.output_tokens for s in call_spans) == entry_out
+        )
 
 
 def _cache_metadata(entry: Any) -> dict[str, int]:
@@ -405,6 +502,7 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
     chunks: list[str] = []
     final_content: str | None = None
     completed_content: Any = None
+    calls = ModelCalls()
     events = _agent_events(agent, run)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + run.timeout_seconds if run.timeout_seconds else None
@@ -424,8 +522,18 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
                 message = f"Tempo limite de {run.timeout_seconds:g}s excedido."
                 record.status, record.status_message = "error", message
                 raise RunTimeoutError(message) from None
+            if isinstance(event, RunOutput):
+                # O fim do stream: só para medir o prompt. Quem consome não o espera.
+                record.prompt_composition = prompt_composition.measure(
+                    event.messages, system_context=run.system_context, attachments=sum(run.attachment_counts.values())
+                )
+                continue
             if event.event == RunEvent.run_content.value and isinstance(event.content, str):
                 chunks.append(event.content)
+            elif event.event == RunEvent.model_request_started.value:
+                calls.started()
+            elif event.event == RunEvent.model_request_completed.value:
+                calls.completed(event)
             elif event.event == RunEvent.run_completed.value:
                 completed_content = event.content
                 if isinstance(event.content, str):
@@ -437,7 +545,10 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
                     record.input_tokens = metrics.input_tokens or 0
                     record.output_tokens = metrics.output_tokens or 0
                     record.total_tokens = metrics.total_tokens or 0
-                    record.spans.extend(_model_spans(metrics, record.started_at))
+                    record.cache_read_tokens = metrics.cache_read_tokens or 0
+                    record.cache_write_tokens = metrics.cache_write_tokens or 0
+                    record.spans.extend(_model_spans(metrics, record.started_at, calls.spans))
+                    record.spans.sort(key=lambda span: span.started_at)  # gerações e tools na ordem real
                     # Custo do Agno quando ele informa; senão, a soma estimada por modelo.
                     span_costs = [s.cost_usd for s in record.spans if s.type == "GENERATION" and s.cost_usd is not None]
                     record.cost_usd = (

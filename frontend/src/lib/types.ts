@@ -911,6 +911,11 @@ export interface RunSummary {
   output_tokens: number;
   total_tokens: number;
   cost_usd?: number | null;
+  /** Tokens do prompt lidos do cache (já dentro de `input_tokens`, exceto no Claude). 0 em run antigo. */
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  /** Tamanho do prompt da primeira chamada, em caracteres; a composição está no trace. */
+  prompt_chars?: number | null;
   /** `null` quando havia avaliações demais para contar na listagem — o trace tem a contagem exata. */
   feedback_up: number | null;
   feedback_down: number | null;
@@ -927,6 +932,27 @@ export interface RunSummary {
    *  `null` em run só com `message` (legado). */
   input_message?: string | null;
 }
+
+/** As partes do prompt, em caracteres exatos (`tokens_estimate` é só chars/4). */
+export interface PromptComposition {
+  chars: number;
+  parts: Partial<Record<PromptPart, number>>;
+  tokens_estimate: number;
+  tokens_estimate_method: string;
+  messages: number;
+  attachments: number;
+}
+
+export type PromptPart =
+  | "instructions"
+  | "session_context"
+  | "memories"
+  | "session_summary"
+  | "history"
+  | "history_tools"
+  | "turn"
+  | "dependencies"
+  | "other";
 
 export interface RunPage {
   items: RunSummary[];
@@ -978,6 +1004,8 @@ export interface RunTrace {
   input_events?: TimelineEvent[] | null;
   /** Entrada estruturada: os blocos de `context` (`{key, title, content, volatile, hash}`). */
   input_context?: InputContextBlock[] | null;
+  /** Quanto do prompt da primeira chamada veio de cada parte; `null` quando não foi medido. */
+  prompt_composition?: PromptComposition | null;
 }
 
 export type TimelineRole = "contact" | "human_agent" | "agent_sent" | "system";
@@ -1165,6 +1193,14 @@ export interface OverviewTotals {
   tool_failures: number;
   sessions: number;
   total_tokens: number;
+  input_tokens?: number;
+  cache_read_tokens?: number;
+  /** Fração 0–1 do prompt lida do cache; `null` sem tokens de entrada. */
+  cache_fraction?: number | null;
+  /** Média do prompt da primeira chamada (caracteres), nos runs medidos. */
+  avg_prompt_chars?: number | null;
+  /** Fração 0–1 desse prompt que é histórico. */
+  avg_history_fraction?: number | null;
   /** Runs + (no panorama geral) a coleta de sites. */
   cost_usd: number | null;
   /** Parte de `cost_usd` gasta pelo formatador das fontes de site. */

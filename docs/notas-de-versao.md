@@ -27,6 +27,15 @@ prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo h
 
 ### Ação necessária
 
+- **O custo mostrado cai para runs novos: o cache de prompt passa a ser cobrado a preço de cache.**
+  `cost_usd` (do run e das spans) descontava nada do cache e usava o preço de lista da entrada
+  inteira; agora o token lido do cache custa o preço de cache do modelo (Gemini e OpenAI: uma
+  fração da entrada; Claude: leitura barata e escrita mais cara), de `CACHE_PRICES` em
+  `models/pricing.py`. Modelo sem preço de cache confirmado (`gemini-2.0-flash`, `gemini-3.5-flash`,
+  `gemini-omni-1.1-flash`) segue a preço de lista. **Runs antigos não são recalculados**, então uma
+  série de custo mostra uma queda na data da atualização que é de método, não de consumo.
+  `MODEL_PRICES` aceita agora `[entrada, saída, leitura_cache, escrita_cache]` (os dois últimos
+  opcionais); quem já sobrescreve com dois números não muda.
 - **O `context` do `/chat` e do `/chat/stream` mudou de comportamento em relação à `0.3.0`.**
   Na `0.3.0` os blocos eram colados no começo da mensagem do turno, e o histórico da sessão os
   reenviava por até `num_history_runs` turnos: o modelo via o mesmo contexto até 11 vezes, o antigo
@@ -58,6 +67,26 @@ prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo h
 
 ### Novo
 
+- **Composição do prompt por execução.** Cada run de `/chat`, `/chat/stream` e `/analyze` grava quanto
+  do prompt da **primeira** chamada ao modelo veio de cada parte, em caracteres exatos: instruções,
+  contexto da sessão, memórias, resumo da sessão, histórico da conversa, tools do histórico,
+  dependencies (o bloco que o Agno cola na mensagem) e a mensagem do turno, mais a contagem de
+  anexos; `tokens_estimate` é só `chars/4`. Sai em `GET /observability/runs/{id}/trace`
+  (`prompt_composition`), em `kuro runs show`, em `run_show` (MCP), na tela da execução e no `kuro
+  dash`; `prompt_chars` vai também na listagem. Fora da conta ficam as definições das tools e o
+  conteúdo dos anexos. Uma medição que falha deixa o campo nulo e não derruba o run; um run
+  interrompido antes do fim também fica sem ela.
+- **Uma span `GENERATION` por chamada ao modelo.** Um run com uma tool tem agora duas gerações
+  (`metadata.call` = 1, 2...), intercaladas com as spans de tool na ordem real, cada uma com
+  `started_at`, `ended_at`, `latency_ms`, tokens, cache e custo próprios. Antes era uma span só,
+  somada, sem fim nem latência. Os totais do run não mudam. O Agno só dá o agregado para o modelo
+  de memória, de resumo e para o agente procedural: nesses a span continua agregada. Se as
+  chamadas não fecham com o agregado do Agno (ou o Agno informa o custo), fica o agregado. A latência
+  de cada chamada é medida entre os eventos do stream.
+- **Cache de prompt como campo do run.** `cache_read_tokens` e `cache_write_tokens` na listagem e no
+  detalhe de `/observability/runs`, em `kuro runs list/show`, na lista e na tela da execução do
+  console. O panorama (`/observability/overview`) ganha, por agente e no total, `cache_read_tokens`,
+  `input_tokens`, `cache_fraction`, `avg_prompt_chars` e `avg_history_fraction`.
 - **`agent_sent` repetido não se repete no prompt.** Um evento `agent_sent` cujo texto é igual à
   última resposta do agente na sessão (ignorando espaços nas pontas e diferenças de quebra de linha
   e de espaço) sai do texto do modelo, porque o histórico já traz essa resposta. Ele continua
@@ -71,8 +100,10 @@ prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo h
 
 ### Como atualizar
 
-1. A migração `0018` (a coluna `history_tool_calls` em `agent_definitions`, nula) roda sozinha na
-   subida. Para voltar à `0.3.0`, siga o [roteiro de migração](migracao.md#6-voltar-atrás).
+1. As migrações `0018` (a coluna `history_tool_calls` em `agent_definitions`, nula) e `0019` (em
+   `runs`: `cache_read_tokens`, `cache_write_tokens`, `prompt_composition`, `prompt_chars`,
+   `history_chars`) rodam sozinhas na subida. Para voltar à `0.3.0`, siga o
+   [roteiro de migração](migracao.md#6-voltar-atrás).
 
 ---
 

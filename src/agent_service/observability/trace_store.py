@@ -88,6 +88,15 @@ class RunSummary(BaseModel):
     output_tokens: int = 0
     total_tokens: int = 0
     cost_usd: float | None = None
+    cache_read_tokens: int = 0
+    """Tokens do prompt lidos do cache (já contados em `input_tokens`, exceto no Claude,
+    onde vêm à parte). O `cost_usd` os cobra a preço de cache (`models/pricing.py`) nos runs
+    novos; os antigos não foram recalculados."""
+    cache_write_tokens: int = 0
+    """Tokens escritos no cache (só o Claude cobra e informa)."""
+    prompt_chars: int | None = None
+    """Tamanho, em caracteres, do prompt da primeira chamada ao modelo (a composição está no
+    detalhe, `RunTrace.prompt_composition`). `None` em run antigo, procedural ou sem medição."""
     feedback_up: int | None = 0
     feedback_down: int | None = 0
     """`None` quando havia avaliações demais para contar com segurança na listagem — veja o trace."""
@@ -160,6 +169,11 @@ class RunTrace(BaseModel):
     `{role, content, at, kind, attachments, speech}`; `speech: true` marca o evento que
     é a fala nova (`run.input_message`), se algum é. `[]` quando veio só `context`;
     `None` em run não estruturado."""
+    prompt_composition: dict[str, Any] | None = None
+    """Quanto do prompt da primeira chamada ao modelo veio de cada parte (`observability/prompt_composition.py`):
+    `{chars, parts: {instructions, session_context, memories, session_summary, history, history_tools,
+    turn, dependencies, other}, tokens_estimate, tokens_estimate_method, messages, attachments}`. Os
+    números de `parts` são caracteres exatos; `tokens_estimate` é só chars/4. `None` quando não foi medido."""
     input_context: list[dict[str, Any]] | None = None
     """Entrada estruturada: os blocos de `context` — `{key, title, content, volatile, hash}`,
     com `hash` = sha256 hex do `content`. `[]` quando veio só `events`; `None` em run não

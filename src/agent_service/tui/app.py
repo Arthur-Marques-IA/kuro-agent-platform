@@ -419,6 +419,16 @@ class RunScreen(Screen):
             "\n",
             (f"run {run['run_id']} · sessão {run.get('session_id') or '—'} · {_when(run['started_at'])}", MUTED),
         )
+        if run.get("cache_read_tokens"):
+            head.append(f"\ncache de prompt: {_int(run['cache_read_tokens'])} tokens lidos", style=MUTED)
+        composition = trace.get("prompt_composition") or {}
+        if composition.get("chars"):
+            shown = [f"{n} {c}" for n, c in (composition.get("parts") or {}).items() if c]
+            head.append(
+                f"\nprompt: {composition['chars']} caracteres (~{composition.get('tokens_estimate', 0)} tokens, "
+                f"estimativa) · {' · '.join(shown)}",
+                style=MUTED,
+            )
         if run.get("status_message"):
             head.append(f"\n{run['status_message']}", style=BAD)
         self.query_one("#run-head", Static).update(head)
@@ -454,6 +464,12 @@ class RunScreen(Screen):
                 ("━" * filled, BAD if failed else color),
                 ("─" * (12 - filled), "#2a3442"),
                 (f" {_ms(span.get('latency_ms'))}", MUTED),
+                (
+                    f"  {_int(span['input_tokens'])} → {_int(span['output_tokens'])} tokens"
+                    if span["type"] == "GENERATION" and (span.get("input_tokens") or span.get("output_tokens"))
+                    else "",
+                    MUTED,
+                ),
             )
             node = (parent or tree.root).add(label, expand=failed)
             data: dict[str, Any] = {"span": span, "full": False, "io": {}}

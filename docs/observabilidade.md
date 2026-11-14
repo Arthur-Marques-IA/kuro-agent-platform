@@ -20,6 +20,36 @@ modelo fora da tabela fica sem custo, nunca com um valor inventado. Com
 `LANGFUSE_ENABLED=true` os traces também vão para o Langfuse, que vira um
 exportador a mais.
 
+## Composição do prompt, chamadas ao modelo e cache
+
+Para cada run de `/chat`, `/chat/stream` e `/analyze` o trace guarda de onde veio o prompt e quanto
+custou cada ida ao modelo:
+
+- **Composição do prompt** (`prompt_composition` no trace, `prompt_chars` na listagem): as mensagens
+  que o Agno montou para a **primeira** chamada ao modelo, medidas em caracteres exatos por parte:
+  `instructions` (o sistema sem as partes abaixo), `session_context` (o texto de
+  `agents/system_context.py`), `memories` e `session_summary` (os blocos que o Agno põe no sistema),
+  `history` (falas de turnos anteriores), `history_tools` (chamadas e resultados de tool vindos do
+  histórico), `turn` (a mensagem do turno), `dependencies` (o bloco `<additional context>` que o
+  Agno cola nela) e `other`. `tokens_estimate` é `chars/4`, só uma ordem de grandeza; o número real de
+  tokens está nas spans do modelo. Não entram as definições das tools nem o binário dos anexos
+  (`attachments` é a contagem). A medição lê o `RunOutput` que o Agno entrega ao fim do stream:
+  run interrompido ou com erro antes disso fica sem ela, e uma falha ao medir só deixa o campo nulo.
+- **Uma span `GENERATION` por chamada**: vem dos eventos `ModelRequestStarted/Completed` do Agno, na
+  ordem real em relação às tools, com `started_at`, `ended_at`, `latency_ms` (medida entre os eventos),
+  tokens, `metadata.cache_read_tokens`/`cache_write_tokens`/`reasoning_tokens`,
+  `metadata.time_to_first_token_ms` e `metadata.call`. Só o modelo principal do agente é aberto por
+  chamada: o Agno agrega a memória, o resumo e o fluxo procedural, e ali a span continua uma só.
+  Se as chamadas não somarem os tokens do agregado do Agno (ou o Agno informar o custo), o run
+  fica com o agregado. O texto do prompt não é gravado nas spans: o tamanho está na composição.
+- **Cache e custo**: `cache_read_tokens` e `cache_write_tokens` são campos do run. O custo estimado
+  desconta o cache com `CACHE_PRICES` (`models/pricing.py`, fonte e data no comentário; sem preço de
+  cache confirmado, a preço de lista). No Gemini e no OpenAI `input_tokens` já inclui o cache; no Claude
+  não. Runs anteriores à migração `0019` ficam com cache 0, sem composição e com o custo de antes.
+- **Panorama**: `GET /observability/overview` traz, no total e por agente, `cache_fraction`,
+  `avg_prompt_chars` e `avg_history_fraction` (histórico sobre o total de caracteres, só dos runs
+  medidos). Para ver um run específico, `runs list`/`runs show` (`prompt_chars`, `cache_read_tokens`).
+
 ```bash
 uv run kuro runs list --agent suporte -n 5            # latência, tokens, custo, 👍/👎
 uv run kuro runs show <run_id>                        # spans e scores

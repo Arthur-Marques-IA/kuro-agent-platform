@@ -2908,6 +2908,17 @@ export interface components {
         };
         /** OverviewTotals */
         OverviewTotals: {
+            /** Avg History Fraction */
+            avg_history_fraction?: number | null;
+            /** Avg Prompt Chars */
+            avg_prompt_chars?: number | null;
+            /** Cache Fraction */
+            cache_fraction?: number | null;
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
             /** Cost Usd */
             cost_usd?: number | null;
             /**
@@ -2932,6 +2943,11 @@ export interface components {
              * @default 0
              */
             ingestion_tokens: number;
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
             /**
              * Interrupted
              * @default 0
@@ -3325,6 +3341,16 @@ export interface components {
             attachments: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
+            /**
+             * Cache Write Tokens
+             * @default 0
+             */
+            cache_write_tokens: number;
             /** Collection Config Hash */
             collection_config_hash?: string | null;
             /** Collection Version */
@@ -3380,6 +3406,8 @@ export interface components {
              * @default 0
              */
             output_tokens: number;
+            /** Prompt Chars */
+            prompt_chars?: number | null;
             /** Prompt Version */
             prompt_version?: number | null;
             /** Run Id */
@@ -3424,6 +3452,10 @@ export interface components {
             }[] | null;
             /** Procedure State */
             procedure_state?: {
+                [key: string]: unknown;
+            } | null;
+            /** Prompt Composition */
+            prompt_composition?: {
                 [key: string]: unknown;
             } | null;
             /** Reference */

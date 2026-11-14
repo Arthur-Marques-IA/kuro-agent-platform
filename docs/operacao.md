@@ -245,7 +245,7 @@ agent-service). A chave privada dela fica no volume do Caddy.
 | `IDEMPOTENCY_TTL_HOURS` | `24` | por quanto tempo um `Idempotency-Key` no `/chat`/`/analyze` devolve a resposta guardada ([integração](integracao.md#repetir-sem-duplicar-idempotency-key)) |
 | `AUX_MODEL_ID` / `AUX_MODEL_PROVIDER` | — (o do agente) | modelo barato para extrair memória e resumir a sessão |
 | `MEMORY_CONTEXT_LIMIT` | `10` | quantas memórias de longo prazo (as mais recentes) entram no prompt |
-| `MODEL_PRICES` | tabela embutida | JSON `{"modelo": [USD/1M entrada, USD/1M saída]}` para o custo estimado sem Langfuse |
+| `MODEL_PRICES` | tabela embutida | JSON `{"modelo": [USD/1M entrada, USD/1M saída, leitura do cache?, escrita no cache?]}` para o custo estimado sem Langfuse |
 | `GOOGLE_API_KEY` | — | chave do Gemini (provedor padrão) |
 | `CREDENTIALS_ENCRYPTION_KEY` | — | chave Fernet que cifra as credenciais de modelo e os segredos das tools `api`; **obrigatória** para cadastrar chaves de modelo. Sem ela, os segredos de tools ficam em texto plano. Ver [segurança](#segurança-e-limitações-atuais) |
 | `DEFAULT_MODEL_PROVIDER` / `DEFAULT_MODEL_ID` | `google` / `gemini-2.5-flash` | modelo de quem não define um |

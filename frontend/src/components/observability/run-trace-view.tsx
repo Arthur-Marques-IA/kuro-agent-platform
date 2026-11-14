@@ -21,7 +21,8 @@ import {
 import { cn } from "@/lib/cn";
 import { ApiError, errorMessage, requestJson } from "@/lib/http";
 import { formatCost, formatDateTime, formatMs, formatNumber } from "@/lib/format";
-import type { RetrievalReferences, RunTrace, TraceScore, TraceSpan } from "@/lib/types";
+import type { PromptComposition, RetrievalReferences, RunTrace, TraceScore, TraceSpan } from "@/lib/types";
+import { PROMPT_PART_BARS, cacheFraction, formatPercent, promptRows } from "@/lib/prompt-composition";
 import { useEscapeBack } from "@/lib/use-list-nav";
 import { Badge } from "@/components/ui/badge";
 import { CodeBlock } from "@/components/ui/code-block";
@@ -254,7 +255,15 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
           <Stat
             label="Tokens"
             value={run.total_tokens ? formatNumber(run.total_tokens) : "—"}
-            hint={run.total_tokens ? `${formatNumber(run.input_tokens)} entrada · ${formatNumber(run.output_tokens)} saída` : undefined}
+            hint={
+              run.total_tokens
+                ? `${formatNumber(run.input_tokens)} entrada · ${formatNumber(run.output_tokens)} saída${
+                    run.cache_read_tokens
+                      ? ` · ${formatNumber(run.cache_read_tokens)} do cache${cacheNote(run.cache_read_tokens, run.input_tokens)}`
+                      : ""
+                  }`
+                : undefined
+            }
           />
           <Stat label="Custo" value={formatCost(run.cost_usd)} />
           <Stat
@@ -264,6 +273,7 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
           />
         </dl>
 
+        {trace.prompt_composition && <PromptCompositionCard composition={trace.prompt_composition} />}
         <RelatedTimeline runId={run.run_id} />
         {analysis ? <AnalysisIO run={run} schema={agent?.response_schema} /> : <RunInput trace={trace} />}
         {trace.procedure_state && <ProcedureTurnState state={trace.procedure_state} />}
@@ -384,6 +394,65 @@ function RunInput({ trace }: { trace: RunTrace }) {
   );
 }
 
+function cacheNote(read: number, input: number): string {
+  const fraction = cacheFraction(read, input);
+  return fraction == null ? "" : ` (${formatPercent(fraction * 100)})`;
+}
+
+/** Quanto do prompt da primeira chamada veio de cada parte: barra empilhada e tabela com os mesmos
+ *  números (a tabela é o texto acessível; a cor da barra nunca é o único sinal). */
+function PromptCompositionCard({ composition }: { composition: PromptComposition }) {
+  const rows = promptRows(composition);
+  if (rows.length === 0) return null;
+  return (
+    <Card className="flex flex-col gap-3 p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <h2 className="text-sm font-semibold">Composição do prompt</h2>
+        <p className="text-xs text-muted-foreground">
+          {formatNumber(composition.chars)} caracteres · ~{formatNumber(composition.tokens_estimate)} tokens (estimativa,{" "}
+          {composition.tokens_estimate_method}) · primeira chamada ao modelo
+        </p>
+      </div>
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted" role="img" aria-label="Partes do prompt, em proporção">
+        {rows.map((row) => (
+          <span
+            key={row.part}
+            className={cn("h-full border-r border-background last:border-r-0", PROMPT_PART_BARS[row.part])}
+            style={{ width: `${row.percent}%`, minWidth: 2 }}
+            title={`${row.label}: ${formatNumber(row.chars)} caracteres`}
+          />
+        ))}
+      </div>
+      <table className="w-full text-[13px]">
+        <caption className="sr-only">Caracteres do prompt por parte</caption>
+        <thead className="sr-only">
+          <tr>
+            <th scope="col">Parte</th>
+            <th scope="col">Caracteres</th>
+            <th scope="col">Percentual</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.part}>
+              <td className="py-0.5 pr-3">
+                <span className={cn("mr-2 inline-block size-2.5 rounded-sm align-middle", PROMPT_PART_BARS[row.part])} aria-hidden />
+                {row.label}
+              </td>
+              <td className="py-0.5 pr-3 text-right tabular-nums">{formatNumber(row.chars)}</td>
+              <td className="w-14 py-0.5 text-right tabular-nums text-muted-foreground">{formatPercent(row.percent)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-xs text-muted-foreground">
+        Fora da conta: as definições das tools e o conteúdo dos anexos
+        {composition.attachments > 0 ? ` (${composition.attachments} anexo${composition.attachments > 1 ? "s" : ""} nesta chamada)` : ""}.
+      </p>
+    </Card>
+  );
+}
+
 function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
   return (
     <Card className="flex flex-col gap-0.5 px-4 py-3">
@@ -475,7 +544,17 @@ function Waterfall({
             >
               <span className="flex w-full min-w-0 items-center gap-2" style={{ paddingLeft: depth * 16 }}>
                 <Icon className={cn("size-3.5 shrink-0", failed ? "text-destructive" : "text-muted-foreground")} aria-label={label} />
-                <span className={cn("min-w-0 flex-1 truncate text-[13px]", failed && "text-destructive")}>{span.name}</span>
+                <span className={cn("min-w-0 flex-1 truncate text-[13px]", failed && "text-destructive")}>
+                  {span.name}
+                  {span.type === "GENERATION" && typeof span.metadata?.call === "number" && (
+                    <span className="text-muted-foreground"> · chamada {span.metadata.call}</span>
+                  )}
+                </span>
+                {span.type === "GENERATION" && Number(span.metadata?.cache_read_tokens) > 0 && (
+                  <span className="hidden shrink-0 text-[11px] tabular-nums text-muted-foreground sm:inline">
+                    {formatNumber(Number(span.metadata.cache_read_tokens))} cache
+                  </span>
+                )}
                 {span.total_tokens > 0 && (
                   <span className="hidden shrink-0 text-[11px] tabular-nums text-muted-foreground sm:inline">
                     {formatNumber(span.total_tokens)} tok
