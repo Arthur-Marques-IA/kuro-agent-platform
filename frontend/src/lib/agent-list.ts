@@ -72,6 +72,7 @@ const COMPARED: { label: string; fields: Record<string, (a: AgentDefinition) => 
   { label: "schema", fields: { response_schema: (a) => a.response_schema } },
   { label: "etapas", fields: { stages: (a) => a.stages ?? [] } },
   { label: "formato", fields: { plain_text: (a) => a.plain_text ?? false } },
+  { label: "checagens", fields: { checks: (a) => a.checks ?? [] } },
   { label: "tipo", fields: { kind: (a) => a.kind } },
 ];
 

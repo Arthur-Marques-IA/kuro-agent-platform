@@ -493,6 +493,7 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
         session_id=run.session_id,
         message=run.message,
         **_structured_input(run),
+        checks=_agent_checks(run),
         started_at=datetime.now(timezone.utc),
         metadata=dict(run.metadata),
         input={
@@ -613,6 +614,11 @@ def _structured_input(run: RunContext) -> dict[str, Any]:
     }
 
 
+def _agent_checks(run: RunContext) -> list[dict[str, Any]]:
+    """As checagens do agente que rodou (`observability/checks.py`), avaliadas ao gravar o run."""
+    return list((run.definition or {}).get("checks") or [])
+
+
 def _set_collection_version(record: Any, run: RunContext) -> None:
     """A versão da configuração de busca com que o run consultou a base.
 
@@ -673,6 +679,7 @@ def record_run_without_model(
         session_id=run.session_id,
         message=run.message,
         **_structured_input(run),
+        checks=_agent_checks(run),
         started_at=min((s.started_at for s in run.extra_spans), default=started),
         metadata=dict(run.metadata),
         input={"message": run.message, "dependencies": run.dependencies},

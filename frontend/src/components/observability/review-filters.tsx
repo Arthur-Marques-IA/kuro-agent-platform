@@ -22,6 +22,8 @@ export interface ReviewState {
   sideEffect: boolean;
   hideShort: boolean;
   feedbackDown: boolean;
+  /** Alguma checagem automática do agente reprovou (`checks` do agente). */
+  checkFailed: boolean;
   includeTests: boolean;
   /** Quando preenchido, a lista é uma amostra aleatória (o número muda para sortear de novo). */
   sampleSeed: number | null;
@@ -33,6 +35,7 @@ export const EMPTY_REVIEW: ReviewState = {
   sideEffect: false,
   hideShort: false,
   feedbackDown: false,
+  checkFailed: false,
   includeTests: false,
   sampleSeed: null,
 };
@@ -48,6 +51,7 @@ export function reviewParams(review: ReviewState): Record<string, string | strin
   if (review.sideEffect) p.side_effect = "true";
   if (review.hideShort) p.min_message_chars = String(SHORT_MESSAGE_CHARS);
   if (review.feedbackDown) p.feedback = "down";
+  if (review.checkFailed) p.check_failed = "true";
   if (!review.includeTests) p.include_dry_run = "false";
   if (review.sampleSeed != null) {
     p.sample = String(SAMPLE_SIZE);
@@ -138,6 +142,13 @@ export function ReviewFilters({ review, onChange }: { review: ReviewState; onCha
         </Chip>
         <Chip active={review.feedbackDown} onClick={() => set({ feedbackDown: !review.feedbackDown })}>
           👎 Feedback negativo
+        </Chip>
+        <Chip
+          active={review.checkFailed}
+          onClick={() => set({ checkFailed: !review.checkFailed })}
+          title="Alguma checagem automática do agente reprovou (configure em Agentes, seção Checagens)"
+        >
+          Checagem reprovada
         </Chip>
         <Chip
           active={review.hideShort}

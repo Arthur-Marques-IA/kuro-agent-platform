@@ -233,6 +233,27 @@ buscam uma URL escolhida na hora (`CustomApiTools`, `WebsiteTools`) ficam fora
 do catálogo de propósito: elas têm cliente HTTP próprio e passariam por cima
 dessa trava — quem cobre esse caso são as tools `kind="api"`.
 
+### Efeito colateral: a classificação das tools
+
+`side_effect` é `true` (grava, cobra, transfere ou envia), `false` (só lê) ou nulo (ainda não
+classificada). Nulo não é erro, mas **em tempo de execução vale como "sem efeito"**:
+
+- a trava do agente procedural só barra `side_effect = true` em `tools`: uma tool que grava, mas está
+  nula, entra em `tools` sem aviso e o modelo pode chamá-la fora de ordem;
+- o filtro `--side-effect` da fila de revisão só acha runs com tool `true`; `--side-effect false`
+  inclui as nulas;
+- o selo "efeito colateral" da linha do tempo da sessão só aparece para `true`.
+
+Classificar vale também para os runs antigos (a classificação é lida na hora). Para ajudar, tools
+`kind="api"` trazem `side_effect_suggested` em `GET /tools` e `GET /tools/{nome}`, pelo método HTTP:
+`GET`/`HEAD` sugerem `false`; `POST`/`PUT`/`PATCH`/`DELETE`, `true`. É só uma sugestão (um POST de
+consulta ou um GET que dispara ação existem) e nunca é gravada sozinha: o console mostra "não
+classificada" com a sugestão e um botão para aceitá-la, e `kuro tools list` mostra a sugestão ao lado.
+Criar ou atualizar uma tool que fica sem classificação devolve `warnings` na resposta (a CLI e o MCP
+mostram; não é erro, e a saída continua 0). `kuro tools audit` lista as não classificadas e os agentes
+que as usam (`--strict` sai com 1 se houver alguma); `kuro tools set <tool> side_effect=true|false`
+classifica.
+
 ## Base de conhecimento (RAG)
 
 Uma *collection* é uma base de documentos com tabela pgvector própria. O

@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState, RelativeTime, Skeleton, Spinner } from "@/components/ui/primitives";
+import { ChecksBadge } from "@/components/observability/run-checks";
 import { FeedbackCount, RunStatusBadge } from "@/components/observability/run-status";
 
 const PAGE_SIZE = 25;
@@ -269,6 +270,7 @@ function RunCard({ run, showAgent }: { run: RunSummary; showAgent: boolean }) {
               {run.tool_failures} {run.tool_failures === 1 ? "tool falhou" : "tools falharam"}
             </Badge>
           )}
+          <ChecksBadge checks={run.checks} />
           <span className="ml-auto whitespace-nowrap">
             <RelativeTime date={run.started_at} />
           </span>
@@ -319,7 +321,8 @@ function RunRow({ run, showAgentColumn }: { run: RunSummary; showAgentColumn: bo
               {run.tool_failures} {run.tool_failures === 1 ? "falhou" : "falharam"}
             </Badge>
           )}
-          {run.complexity == null && !run.tool_failures && <span className="text-muted-foreground">—</span>}
+          <ChecksBadge checks={run.checks} />
+          {run.complexity == null && !run.tool_failures && !run.checks?.length && <span className="text-muted-foreground">—</span>}
         </span>
       </td>
       <td className="px-3 py-2.5">

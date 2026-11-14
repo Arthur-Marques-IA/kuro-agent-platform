@@ -29,6 +29,7 @@ import { CodeBlock } from "@/components/ui/code-block";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CopyButton } from "@/components/ui/copy-button";
+import { ChecksPanel } from "@/components/observability/run-checks";
 import { EmptyState, RelativeTime, SectionHeading, Skeleton, Spinner } from "@/components/ui/primitives";
 import { AgentAvatar } from "@/components/agents/agent-avatar";
 import { roleLabel } from "@/lib/timeline";
@@ -318,6 +319,7 @@ function TraceDetail({ trace, onReload }: { trace: RunTrace; onReload: () => voi
           </div>
         )}
 
+        <ChecksPanel checks={run.checks ?? []} />
         {scores.length > 0 && <Scores scores={scores} />}
       </PageBody>
     </>

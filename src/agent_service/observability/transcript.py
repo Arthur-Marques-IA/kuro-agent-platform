@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel
 
 from agent_service.observability.overview import DEFAULT_TIMEZONE
+from agent_service.observability.trace_store import RunCheck
 from agent_service.tools.failures import NOT_COUNTED
 
 TOOL_ARG_MAX = 160
@@ -119,6 +120,8 @@ class TimelineTurn(BaseModel):
     do turno anterior da sessão (aí todo bloco vem `changed: false`)."""
     steps: list[TimelineStep] = []
     """Cada chamada de tool, na ordem."""
+    checks: list[RunCheck] = []
+    """As checagens do agente avaliadas neste turno (`observability/checks.py`); vazio = nenhuma."""
     sources: list[dict[str, Any]] = []
     """Os documentos que as buscas na base devolveram — o mesmo `sources` do `/chat`."""
     output: str | None = None
@@ -235,6 +238,7 @@ def build_timeline(session_id: str, data: dict[str, Any]) -> SessionTimeline:
                 raw_input=None if structured else row.message,
                 context=context,
                 steps=[_step(s, data["side_effects"]) for s in spans],
+                checks=[RunCheck(**c) for c in data.get("checks", {}).get(row.run_id, [])],
                 sources=sources_from(searches),
                 output=row.output,
                 usage=TimelineUsage(

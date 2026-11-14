@@ -512,11 +512,12 @@ export function LogsExplorerView({ view, initial }: { view: "sessions" | "runs" 
     sideEffect: query.sideEffect,
     hideShort: query.hideShort,
     feedbackDown: query.feedbackDown,
+    checkFailed: query.checkFailed,
     includeTests: query.tests,
     sampleSeed,
   };
   const reviewing = Boolean(
-    query.complexity.length || query.toolFailed || query.sideEffect || query.hideShort || query.feedbackDown || sampleSeed
+    query.complexity.length || query.toolFailed || query.sideEffect || query.hideShort || query.feedbackDown || query.checkFailed || sampleSeed
   );
   const runsParams: Record<string, string | string[]> = { ...params, ...reviewParams(review) };
   if (query.version != null) runsParams.agent_version = String(query.version);
@@ -625,6 +626,7 @@ export function LogsExplorerView({ view, initial }: { view: "sessions" | "runs" 
                 sideEffect: next.sideEffect,
                 hideShort: next.hideShort,
                 feedbackDown: next.feedbackDown,
+                checkFailed: next.checkFailed,
                 tests: next.includeTests,
               });
             }}

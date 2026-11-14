@@ -108,6 +108,15 @@ def _render_turn(turn: dict[str, Any]) -> None:
         console.print(
             f"  {mark} {step.get('tool')}({_args(step.get('args'))}){effect} → {detail or '—'}", highlight=False
         )
+    for c in turn.get("checks") or []:
+        if c.get("status") == "passed":
+            continue
+        color = "red" if c.get("status") == "failed" and c.get("severity") == "fail" else "yellow"
+        console.print(
+            f"  [{color}]checagem {c.get('name')}: {c.get('status')}[/] "
+            f"[dim]({c.get('field')} {c.get('op')} {c.get('expected')!r}; veio {c.get('actual')!r})[/]",
+            highlight=False,
+        )
     if turn.get("status_message") and status != "success":
         console.print(f"  [red]{turn['status_message']}[/]", highlight=False)
     console.print(f"  [bold magenta]agente>[/] {turn.get('output') or '—'}", highlight=False)

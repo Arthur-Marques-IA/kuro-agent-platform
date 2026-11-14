@@ -27,7 +27,12 @@ from pydantic import BaseModel, Field, model_validator
 from agent_service.agents.store import list_definitions as list_agent_definitions
 from agent_service.config import get_settings
 from agent_service.tools import registry, store
-from agent_service.tools.api_tool import ApiToolConfigError, required_dependencies, validate_api_config
+from agent_service.tools.api_tool import (
+    ApiToolConfigError,
+    required_dependencies,
+    suggest_side_effect,
+    validate_api_config,
+)
 from agent_service.tools.crypto import SECRET_AUTH_FIELDS, SECRET_HEADER_RE, is_encrypted, secrets_at_rest
 from agent_service.tools.catalog import BuiltinConfigError, list_builtin_catalog, validate_builtin_config
 from agent_service.tools.invoke import ToolUnavailableError
@@ -112,8 +117,28 @@ def _unmask_config(kind: str, incoming: dict[str, Any], existing: dict[str, Any]
     return merged
 
 
-def _row_out(row: dict[str, Any]) -> dict[str, Any]:
-    out = {**row, "config": _mask_config(row["kind"], row["config"])}
+def _unclassified_warning(row: dict[str, Any]) -> list[str]:
+    """Aviso (não erro) de uma tool que ficou sem classificação de efeito colateral."""
+    if row.get("side_effect") is not None:
+        return []
+    name = row["tool_name"]
+    suggested = suggest_side_effect(row["kind"], row["config"])
+    hint = f" Pelo método HTTP a sugestão é side_effect={str(suggested).lower()}." if suggested is not None else ""
+    return [
+        f"A tool {name!r} não está classificada quanto a efeito colateral (side_effect).{hint} "
+        "Sem classificar, o filtro --side-effect da fila de revisão e o selo da sessão a tratam como sem efeito, "
+        f"e um agente procedural a aceita em `tools`. Classifique com: kuro tools set {name} side_effect=true|false"
+    ]
+
+
+def _row_out(row: dict[str, Any], *, warn: bool = False) -> dict[str, Any]:
+    out = {
+        **row,
+        "config": _mask_config(row["kind"], row["config"]),
+        "side_effect_suggested": suggest_side_effect(row["kind"], row["config"]),
+    }
+    if warn:
+        out["warnings"] = _unclassified_warning(row)
     if row["kind"] == "api":
         out["secrets_at_rest"] = secrets_at_rest(row["config"])
     return out
@@ -162,6 +187,13 @@ class ToolOut(BaseModel):
     is_seed: bool
     side_effect: bool | None = None
     """`None` = ainda não classificada."""
+    side_effect_suggested: bool | None = None
+    """Só `kind="api"`: o que o método HTTP sugere (GET/HEAD = `false`; POST/PUT/PATCH/DELETE =
+    `true`). É só uma sugestão: nunca é gravada sozinha, e aparece também quando a tool já foi
+    classificada (para quem quer conferir). `None` em builtin e python."""
+    warnings: list[str] = []
+    """Só na resposta de criar e atualizar: avisos que não impedem a gravação (ex.: a tool ficou
+    sem classificação de efeito colateral)."""
     secrets_at_rest: Literal["encrypted", "plaintext"] | None = None
     """Só `kind="api"`: como os segredos (`auth`, headers de credencial) estão no banco.
     `plaintext` = algum ainda em claro (sem `CREDENTIALS_ENCRYPTION_KEY`, ou legado
@@ -286,7 +318,7 @@ def create_tool(body: ToolIn) -> dict[str, Any]:
         enabled=body.enabled,
         side_effect=body.side_effect,
     )
-    return _row_out(created)
+    return _row_out(created, warn=True)
 
 
 @router.get("/{tool_name}", response_model=ToolDetailOut)
@@ -325,7 +357,7 @@ def update_tool(tool_name: str, body: ToolUpdateIn) -> dict[str, Any]:
         enabled=body.enabled,
         **({"side_effect": body.side_effect} if "side_effect" in body.model_fields_set else {}),
     )
-    return _row_out(updated)
+    return _row_out(updated, warn=True)
 
 
 def _check_agents_declare_dependencies(tool_name: str, config: dict[str, Any]) -> None:

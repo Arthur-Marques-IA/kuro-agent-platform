@@ -129,14 +129,28 @@ prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo h
   MCP e no formulário do agente (seção Memória). Recusado com 422 em `kind="analysis"`. Os agentes
   que já existem não mudam, nem de versão. Ver [conceitos](conceitos.md#histórico-da-conversa).
 
+- **Checagens automáticas por agente (`checks`).** Regras determinísticas, sem modelo, avaliadas em
+  toda execução real (dry_run incluído) ao fim do run e gravadas em `run_scores` (`source = "check"`).
+  Campos do run (`output`, `output_chars`, `status`, `latency_ms`, tokens, `tool_calls`,
+  `tools.<nome>.called|calls|ok|args.<campo>`, `result.*`, `dependencies.*`, `metadata.*`) e os
+  operadores do `kuro eval`, mais `contains` e `matches` (regex com limites). Filtro
+  `--check-failed`/`--check` em `runs list` (API `check_failed`/`check`, MCP e fila de revisão do
+  console), `checks` em cada run, em cada turno da sessão e, por agente, a taxa de reprovação em
+  `/observability/overview`; `kuro eval --agent-checks`. Seção Checagens no formulário do agente. Ver
+  [observabilidade](observabilidade.md#checagens-automáticas).
+- **`side_effect_suggested` nas tools `api`**, pelo método HTTP (nunca gravado sozinho), `warnings` ao
+  criar ou atualizar tool sem classificação, botão de aceitar a sugestão no console e
+  `kuro tools audit`. O comportamento de `null` em tempo de execução não mudou (vale como "sem
+  efeito"); está descrito em [conceitos](conceitos.md#efeito-colateral-a-classificação-das-tools).
+- `matches` e `contains` também valem nas regras do `kuro eval`.
+
 ### Como atualizar
 
-1. As migrações `0018` (a coluna `history_tool_calls` em `agent_definitions`, nula) e `0019` (em
+1. As migrações `0018` (a coluna `history_tool_calls` em `agent_definitions`, nula), `0019` (em
    `runs`: `cache_read_tokens`, `cache_write_tokens`, `prompt_composition`, `prompt_chars`,
-   `history_chars`) rodam sozinhas na subida. Para voltar à `0.3.0`, siga o
+   `history_chars`) e `0020` (as colunas `agent_definitions.checks` e `run_scores.source`, nulas)
+   rodam sozinhas na subida, nessa ordem. Para voltar à `0.3.0`, siga o
    [roteiro de migração](migracao.md#6-voltar-atrás).
-1. A migração `0018` (a coluna `history_tool_calls` em `agent_definitions`, nula) roda sozinha na
-   subida. Para voltar à `0.3.0`, siga o [roteiro de migração](migracao.md#6-voltar-atrás).
 2. **Opcional, se `kuro collections get general` (ou o console) mostrar o idioma legado:** troque o
    idioma das collections que guardam texto em português, uma a uma. É um comando, sem reindexar, e
    só importa se a collection usa ou vai usar `search_mode=hybrid`:
