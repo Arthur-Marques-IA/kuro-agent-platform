@@ -40,6 +40,7 @@ from agent_service.documents.collections import (
 from agent_service.documents.retrieval import describe_hits
 from agent_service.documents.search import (
     DEFAULT_LANGUAGE,
+    language_notice,
     MAX_RESULTS_LIMIT,
     SearchConfig,
     SearchConfigError,
@@ -78,7 +79,7 @@ class CollectionIn(BaseModel):
     )
     language: str | None = Field(
         default=None,
-        description=f"Dicionário do full-text do Postgres ({DEFAULT_LANGUAGE} por padrão). Fixo depois de criada.",
+        description=f"Dicionário do full-text do Postgres ({DEFAULT_LANGUAGE} por padrão). Muda depois com PUT.",
     )
     max_results: int | None = Field(default=None, ge=1, le=MAX_RESULTS_LIMIT, description="Trechos por busca (k).")
     vector_weight: float | None = Field(
@@ -94,12 +95,18 @@ class CollectionUpdateIn(BaseModel):
     max_results: int | None = Field(default=None, ge=1, le=MAX_RESULTS_LIMIT)
     vector_weight: float | None = Field(default=None, ge=0, le=1)
     reranker: str | None = None
-    language: str | None = Field(default=None, description="Não muda depois da criação: só aceita o valor atual.")
+    language: str | None = Field(
+        default=None,
+        description="Dicionário do full-text do Postgres (validado em pg_ts_config). Muda quais trechos casam no "
+        "híbrido; não exige reindexar. Não aceita null.",
+    )
 
 
 class SearchConfigOut(BaseModel):
     search_mode: str
     language: str
+    language_legacy: bool = False
+    """`language` nulo no cadastro: o inglês legado, de antes da coluna. Veja `warnings`."""
     max_results: int
     vector_weight: float
     reranker: str | None = None
@@ -128,6 +135,8 @@ class CollectionOut(BaseModel):
     version: int | None = None
     """Versão atual da configuração (embedder + busca), ver `documents/versions.py`."""
     config_hash: str | None = None
+    warnings: list[str] = []
+    """Avisos de configuração, ex.: o idioma legado em inglês (`search.language_legacy`)."""
     agents_using: list[str] = []
     """Agentes com `knowledge_collection` apontando para cá — avisa antes de excluir."""
     created_at: datetime
@@ -170,9 +179,12 @@ def _out(row: dict[str, Any]) -> dict[str, Any]:
     # coluna: quem lê precisa saber qual embedder responde, não se a linha é velha.
     spec = resolve_spec(row.get("embedder_provider"))
     version, digest = versions.ensure_version(row["name"], row)
+    config = SearchConfig.from_row(row)
+    notice = language_notice(config)
     return {
         **row,
-        "search": SearchConfig.from_row(row).public(),
+        "search": config.public(),
+        "warnings": [notice] if notice else [],
         "version": version,
         "config_hash": digest,
         "embedder_provider": spec.provider,
@@ -302,18 +314,17 @@ def get_collection_detail(collection_name: str) -> dict[str, Any]:
 def update_collection(collection_name: str, body: CollectionUpdateIn) -> dict[str, Any]:
     """Os campos de busca mandados (inclusive `null`, que volta ao padrão) gravam
     como vieram; os ausentes ficam. Mudar a busca gera uma versão nova."""
-    row = _row_or_404(collection_name)
+    _row_or_404(collection_name)
     sent = body.model_dump(exclude_unset=True)
-    current_language = SearchConfig.from_row(row).content_language
-    if "language" in sent and sent["language"] != current_language:
+    if "language" in sent and not sent["language"]:
         raise HTTPException(
-            status_code=422,
-            detail=f"language é fixo depois da criação (esta usa {current_language!r}): o dicionário decide "
-            "quais trechos casam. Para trocar, crie outra collection e reindexe.",
+            status_code=422, detail="language não pode ser vazio: informe o dicionário (ex.: portuguese)"
         )
     search = {k: v for k, v in sent.items() if k in store.SEARCH_FIELDS}
     try:
         validate(search)
+        if "language" in search:
+            validate_language(search["language"], get_db().db_engine)
     except SearchConfigError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _out(store.update_collection(collection_name, label=body.label, description=body.description, search=search))

@@ -174,7 +174,7 @@ function NewCollectionForm({ onClose, onCreated }: { onClose: () => void; onCrea
               <option value="hybrid">Híbrida (vetor + texto)</option>
             </Select>
           </Field>
-          <Field label="Idioma do texto" htmlFor={`${id}-language`} hint="Dicionário do full-text. Não muda depois.">
+          <Field label="Idioma do texto" htmlFor={`${id}-language`} hint="Dicionário do full-text. Dá para trocar depois, sem reindexar.">
             <Select id={`${id}-language`} value={language} onChange={(e) => setLanguage(e.target.value)}>
               <option value="portuguese">Português</option>
               <option value="english">Inglês</option>

@@ -231,7 +231,7 @@ def _extras(
         body["dry_run"] = True
 
 
-COLLECTION_FIELDS = ("label", "description", "search_mode", "max_results", "vector_weight", "reranker")
+COLLECTION_FIELDS = ("label", "description", "search_mode", "language", "max_results", "vector_weight", "reranker")
 """O que `PUT /collections/{nome}` aceita (`CollectionUpdateIn`)."""
 
 NO_LOCAL_FILES = (
@@ -1349,7 +1349,7 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             str | None,
             Field(
                 description="Dicionário do full-text do Postgres, ex.: portuguese (padrão), english, simple. "
-                "Definitivo, como o embedder."
+                "Muda depois com collection_set."
             ),
         ] = None,
         max_results: Annotated[int | None, Field(description="Trechos por busca, o k (1 a 50; padrão 10).")] = None,
@@ -1357,9 +1357,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             float | None, Field(description="No hybrid, o peso do vetor de 0 a 1 (o resto é do texto; padrão 0.5).")
         ] = None,
     ) -> dict[str, Any]:
-        """Cria uma base de conhecimento vazia. O embedder e o idioma são escolhidos aqui e NÃO
-        mudam depois (a tabela de vetores é de um embedder só). Modo, k e peso mudam com
-        collection_set. Depois: collection_add ou collection_add_site para indexar, e
+        """Cria uma base de conhecimento vazia. O embedder é escolhido aqui e NÃO muda depois (a
+        tabela de vetores é de um embedder só). Modo, idioma, k e peso mudam com collection_set. Depois: collection_add ou collection_add_site para indexar, e
         agent_set(knowledge_collection=name) no agente."""
         payload = {
             "name": name,
@@ -1381,18 +1380,19 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         changes: Annotated[
             dict[str, Any],
             Field(
-                description="label, description e a busca: search_mode (vector|hybrid), max_results (k), "
-                'vector_weight (0–1), reranker. Ex.: {"search_mode": "hybrid", "vector_weight": 0.7}; null volta ao padrão.'
+                description="label, description e a busca: search_mode (vector|hybrid), language (dicionário do "
+                "full-text, ex.: portuguese; sem reindexar), max_results (k), vector_weight (0–1), reranker. "
+                'Ex.: {"search_mode": "hybrid", "vector_weight": 0.7}; null volta ao padrão (menos language).'
             ),
         ],
     ) -> dict[str, Any]:
         """Altera o rótulo, a descrição ou a configuração de busca de uma collection. Mudar a
-        busca gera uma versão nova (collection_versions), que os runs gravam. O embedder e o
-        idioma não mudam: para outros, crie uma collection nova e reindexe."""
-        if {"embedder", "embedder_provider", "embedder_model", "embedder_dimensions", "language"} & set(changes):
-            raise ToolError(
-                "o embedder e o idioma de uma collection não mudam: crie outra (collection_create) e reindexe"
-            )
+        busca gera uma versão nova (collection_versions), que os runs gravam. O embedder não
+        muda: para outro, crie uma collection nova e reindexe. Uma collection com
+        `search.language_legacy` verdadeiro (o inglês de antes da coluna) mostra um aviso em
+        `warnings`; language=portuguese resolve e não exige reindexar."""
+        if {"embedder", "embedder_provider", "embedder_model", "embedder_dimensions"} & set(changes):
+            raise ToolError("o embedder de uma collection não muda: crie outra (collection_create) e reindexe")
         _fields_only(changes, COLLECTION_FIELDS)
         return _call(client.update_collection, name, changes)
 

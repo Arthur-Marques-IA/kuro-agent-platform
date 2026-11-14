@@ -70,8 +70,25 @@ prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo h
   turnos já gravados mantêm o bloco antigo dentro da mensagem até saírem da janela de
   `num_history_runs`; o histórico não é reescrito.
 
+- **A tool de busca na base de conhecimento passou a ser do Kuro, em português.** Antes, um agente
+  com `knowledge_collection` recebia a tool `search_knowledge_base` do Agno ("Use this function to
+  search the knowledge base...") e um bloco `<knowledge_base>` em inglês no prompt de sistema. Agora
+  a descrição da tool, a do parâmetro `query`, a instrução do prompt e as respostas "Nenhum documento
+  encontrado." e "Erro ao buscar na base de conhecimento: ..." são em português. O nome
+  (`search_knowledge_base`), o parâmetro, o formato dos trechos devolvidos e o rastro em
+  `metadata.references` não mudam. **O que fazer:** se um prompt ou um eval depende do texto em inglês
+  ("No documents found"), ajuste no draft.
+
 ### Novo
 
+- **O idioma de uma collection muda depois da criação** (`kuro collections set <nome>
+  language=portuguese`, `PUT /collections/{nome}`, `collection_set` no MCP e a tela da base no
+  console). O nome é validado em `pg_ts_config`, `null` é recusado, e a troca gera uma versão nova da
+  configuração de busca. Não precisa reindexar: não há índice por idioma. Só muda quais trechos casam
+  no modo híbrido. Antes era fixo (422).
+- **Aviso de idioma legado.** Uma collection com `language` nulo (criada antes da coluna) vale
+  `english`; `GET /collections` passa a trazer `search.language_legacy: true` e `warnings`, e a CLI, o
+  MCP e o console mostram o aviso. Nada é alterado sozinho.
 - **`agent_sent` repetido não se repete no prompt.** Um evento `agent_sent` cujo texto é igual à
   última resposta do agente na sessão (ignorando espaços nas pontas e diferenças de quebra de linha
   e de espaço) sai do texto do modelo, porque o histórico já traz essa resposta. Ele continua
@@ -87,6 +104,15 @@ prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo h
 
 1. A migração `0018` (a coluna `history_tool_calls` em `agent_definitions`, nula) roda sozinha na
    subida. Para voltar à `0.3.0`, siga o [roteiro de migração](migracao.md#6-voltar-atrás).
+2. **Opcional, se `kuro collections get general` (ou o console) mostrar o idioma legado:** troque o
+   idioma das collections que guardam texto em português, uma a uma. É um comando, sem reindexar, e
+   só importa se a collection usa ou vai usar `search_mode=hybrid`:
+
+   ```bash
+   kuro collections set general language=portuguese
+   ```
+
+   O Kuro não faz isso sozinho nas instalações em uso.
 
 ---
 

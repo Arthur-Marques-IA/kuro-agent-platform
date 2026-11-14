@@ -80,14 +80,14 @@ def test_agent_can_point_to_a_collection_and_gets_a_search_tool(manuais):
             agent = build_agent(agent_id="x", name="x", instructions=["x"], knowledge_collection="manuais")
         get_collection.assert_called_once_with("manuais")
         assert agent.knowledge is get_collection.return_value
-        assert agent.search_knowledge is True
+        assert any(getattr(t, "name", None) == "search_knowledge_base" for t in agent.tools)
     finally:
         delete_agent("agente_rag")
 
 
 def test_agent_without_collection_has_no_knowledge():
     agent = build_agent(agent_id="x", name="x", instructions=["x"])
-    assert agent.knowledge is None and agent.search_knowledge is False
+    assert agent.knowledge is None and agent.tools == []
 
 
 def test_unknown_collection_is_rejected_on_create_and_update(manuais):

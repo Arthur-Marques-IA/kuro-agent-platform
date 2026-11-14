@@ -2104,7 +2104,7 @@ export interface components {
             label: string;
             /**
              * Language
-             * @description Dicionário do full-text do Postgres (portuguese por padrão). Fixo depois de criada.
+             * @description Dicionário do full-text do Postgres (portuguese por padrão). Muda depois com PUT.
              */
             language?: string | null;
             /**
@@ -2174,6 +2174,11 @@ export interface components {
             updated_at: string;
             /** Version */
             version?: number | null;
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: string[];
         };
         /** CollectionUpdateIn */
         CollectionUpdateIn: {
@@ -2183,7 +2188,7 @@ export interface components {
             label?: string | null;
             /**
              * Language
-             * @description Não muda depois da criação: só aceita o valor atual.
+             * @description Dicionário do full-text do Postgres (validado em pg_ts_config). Muda quais trechos casam no híbrido; não exige reindexar. Não aceita null.
              */
             language?: string | null;
             /** Max Results */
@@ -3469,6 +3474,11 @@ export interface components {
         SearchConfigOut: {
             /** Language */
             language: string;
+            /**
+             * Language Legacy
+             * @default false
+             */
+            language_legacy: boolean;
             /** Max Results */
             max_results: number;
             /** Reranker */

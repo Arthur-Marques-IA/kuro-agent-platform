@@ -18,7 +18,7 @@ from agent_service.agents.system_context import (
 )
 from agent_service.db import get_db
 from agent_service.documents.collections import get_collection, resolve_search
-from agent_service.documents.retrieval import make_retriever
+from agent_service.documents.retrieval import make_retriever, make_search_tool
 from agent_service.models.provider import get_model
 
 MemoryBackendName = Literal["none", "auto", "agentic", "common", "mem0"]
@@ -96,10 +96,12 @@ def build_agent(
         if session_summary and not is_analysis
         else {}
     )
-    # `search_knowledge=True` dá ao agente uma tool de busca na collection (RAG
-    # agêntico): ele decide quando consultar, em vez de injetarmos tudo no prompt.
-    # O retriever faz a mesma busca e guarda quais trechos voltaram, para o trace
-    # (`documents/retrieval.py`).
+    # RAG agêntico: o agente tem uma tool de busca na collection e decide quando
+    # consultar, em vez de injetarmos tudo no prompt. A tool é a do Kuro
+    # (`make_search_tool`), em português, sobre o retriever, que guarda quais trechos
+    # voltaram para o trace (`documents/retrieval.py`). Por isso `search_knowledge`
+    # fica desligado: com ele o Agno poria a tool dele (descrição em inglês) e um bloco
+    # de instruções em inglês no prompt.
     knowledge = get_collection(knowledge_collection) if knowledge_collection else None
     retriever = make_retriever(knowledge_collection, knowledge, resolve_search) if knowledge is not None else None
 
@@ -131,10 +133,10 @@ def build_agent(
         **memory,
         **summary,
         knowledge=knowledge,
-        search_knowledge=knowledge is not None,
+        search_knowledge=False,
         knowledge_retriever=retriever,
         instructions=instructions,
-        tools=tools or [],
+        tools=[*(tools or []), *([make_search_tool(retriever)] if retriever is not None else [])],
         add_history_to_context=not is_analysis,
         num_history_runs=num_history_runs,
         # Quantas chamadas de tool dos turnos anteriores voltam no histórico (as mais

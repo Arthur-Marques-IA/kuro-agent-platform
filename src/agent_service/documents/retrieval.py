@@ -11,20 +11,42 @@ usuário), devolve ao modelo o mesmo formato de antes — a resposta não muda �
 guarda à parte, num registro por run (mesmo padrão de `tools/failures.py`), a
 versão completa de cada trecho. O trace (`observability/tracing.py`) junta esse
 registro à span da busca em `metadata.references`.
+
+A tool em si também é do Kuro (`make_search_tool`): a que o Agno monta sozinho traz
+a descrição em inglês ("Use this function to search the knowledge base...") e ainda
+acrescenta um bloco `<knowledge_base>` em inglês ao prompt de sistema, ruído para um
+agente que atende em português. O ponto de extensão é não ligar o `search_knowledge`
+do `Agent` e entregar uma `Function` própria, com o mesmo nome (o trace e as telas
+usam) e o mesmo parâmetro `query`, descrição e instrução em português.
 """
 
 import asyncio
+import json
 import logging
 from contextvars import ContextVar
 from typing import Any, Callable
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
+from agno.tools.function import Function
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
 SEARCH_TOOL = "search_knowledge_base"
+
+SEARCH_TOOL_DESCRIPTION = (
+    "Busca na base de conhecimento do agente os trechos de documentos mais relevantes para uma pergunta. "
+    "Devolve o texto de cada trecho e o documento de onde veio."
+)
+SEARCH_TOOL_INSTRUCTIONS = (
+    "<knowledge_base>\n"
+    "Você tem uma base de conhecimento que pode consultar com a tool search_knowledge_base. "
+    "Busque antes de responder: não presuma que já sabe a resposta. "
+    "Em perguntas ambíguas, busque primeiro em vez de pedir esclarecimento.\n"
+    "</knowledge_base>"
+)
+NO_DOCUMENTS = "Nenhum documento encontrado."
 
 SNIPPET_META = (
     "chunk",
@@ -172,6 +194,43 @@ def make_retriever(
         return coro
 
     return retriever
+
+
+def make_search_tool(retriever: Callable[..., Any]) -> Function:
+    """A tool `search_knowledge_base` do agente, em português, sobre o `retriever` do Kuro.
+
+    Faz o que a do Agno faz — chama o retriever com o `run_context` (o escopo de usuário
+    da busca) e devolve os trechos ao modelo como JSON —, com o mesmo nome e o mesmo
+    parâmetro `query`. O texto é nosso: descrição da tool, descrição do parâmetro, a
+    instrução do prompt e as mensagens de "nada encontrado" e de erro."""
+
+    async def search_knowledge_base(run_context: Any, query: str) -> str:
+        """Busca na base de conhecimento do agente os trechos mais relevantes para uma pergunta.
+
+        Args:
+            query: O que buscar, em linguagem natural (a pergunta ou as palavras-chave dela).
+
+        Returns:
+            str: Os trechos encontrados, com o texto e o documento de origem.
+        """
+        try:
+            docs = retriever(query=query, run_context=run_context)
+            if asyncio.iscoroutine(docs):
+                docs = await docs
+        except Exception as exc:  # noqa: BLE001 - o modelo recebe o motivo, o run segue
+            logger.warning("Busca na base de conhecimento falhou: %s", exc, exc_info=True)
+            return f"Erro ao buscar na base de conhecimento: {type(exc).__name__}"
+        if not docs:
+            return NO_DOCUMENTS
+        return json.dumps(docs, indent=2, default=str, ensure_ascii=False)
+
+    return Function(
+        name=SEARCH_TOOL,
+        description=SEARCH_TOOL_DESCRIPTION,
+        entrypoint=search_knowledge_base,
+        instructions=SEARCH_TOOL_INSTRUCTIONS,
+        add_instructions=True,
+    )
 
 
 def sources_from(searches: list[dict[str, Any]]) -> list[dict[str, Any]]:

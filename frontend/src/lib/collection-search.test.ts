@@ -31,6 +31,7 @@ describe("collectionSearch", () => {
     const search = {
       search_mode: "hybrid",
       language: "english",
+      language_legacy: true,
       max_results: 8,
       vector_weight: 0.6,
       reranker: null,

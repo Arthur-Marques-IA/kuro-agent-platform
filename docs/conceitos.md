@@ -453,7 +453,7 @@ Cada collection tem a sua configuração de busca:
 | `search_mode` | `vector` (padrão): só a similaridade do vetor. `hybrid`: soma o full-text do Postgres, o que ajuda com códigos, siglas e nomes exatos (`E-42`, `XR-5000`) | sim |
 | `max_results` | quantos trechos cada busca devolve (o k), de 1 a 50; padrão 10 | sim |
 | `vector_weight` | no híbrido, o peso do vetor de 0 a 1; o resto é do texto; padrão 0,5 | sim |
-| `language` | o dicionário do full-text (`portuguese` em collections novas, `english`, `simple`...) | não |
+| `language` | o dicionário do full-text (`portuguese` em collections novas, `english`, `simple`...) | sim, sem reindexar |
 | `reranker` | gancho para reordenar os trechos; nenhum suportado ainda | sim |
 
 ```bash
@@ -468,12 +468,24 @@ Postgres, os dois de 0 a 1. É por isso que cada busca no trace, e cada resultad
 `/collections/{nome}/search`, traz `score_kind`: `similarity` (vetorial), `hybrid` ou `rerank`
 — o mesmo número não quer dizer a mesma coisa nos três.
 
-O idioma é fixo como o embedder: o dicionário decide quais palavras casam ("garantias" com
-"garantia"), e trocar no meio mudaria a busca sem ninguém mexer nos documentos. Para outro idioma,
-crie outra collection. Collections anteriores a esta configuração ficam em `english`, o padrão do
-Agno, o que só faz diferença se alguém ligar o híbrido nelas. Hoje o full-text é calculado na hora
-para todas as linhas (o Agno não filtra por `@@` nem usa índice), então numa collection muito
-grande o híbrido custa uma varredura da tabela.
+O idioma muda depois da criação (`kuro collections set manuais language=portuguese`, o mesmo na
+API, no MCP e no console) e vira uma versão nova da configuração, como as outras mudanças. Diferente
+do embedder, ele não exige reindexar: não há índice nem coluna por idioma, o full-text é calculado
+na hora para todas as linhas (o Agno não filtra por `@@` nem usa índice), então numa collection
+muito grande o híbrido custa uma varredura da tabela. O que a troca muda é quais palavras casam no
+**híbrido** ("garantias" com "garantia"); no modo vetorial o idioma não entra na busca. O nome é
+conferido em `pg_ts_config` e não aceita `null`.
+
+Collections criadas antes da coluna têm `language` nulo, que vale `english` (o padrão do Agno). A API,
+a CLI, o MCP e o console as mostram como idioma legado, com um aviso (`warnings` e
+`search.language_legacy`), porque ninguém escolheu isso: só faz diferença se alguém ligar o híbrido
+nelas, e aí o full-text usaria o dicionário errado para texto em português. Instalações novas criam a
+collection `general` já em `portuguese`; as existentes não são alteradas sozinhas.
+
+A tool de busca que o agente recebe (`search_knowledge_base`) é do Kuro, com descrição, parâmetro e
+instrução de prompt em português; o Agno só entregaria a dele, em inglês. O nome e o parâmetro
+`query` são os mesmos, e o trace grava as referências da mesma forma. Quando a busca não acha nada,
+o modelo lê "Nenhum documento encontrado.".
 
 Não há reranker: os do Agno pedem dependência pesada (sentence-transformers) ou um serviço externo
 com chave (Cohere, Infinity, Bedrock). O ponto de entrada é `RERANKERS` em
