@@ -146,6 +146,13 @@ class AgentDefinitionIn(BaseModel):
     plain_text: bool = False
     """Responde em texto puro (sem markdown) — canais como WhatsApp."""
     num_history_runs: int = 10
+    history_tool_calls: int | None = Field(
+        default=None,
+        ge=0,
+        le=1000,
+        description="Quantas chamadas de tool dos turnos anteriores voltam ao modelo com o histórico (as mais "
+        "recentes); vazio = todas. 0 = o histórico traz só a conversa.",
+    )
     kind: AgentKind = "conversational"
     response_schema: list[ResponseFieldIn] = Field(
         default=[],
@@ -193,6 +200,8 @@ class AgentDefinitionUpdate(BaseModel):
     session_summary: bool | None = None
     plain_text: bool | None = None
     num_history_runs: int | None = None
+    history_tool_calls: int | None = Field(default=None, ge=0, le=1000)
+    """`null` volta a trazer todas as chamadas de tool do histórico."""
     kind: AgentKind | None = None
     response_schema: list[ResponseFieldIn] | None = None
     stages: list[dict[str, Any]] | None = None
@@ -223,6 +232,7 @@ class AgentDefinitionOut(BaseModel):
     session_summary: bool = False
     plain_text: bool = False
     num_history_runs: int
+    history_tool_calls: int | None = None
     kind: AgentKind
     response_schema: list[ResponseFieldOut]
     stages: list[dict[str, Any]] = []
@@ -310,6 +320,7 @@ _INERTES_EM_ANALYSIS = {
     "num_history_runs": "analysis é one-shot: não há histórico para reaproveitar",
     "memory_backend": "analysis não usa memória de longo prazo (nem a do Agno, nem o mem0)",
     "session_summary": "analysis não tem sessão para resumir",
+    "history_tool_calls": "analysis é one-shot: não há histórico de tools para limitar",
 }
 
 
@@ -612,6 +623,7 @@ _PROMOTED_FIELDS = (
     "session_summary",
     "plain_text",
     "num_history_runs",
+    "history_tool_calls",
     "kind",
     "response_schema",
     "stages",

@@ -3,15 +3,19 @@
 Sem isto o sistema integrado concatena tudo em `message` (configuração, dados do
 contato, histórico com `[ALUNO]`/`[ATENDENTE]`, a fala nova), e quem lê o run
 depois precisa adivinhar onde termina cada trecho. Aqui cada trecho chega no seu
-campo e o servidor monta o texto que o modelo lê com um gabarito fixo:
+campo e o servidor monta o que o modelo lê com gabaritos fixos:
 
-1. os blocos de `context`, na ordem recebida, cada um sob o próprio `title`;
-2. os `events` anteriores à fala, rotulados pelo papel;
-3. a fala nova;
-4. se houver, os eventos que vieram depois da fala (só quando a fala é um evento).
+- **o contexto é estado da sessão**, não parte da mensagem: os blocos vigentes
+  (os que vieram, ou os herdados do turno anterior — `agents/session_context.py`)
+  vão uma vez só no prompt de sistema, depois das instruções (`render_context`).
+  Não entram na mensagem do usuário, então o histórico do Agno não os repete;
+- **a mensagem do turno** (`build_turn_text`) traz os `events` anteriores à fala,
+  rotulados pelo papel, a fala nova e, se houver, os eventos que vieram depois
+  dela (só quando a fala é um evento). Um `agent_sent` igual à última resposta do
+  agente (`echo_indices`) sai do texto: o histórico já traz essa resposta.
 
-O gabarito é determinístico (mesma entrada, mesmo texto) e mora só aqui; o teste
-de snapshot (`tests/test_structured_input.py`) segura qualquer mudança nele. Não
+Os gabaritos são determinísticos (mesma entrada, mesmo texto) e moram só aqui; os
+testes de snapshot (`tests/test_structured_input.py`) seguram qualquer mudança. Não
 há parser do texto montado: quem precisa dos trechos lê as colunas do run
 (`input_events`, `input_context`, `input_message`), nunca o texto.
 
@@ -40,6 +44,8 @@ ROLE_LABELS: dict[str, str] = {
 fato enviou em nome do agente — pode diferir do que o agente respondeu."""
 
 CONTEXT_HEADING = "# Contexto"
+CONTEXT_NOTE = "Este é o contexto atual desta conversa. Ele substitui qualquer versão anterior."
+"""A frase fixa sob o título do contexto, no prompt de sistema."""
 EVENTS_HEADING = "# Conversa desde a sua última resposta"
 MESSAGE_HEADING = "# Mensagem nova do contato"
 AFTER_HEADING = "# Depois dessa mensagem"
@@ -191,19 +197,41 @@ def _event_text(event: InputEvent) -> str:
     return "\n".join(lines)
 
 
-def build_model_text(message: str | None, events: list[InputEvent] | None, context: list[ContextBlock] | None) -> str:
-    """O texto que o modelo lê (e que fica em `runs.message`). Seções vazias somem."""
+def _same_text(a: str, b: str) -> bool:
+    """Iguais ignorando espaços nas pontas e diferenças de quebra de linha e espaço."""
+    return " ".join(a.split()) == " ".join(b.split())
+
+
+def echo_indices(events: list[InputEvent] | None, last_reply: str | None) -> set[int]:
+    """Os eventos `agent_sent` cujo texto é a última resposta do agente na sessão.
+
+    O sistema integrado manda o que de fato enviou em nome do agente; quando é o
+    que o agente respondeu, o histórico da sessão já traz esse texto, e repeti-lo na
+    mensagem só duplica o prompt. Diferente (a instituição editou, ou mandou outra
+    coisa), o evento fica: é informação nova para o modelo."""
+    if not last_reply or not last_reply.strip():
+        return set()
+    return {
+        i
+        for i, event in enumerate(events or [])
+        if event.role == "agent_sent" and event.content.strip() and _same_text(event.content, last_reply)
+    }
+
+
+def build_turn_text(
+    message: str | None, events: list[InputEvent] | None, echoes: set[int] | frozenset[int] = frozenset()
+) -> str:
+    """A mensagem do turno (e o que fica em `runs.message`): os eventos e a fala, sem
+    o contexto, que vai no prompt de sistema. Seções vazias somem; os índices em
+    `echoes` (ver `echo_indices`) não entram."""
     events = list(events or [])
-    context = list(context or [])
     index = speech_index(message, events)
-    before = events if index is None else events[:index]
-    after = [] if index is None else events[index + 1 :]
+    kept = [(i, e) for i, e in enumerate(events) if i not in echoes and i != index]
+    before = [e for i, e in kept if index is None or i < index]
+    after_events = [e for i, e in kept if index is not None and i > index]
     speech = pure_message(message, events)
 
     sections: list[str] = []
-    if context:
-        blocks = [f"## {block.title}\n{block.content.strip()}" for block in context]
-        sections.append(CONTEXT_HEADING + "\n\n" + "\n\n".join(blocks))
     if before:
         sections.append(EVENTS_HEADING + "\n\n" + "\n\n".join(_event_text(e) for e in before))
     speech_lines = [speech.strip()] if speech.strip() else []
@@ -211,28 +239,46 @@ def build_model_text(message: str | None, events: list[InputEvent] | None, conte
         speech_event = events[index]
         speech_lines.extend(f"(anexo: {_attachment_text(a)})" for a in speech_event.attachments)
     sections.append(MESSAGE_HEADING + "\n\n" + "\n".join(speech_lines))
-    if after:
-        sections.append(AFTER_HEADING + "\n\n" + "\n\n".join(_event_text(e) for e in after))
+    if after_events:
+        sections.append(AFTER_HEADING + "\n\n" + "\n\n".join(_event_text(e) for e in after_events))
     return "\n\n".join(sections)
 
 
-def events_for_storage(message: str | None, events: list[InputEvent] | None) -> list[dict[str, Any]]:
+def render_context(blocks: list[dict[str, Any]] | None) -> str | None:
+    """O contexto vigente como vai no prompt de sistema: o título, a frase fixa e um
+    `## <title>` por bloco, na ordem. `blocks` no formato de `runs.input_context`
+    (`context_for_storage`). Sem bloco, `None`: nada vai para o prompt."""
+    rendered = [
+        f"## {block.get('title') or block.get('key')}\n{str(block.get('content') or '').strip()}"
+        for block in blocks or []
+        if isinstance(block, dict)
+    ]
+    if not rendered:
+        return None
+    return CONTEXT_HEADING + "\n\n" + CONTEXT_NOTE + "\n\n" + "\n\n".join(rendered)
+
+
+def events_for_storage(
+    message: str | None, events: list[InputEvent] | None, echoes: set[int] | frozenset[int] = frozenset()
+) -> list[dict[str, Any]]:
     """`runs.input_events`: todos os eventos, na ordem recebida, como JSON simples.
-    `speech: true` marca o evento que é a fala nova (no máximo um)."""
+    `speech: true` marca o evento que é a fala nova (no máximo um); `echo: true`, o
+    `agent_sent` que repetia a última resposta e por isso ficou fora do texto do modelo."""
     events = list(events or [])
     index = speech_index(message, events) if events else None
     stored = []
     for i, event in enumerate(events):
-        stored.append(
-            {
-                "role": event.role,
-                "content": event.content,
-                "at": _at_text(event.at),
-                "kind": event.kind,
-                "attachments": [a.model_dump(mode="json", exclude_none=True) for a in event.attachments],
-                "speech": i == index,
-            }
-        )
+        item: dict[str, Any] = {
+            "role": event.role,
+            "content": event.content,
+            "at": _at_text(event.at),
+            "kind": event.kind,
+            "attachments": [a.model_dump(mode="json", exclude_none=True) for a in event.attachments],
+            "speech": i == index,
+        }
+        if i in echoes:
+            item["echo"] = True
+        stored.append(item)
     return stored
 
 

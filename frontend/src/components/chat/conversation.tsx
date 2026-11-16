@@ -28,9 +28,11 @@ import { MEMORY_BACKENDS, modelLabel, parseDependencies } from "@/lib/agent-meta
 import { sessionTitle } from "@/lib/sessions";
 import { useChat } from "@/lib/use-chat";
 import {
+  contextToSend,
   eventsBefore,
   humanAgentEvent,
   parseContextBlocks,
+  parseSentContext,
   serializeContextBlocks,
   sessionNameFromSpeech,
   validateContextBlocks,
@@ -141,6 +143,13 @@ export function Conversation({
   }, [completedSessionId, isStreaming, messages, onFirstExchangeComplete]);
 
   const activeSessionId = sessionId ?? createdSessionId ?? null;
+  // O servidor lembra o contexto da sessão: os blocos só vão quando mudaram desde o último
+  // envio desta conversa (`contextToSend`). O último envio fica guardado por conversa.
+  const sentContextKey = `agent-service:context-sent:${activeSessionId ?? draftId}`;
+  const [sentContextText] = useLocalStorage<string>(sentContextKey, "");
+  const nextContext = procedural
+    ? undefined
+    : contextToSend(blocksValidation.blocks, parseSentContext(sentContextText));
 
   // Conversa reaberta com um agente procedural: as etapas vêm do backend, não das mensagens.
   const [restoredFor, setRestoredFor] = useState<string | null>(null);
@@ -181,7 +190,7 @@ export function Conversation({
   async function runSend(text: string, attachments: Attachment[], events: ChatEventPayload[]) {
     const id = activeSessionId ?? draftId;
     if (!activeSessionId) onSessionCreated?.(id);
-    const context = procedural ? [] : blocksValidation.blocks;
+    const context = nextContext;
     const sentEvents = procedural ? [] : events;
     const firstTurn = messages.length === 0;
     const executed = await send({
@@ -194,8 +203,9 @@ export function Conversation({
       events: sentEvents,
     });
     if (!executed) return;
-    // 1º turno estruturado: sem isto a conversa se chamaria "# Contexto ## …" na lista.
-    if (firstTurn && (context.length > 0 || sentEvents.length > 0) && text.trim()) {
+    if (context !== undefined) writeLocalStorage(`agent-service:context-sent:${id}`, JSON.stringify(context));
+    // 1º turno estruturado: sem isto a conversa se chamaria "# Mensagem nova do contato …" na lista.
+    if (firstTurn && ((context?.length ?? 0) > 0 || sentEvents.length > 0) && text.trim()) {
       await renameSession(id, sessionNameFromSpeech(text)).catch(() => {
         // Sem o nome a conversa continua; só o título na lista fica com o texto montado.
       });
@@ -430,7 +440,8 @@ export function Conversation({
             userId={userId}
             sessionId={activeSessionId ?? "nova-sessao-uuid"}
             dependencies={dependencies.value}
-            context={procedural ? undefined : blocksValidation.blocks}
+            context={nextContext}
+            contextInherited={!procedural && nextContext === undefined && sentContextText !== ""}
             events={procedural ? undefined : pendingEvents.length ? pendingEvents : lastSentEvents}
           />
         </DialogBody>

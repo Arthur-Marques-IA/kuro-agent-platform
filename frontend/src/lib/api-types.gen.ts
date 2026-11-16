@@ -1557,6 +1557,11 @@ export interface components {
              * @default []
              */
             dependency_fields: components["schemas"]["DependencyFieldIn"][];
+            /**
+             * History Tool Calls
+             * @description Quantas chamadas de tool dos turnos anteriores voltam ao modelo com o histórico (as mais recentes); vazio = todas. 0 = o histórico traz só a conversa.
+             */
+            history_tool_calls?: number | null;
             /** Instructions */
             instructions: string[];
             /**
@@ -1642,6 +1647,8 @@ export interface components {
             created_at: string;
             /** Dependency Fields */
             dependency_fields: components["schemas"]["DependencyFieldOut"][];
+            /** History Tool Calls */
+            history_tool_calls?: number | null;
             /** Instructions */
             instructions: string[];
             /** Is Seed */
@@ -1704,6 +1711,8 @@ export interface components {
         AgentDefinitionUpdate: {
             /** Dependency Fields */
             dependency_fields?: components["schemas"]["DependencyFieldIn"][] | null;
+            /** History Tool Calls */
+            history_tool_calls?: number | null;
             /** Instructions */
             instructions?: string[] | null;
             /** Kind */
@@ -1913,7 +1922,7 @@ export interface components {
             attachments: components["schemas"]["AttachmentIn"][];
             /**
              * Context
-             * @description Entrada estruturada: blocos de texto para o modelo ler (até 30), cada um com key (estável e única), title, content e volatile. Diferente de `dependencies`, que são valores tipados para tools e validação.
+             * @description Entrada estruturada: o contexto da sessão, em blocos de texto (até 30), cada um com key (estável e única), title, content e volatile. Ausente: vale o último contexto enviado nesta session_id. Uma lista: passa a ser o contexto inteiro da sessão. []: a sessão fica sem contexto. O modelo lê o contexto vigente uma vez, no prompt de sistema; ele não entra no histórico. Diferente de `dependencies`, que são valores tipados para tools e validação.
              */
             context?: components["schemas"]["ContextBlock"][] | null;
             /** Dependencies */
@@ -1927,7 +1936,7 @@ export interface components {
             dry_run: boolean;
             /**
              * Events
-             * @description Entrada estruturada: o que aconteceu desde a última resposta do agente, em ordem (até 200). Cada item: role (contact | human_agent | agent_sent | system), content, at, kind (text | document), attachments (só a descrição). Não repita turnos que o agente já viu: o histórico da sessão já os traz.
+             * @description Entrada estruturada: o que aconteceu desde a última resposta do agente, em ordem (até 200). Cada item: role (contact | human_agent | agent_sent | system), content, at, kind (text | document), attachments (só a descrição). Não repita turnos que o agente já viu: o histórico da sessão já os traz. Um agent_sent igual à última resposta do agente fica fora do texto do modelo (é gravado com echo: true).
              */
             events?: components["schemas"]["InputEvent"][] | null;
             /**

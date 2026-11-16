@@ -57,7 +57,11 @@ export interface ShownEvent {
   sent?: AgentSentStatus;
 }
 
-/** Os eventos do turno a desenhar, em ordem — sem os `agent_sent` repetidos. */
+/**
+ * Os eventos do turno a desenhar, em ordem — sem os `agent_sent` repetidos. O servidor
+ * marca o repetido com `echo: true` (comparou com a última resposta da sessão, mesmo
+ * fora desta página); sem a marca (runs anteriores a ela), a comparação é feita aqui.
+ */
 export function visibleEvents(turn: TimelineTurn, previousOutput: string | null): ShownEvent[] {
   const shown: ShownEvent[] = [];
   turn.events.forEach((event, index) => {
@@ -65,6 +69,7 @@ export function visibleEvents(turn: TimelineTurn, previousOutput: string | null)
       shown.push({ event, index });
       return;
     }
+    if (event.echo) return;
     const sent = agentSentStatus(event.content, previousOutput);
     if (sent !== "duplicate") shown.push({ event, index, sent });
   });

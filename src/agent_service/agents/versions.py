@@ -80,6 +80,8 @@ def effective_config(definition: dict[str, Any]) -> dict[str, Any]:
         config["session_summary"] = True
     if definition.get("plain_text"):
         config["plain_text"] = True
+    if definition.get("history_tool_calls") is not None:  # 0 vale: nenhuma tool antiga
+        config["history_tool_calls"] = definition["history_tool_calls"]
     if config["kind"] == "procedural":
         # Só aqui: com `stages` em todo agente, os que já existiam ganhariam versão nova.
         config["stages"] = definition.get("stages") or []

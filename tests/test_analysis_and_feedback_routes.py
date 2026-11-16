@@ -200,6 +200,30 @@ def test_create_analysis_com_mem0_e_422():
     assert "memory_backend" in str(exc.value.detail)
 
 
+def test_analysis_com_history_tool_calls_e_422(analysis_agent):
+    with pytest.raises(HTTPException) as exc:
+        update_agent(analysis_agent, AgentDefinitionUpdate(history_tool_calls=2))
+    assert exc.value.status_code == 422 and "history_tool_calls" in str(exc.value.detail)
+    # `null` é o padrão: reenviar o JSON editável de um analista não quebra.
+    assert update_agent(analysis_agent, AgentDefinitionUpdate(history_tool_calls=None))["history_tool_calls"] is None
+
+
+def test_history_tool_calls_nulo_nao_muda_a_versao_e_definido_muda(conversational_agent):
+    from agent_service.agents.store import get_definition
+    from agent_service.agents.versions import effective_config
+
+    antes = effective_config(get_definition(conversational_agent))
+    assert "history_tool_calls" not in antes, "nulo fica fora do config_hash: agente existente não ganha versão"
+    assert update_agent(conversational_agent, AgentDefinitionUpdate(history_tool_calls=0))["history_tool_calls"] == 0
+    assert effective_config(get_definition(conversational_agent))["history_tool_calls"] == 0
+    assert (
+        update_agent(conversational_agent, AgentDefinitionUpdate(history_tool_calls=None))["history_tool_calls"] is None
+    )
+    assert effective_config(get_definition(conversational_agent)) == antes
+    with pytest.raises(ValueError):
+        AgentDefinitionUpdate(history_tool_calls=-1)
+
+
 def test_update_de_analysis_sem_tocar_nos_inertes_passa(analysis_agent):
     """O agente salvo já carrega `num_history_runs=10` por default. Cobrar isso no
     merge faria um PUT de instructions falhar por um campo que ninguém escreveu."""

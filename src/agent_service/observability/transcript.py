@@ -107,13 +107,16 @@ class TimelineTurn(BaseModel):
     `message` vem `null` e o texto inteiro está em `raw_input`, sem recorte."""
     events: list[dict[str, Any]] = []
     """Os eventos da requisição como foram gravados: `{role, content, at, kind,
-    attachments, speech}`; `speech: true` marca o evento que é a fala nova."""
+    attachments, speech}`; `speech: true` marca o evento que é a fala nova, e `echo: true`
+    o `agent_sent` igual à última resposta do agente, que ficou fora do texto do modelo."""
     message: str | None = None
     """A fala nova, pura (`runs.input_message`). `null` em turno não estruturado e em
     turno estruturado sem fala (só `context`)."""
     raw_input: str | None = None
     """Só em turno não estruturado: a mensagem inteira que o modelo leu."""
     context: list[TimelineContextBlock] = []
+    """O contexto vigente no turno: o que a requisição mandou ou, sem `context`, o herdado
+    do turno anterior da sessão (aí todo bloco vem `changed: false`)."""
     steps: list[TimelineStep] = []
     """Cada chamada de tool, na ordem."""
     sources: list[dict[str, Any]] = []

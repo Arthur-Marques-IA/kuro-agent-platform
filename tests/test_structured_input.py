@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from agent_service.agents import structured_input
+from agent_service.agents.system_context import current_system_context
 from agent_service.api import idempotency, routes
 from agent_service.api.observability_routes import get_run_trace
 from agent_service.api.routes import ChatRequest, chat, chat_stream
@@ -36,10 +37,13 @@ REGENTE = {
     ],
 }
 
-# O gabarito, letra por letra. Mudou de propósito? Atualize aqui e nas notas de versão:
+# Os gabaritos, letra por letra. Mudou de propósito? Atualize aqui e nas notas de versão:
 # o texto que o modelo lê muda para todo agente que recebe entrada estruturada.
-SNAPSHOT_REGENTE = """\
+# O contexto vai no prompt de sistema; a mensagem do turno, só com eventos e fala.
+SNAPSHOT_CONTEXTO = """\
 # Contexto
+
+Este é o contexto atual desta conversa. Ele substitui qualquer versão anterior.
 
 ## Configuração desta conversa
 EFETIVAÇÃO: LIGADA
@@ -55,8 +59,9 @@ SEM parcela vencida
 Pediu 2ª via em outubro.
 
 ## Contexto temporal
-Janela 24h ABERTA
+Janela 24h ABERTA"""
 
+SNAPSHOT_REGENTE = """\
 # Conversa desde a sua última resposta
 
 [Enviado em seu nome · 2026-11-11T12:36:10Z]
@@ -80,7 +85,10 @@ def _request(**overrides) -> ChatRequest:
 
 def test_snapshot_do_texto_montado_numa_chamada_do_regente():
     r = _request(**REGENTE)
-    assert structured_input.build_model_text(r.message, r.events, r.context) == SNAPSHOT_REGENTE
+    assert structured_input.build_turn_text(r.message, r.events) == SNAPSHOT_REGENTE
+    contexto = structured_input.context_for_storage(r.context)
+    assert structured_input.render_context(contexto) == SNAPSHOT_CONTEXTO
+    assert structured_input.render_context([]) is None and structured_input.render_context(None) is None
 
 
 def test_so_events_a_fala_e_o_ultimo_contact_e_o_que_vem_depois_fica_depois():
@@ -97,7 +105,7 @@ def test_so_events_a_fala_e_o_ultimo_contact_e_o_que_vem_depois_fica_depois():
             {"role": "system", "content": "Atendimento devolvido ao agente."},
         ]
     )
-    texto = structured_input.build_model_text(r.message, r.events, r.context)
+    texto = structured_input.build_turn_text(r.message, r.events)
     assert texto == (
         "# Conversa desde a sua última resposta\n\n"
         "[Contato]\noi\n\n"
@@ -115,15 +123,15 @@ def test_so_events_a_fala_e_o_ultimo_contact_e_o_que_vem_depois_fica_depois():
 
 def test_message_diferente_do_ultimo_evento_vem_depois_de_todos():
     r = _request(message="e o boleto?", events=[{"role": "contact", "content": "oi"}])
-    texto = structured_input.build_model_text(r.message, r.events, r.context)
+    texto = structured_input.build_turn_text(r.message, r.events)
     assert texto.endswith("[Contato]\noi\n\n# Mensagem nova do contato\n\ne o boleto?")
     assert [e["speech"] for e in structured_input.events_for_storage(r.message, r.events)] == [False]
 
 
 def test_mesma_entrada_mesmo_texto():
     a, b = _request(**REGENTE), _request(**json.loads(json.dumps(REGENTE)))
-    assert structured_input.build_model_text(a.message, a.events, a.context) == structured_input.build_model_text(
-        b.message, b.events, b.context
+    assert structured_input.build_turn_text(a.message, a.events) == structured_input.build_turn_text(
+        b.message, b.events
     )
 
 
@@ -207,11 +215,16 @@ def local_backend(monkeypatch):
 
 
 class AgenteQueGuarda:
+    """Guarda a mensagem e o contexto que iria para o prompt de sistema
+    (`agents/system_context.py`), lido no momento em que o run começa."""
+
     def __init__(self) -> None:
         self.mensagens: list[str] = []
+        self.contextos: list[str | None] = []
 
     def arun(self, message, **kwargs):
         self.mensagens.append(message)
+        self.contextos.append(current_system_context())
 
         async def stream():
             yield RunCompletedEvent(run_id=kwargs.get("run_id"), content="Claro, segue.")
@@ -254,6 +267,7 @@ def test_regressao_so_message_se_comporta_como_antes(agente):
     resposta = asyncio.run(chat(_request(message=mensagem)))
 
     assert agente.mensagens == [mensagem], "o modelo recebe a message byte a byte"
+    assert agente.contextos == [None], "e nada a mais no prompt de sistema"
     assert tuple(_colunas(resposta.run_id)) == (mensagem, None, None, None)
     from agent_service.db import get_db
 
@@ -275,9 +289,9 @@ def test_regressao_so_message_se_comporta_como_antes(agente):
 def test_chat_estruturado_grava_as_tres_colunas_e_o_texto_montado(agente):
     resposta = asyncio.run(chat(_request(**REGENTE)))
 
-    assert agente.mensagens == [SNAPSHOT_REGENTE]
+    assert agente.mensagens == [SNAPSHOT_REGENTE] and agente.contextos == [SNAPSHOT_CONTEXTO]
     message, input_message, input_events, input_context = _colunas(resposta.run_id)
-    assert message == SNAPSHOT_REGENTE, "runs.message guarda o texto que o modelo leu"
+    assert message == SNAPSHOT_REGENTE, "runs.message guarda a mensagem do turno, sem o contexto"
     assert input_message == "boa tarde, me envia novamente o comprovante"
     assert input_events == [
         {
@@ -336,7 +350,7 @@ def test_stream_estruturado_manda_o_texto_montado(agente):
 
     eventos = [c for c in asyncio.run(consumir()) if isinstance(c, dict)]
     assert eventos[0]["event"] == "run" and eventos[-1]["event"] == "done"
-    assert agente.mensagens == [SNAPSHOT_REGENTE]
+    assert agente.mensagens == [SNAPSHOT_REGENTE] and agente.contextos == [SNAPSHOT_CONTEXTO]
     run_id = json.loads(eventos[0]["data"])["run_id"]
     assert _colunas(run_id)[1] == "boa tarde, me envia novamente o comprovante"
 

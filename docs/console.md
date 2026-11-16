@@ -80,7 +80,9 @@ integração, para testar um agente com o contexto e o histórico separados em c
   valores tipados para as tools) e **Blocos de contexto** (texto para o modelo ler, enviado em
   `context`). Cada bloco tem `key`, título, conteúdo e a marca `volatile` (o bloco que muda todo
   turno, como o contexto temporal, e não conta como "o contexto mudou" na tela da sessão). Os blocos
-  ficam guardados por agente no navegador, como as `dependencies`, e vão em toda mensagem. Antes do
+  ficam guardados por agente no navegador, como as `dependencies`. Como o servidor lembra o contexto
+  da sessão, eles vão na primeira mensagem da conversa e depois só quando mudam (a lista inteira);
+  apagar todos os blocos de uma conversa que tinha contexto manda `[]`, que limpa. Antes do
   envio o console confere o que o servidor recusaria com 422: `key` e título preenchidos, `key`
   única (até 64 caracteres), título até 200, no máximo 30 blocos. Um bloco inválido aparece em
   vermelho no próprio campo, o botão **Contexto** fica "inválido" e a mensagem não sai. **Exemplo**
@@ -95,7 +97,9 @@ integração, para testar um agente com o contexto e o histórico separados em c
   dela. Uma conversa cujo primeiro turno foi estruturado é nomeada pela fala, não pelo texto
   montado.
 - **Código** mostra a chamada com `context` e `events` quando a tela os usa (as falas pendentes ou,
-  sem elas, as que foram com a última mensagem), em cURL, JavaScript, Python e PHP.
+  sem elas, as que foram com a última mensagem), em cURL, JavaScript, Python e PHP. O `context` segue
+  a mesma regra do envio: aparece quando a próxima mensagem o mandaria, e some, com um aviso, quando
+  os blocos não mudaram desde o último envio.
 - Sem blocos nem falas de atendente o corpo é exatamente o de antes: nada de `events: []` ou
   `context: []`.
 - **Agente procedural** recusa `events` e `context` (422): o painel mostra só as `dependencies`,
@@ -227,7 +231,8 @@ campos que a entrada estruturada do `/chat` gravou. Capturas em `docs/telas/sess
 - **Conversa:** uma bolha por evento, com autor e horário. Contato à direita; agente à esquerda;
   atendente humano à esquerda, em outra cor e com o rótulo; sistema numa linha discreta no meio.
   O que foi enviado em nome do agente (`agent_sent`) igual à resposta anterior dele não aparece de
-  novo (espaços e quebras de linha não contam); se saiu diferente, aparece com o selo
+  novo (espaços e quebras de linha não contam; o servidor já o marca com `echo: true`, e a tela
+  respeita a marca mesmo quando a resposta anterior está em outra página); se saiu diferente, aparece com o selo
   **enviado diferente**. Documento (`kind: document`) vem recolhido com o nome do arquivo e abre
   em markdown.
 - **Tools:** entre a fala e a resposta, uma linha por chamada — o nome legível (o verbo no fim do

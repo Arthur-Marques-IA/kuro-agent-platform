@@ -36,6 +36,8 @@ from agno.agent import Agent
 from agno.run.agent import RunEvent, RunOutputEvent
 from pydantic import BaseModel
 
+from agent_service.agents import session_context
+from agent_service.agents.system_context import set_system_context
 from agent_service.config import get_settings
 from agent_service.documents import retrieval
 from agent_service.tools import failures
@@ -122,9 +124,14 @@ class RunContext:
 
     input_message: str | None = None
     """Entrada estruturada (`agents/structured_input.py`): a fala pura. `message` é o
-    texto montado que o modelo lê. As três ficam `None` numa chamada só com `message`."""
+    texto do turno que o modelo lê (eventos e fala, sem o contexto). As três ficam
+    `None` numa chamada só com `message` numa sessão sem contexto."""
     input_events: list[dict[str, Any]] | None = field(default=None, compare=False, repr=False)
     input_context: list[dict[str, Any]] | None = field(default=None, compare=False, repr=False)
+    """O contexto vigente do turno, enviado ou herdado da sessão (`agents/session_context.py`)."""
+    system_context: str | None = field(default=None, compare=False, repr=False)
+    """`input_context` renderizado para o prompt de sistema (`structured_input.render_context`);
+    vai ao modelo pelo `ContextVar` de `agents/system_context.py`, nunca pela mensagem."""
 
     extra_spans: tuple[Any, ...] = ()
     """Spans que aconteceram fora do run do Agno e fazem parte da mesma execução
@@ -240,6 +247,9 @@ def _agent_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOutputEvent
     # as tools com parâmetros `source="dependency"` (ver tools/context.py).
     set_dependencies(run.dependencies)
     set_dry_run(run.dry_run)
+    # O contexto vigente vai no prompt de sistema (ver `agents/system_context.py`). Setado
+    # a cada run, mesmo vazio: o de um run anterior na mesma task não sobra para este.
+    set_system_context(run.system_context)
     failures.start_run()
     retrieval.start_run()
     return agent.arun(
@@ -388,6 +398,10 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
             **({"attachments": list(run.attachments) or run.attachment_counts} if run.attachment_counts else {}),
         },
     )
+    if run.input_context is not None and run.endpoint.startswith("chat"):
+        # Antes de o run ir para a fila de gravação: o turno seguinte da sessão já herda
+        # este contexto, mesmo que a gravação ainda não tenha chegado ao banco.
+        session_context.remember_context(run.session_id, run.input_context, record.started_at)
     chunks: list[str] = []
     final_content: str | None = None
     completed_content: Any = None
@@ -468,6 +482,8 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
         _add_extra_spans(record, run.extra_spans)
         _set_collection_version(record, run)
         record.ended_at = datetime.now(timezone.utc)
+        if record.status == "success" and record.output and run.endpoint.startswith("chat"):
+            session_context.remember_reply(run.session_id, record.output, record.started_at)
         run_store.record_run(record)
 
 

@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sse_starlette.sse import EventSourceResponse
 
 from agent_service.api import idempotency, rate_limit
-from agent_service.agents import structured_input
+from agent_service.agents import session_context, structured_input
 from agent_service.agents.runtime import RunnableAgent, read_event
 from agent_service.agents.attachments import AttachmentError, AttachmentIn, build_media, describe_attachments
 from agent_service.agents.structured_input import MAX_CONTEXT_BLOCKS, MAX_EVENTS, ContextBlock, InputEvent
@@ -190,14 +190,17 @@ class ChatRequest(BaseModel):
         description="Entrada estruturada: o que aconteceu desde a última resposta do agente, em ordem "
         f"(até {MAX_EVENTS}). Cada item: role (contact | human_agent | agent_sent | system), content, at, "
         "kind (text | document), attachments (só a descrição). Não repita turnos que o agente já viu: o "
-        "histórico da sessão já os traz.",
+        "histórico da sessão já os traz. Um agent_sent igual à última resposta do agente fica fora do texto "
+        "do modelo (é gravado com echo: true).",
     )
     context: list[ContextBlock] | None = Field(
         default=None,
         max_length=MAX_CONTEXT_BLOCKS,
-        description=f"Entrada estruturada: blocos de texto para o modelo ler (até {MAX_CONTEXT_BLOCKS}), "
-        "cada um com key (estável e única), title, content e volatile. Diferente de `dependencies`, que "
-        "são valores tipados para tools e validação.",
+        description=f"Entrada estruturada: o contexto da sessão, em blocos de texto (até {MAX_CONTEXT_BLOCKS}), "
+        "cada um com key (estável e única), title, content e volatile. Ausente: vale o último contexto "
+        "enviado nesta session_id. Uma lista: passa a ser o contexto inteiro da sessão. []: a sessão fica "
+        "sem contexto. O modelo lê o contexto vigente uma vez, no prompt de sistema; ele não entra no "
+        "histórico. Diferente de `dependencies`, que são valores tipados para tools e validação.",
     )
     dependencies: dict[str, Any] | None = None
     """Metadados opcionais (ex: cpf, nome) injetados como contexto estruturado
@@ -325,22 +328,40 @@ def _resolve(request: ChatRequest, endpoint: str) -> tuple[RunnableAgent, RunCon
         videos=tuple(media["videos"]),
         files=tuple(media["files"]),
         definition=definition,
-        **_input_fields(request),
+        **_input_fields(request, procedural=(definition.get("kind") or "conversational") == "procedural"),
     )
     return agent, run
 
 
-def _input_fields(request: ChatRequest) -> dict[str, Any]:
-    """`message` do run e as três colunas da entrada estruturada. Só com `message`
-    (o legado), o texto é o que veio, byte a byte, e as colunas ficam nulas — é
-    por elas que se distingue um run estruturado de um antigo."""
-    if not request.structured:
+def _input_fields(request: ChatRequest, *, procedural: bool = False) -> dict[str, Any]:
+    """`message` do run, as três colunas da entrada estruturada e o contexto do prompt
+    de sistema.
+
+    O contexto é estado da sessão (`agents/session_context.py`): `context` ausente
+    herda o vigente, uma lista passa a ser o contexto inteiro e `[]` limpa. Ele vai
+    no prompt de sistema (`system_context`), uma vez, e não na mensagem — que fica
+    só com os eventos e a fala. Só com `message`, numa sessão que nunca teve contexto
+    (o legado), o texto é o que veio, byte a byte, e as colunas ficam nulas — é por
+    elas que se distingue um run estruturado de um antigo. O procedural não herda:
+    ele não aceita entrada estruturada."""
+    if procedural:
         return {"message": request.message}
+    if request.context is not None:
+        context: list[dict[str, Any]] | None = structured_input.context_for_storage(request.context)
+    else:
+        context = session_context.current_context(request.session_id)
+    if not request.structured and context is None:
+        return {"message": request.message}
+    events = request.events or []
+    echoes: set[int] = set()
+    if any(event.role == "agent_sent" for event in events):
+        echoes = structured_input.echo_indices(events, session_context.last_reply(request.session_id))
     return {
-        "message": structured_input.build_model_text(request.message, request.events, request.context),
-        "input_message": structured_input.pure_message(request.message, request.events or []),
-        "input_events": structured_input.events_for_storage(request.message, request.events),
-        "input_context": structured_input.context_for_storage(request.context),
+        "message": structured_input.build_turn_text(request.message, request.events, echoes),
+        "input_message": structured_input.pure_message(request.message, events),
+        "input_events": structured_input.events_for_storage(request.message, request.events, echoes),
+        "input_context": context,
+        "system_context": structured_input.render_context(context),
     }
 
 
