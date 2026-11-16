@@ -105,10 +105,15 @@ def _measure(messages: list[Any], system_context: str | None, attachments: int) 
             context = len(system_context) if system_context and system_context in text else 0
             memories = sum(len(m) for m in _MEMORIES.findall(text))
             summary = sum(len(m) for m in _SUMMARY.findall(text))
+            # As dependencies do run vão no fim do prompt de sistema (`agents/system_context.py`),
+            # depois do contexto da sessão: procure o bloco fora dele.
+            outside = text.replace(system_context, "", 1) if context and system_context else text
+            dependencies = sum(len(m) for m in _DEPENDENCIES.findall(outside))
             parts["session_context"] += context
             parts["memories"] += memories
             parts["session_summary"] += summary
-            parts["instructions"] += max(len(text) - context - memories - summary, 0)
+            parts["dependencies"] += dependencies
+            parts["instructions"] += max(len(text) - context - memories - summary - dependencies, 0)
         elif from_history:
             if role == "tool":
                 parts["history_tools"] += len(text)

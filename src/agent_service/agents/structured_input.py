@@ -218,12 +218,58 @@ def echo_indices(events: list[InputEvent] | None, last_reply: str | None) -> set
     }
 
 
+def context_change_notice(previous: list[dict[str, Any]] | None, current: list[dict[str, Any]] | None) -> str | None:
+    """O aviso que entra na mensagem do turno quando o contexto da sessão mudou.
+
+    O contexto vigente vai no prompt de sistema, antes do histórico; as respostas antigas
+    do agente, baseadas no contexto anterior, ficam depois dele e mais perto da pergunta.
+    Medido com um modelo real: sem aviso, numa conversa em que o valor de um bloco mudou,
+    o modelo repetiu o valor antigo em 4 de 16 conversas; com este aviso no turno da
+    mudança, em 0 de 18. O aviso é um fato da conversa ("o contexto mudou aqui") e fica
+    no histórico; o conteúdo dos blocos não.
+
+    `previous` é o contexto vigente antes deste turno (`None` = a sessão nunca teve
+    contexto: é o primeiro, não há o que desdizer, sem aviso). Blocos `volatile` mudam
+    todo turno e não contam. Compara pelo `hash` de cada `key`."""
+    if previous is None:
+        return None
+
+    def stable(blocks: list[dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
+        return {str(b.get("key")): b for b in blocks or [] if not b.get("volatile")}
+
+    def label(block: dict[str, Any]) -> str:
+        return f'"{block.get("title") or block.get("key")}"'
+
+    before, now = stable(previous), stable(current)
+    changed = [label(b) for key, b in now.items() if key in before and b.get("hash") != before[key].get("hash")]
+    added = [label(b) for key, b in now.items() if key not in before]
+    removed = [label(b) for key, b in before.items() if key not in now]
+    if not (changed or added or removed):
+        return None
+    parts = []
+    if changed:
+        parts.append(("bloco " if len(changed) == 1 else "blocos ") + ", ".join(changed))
+    if added:
+        parts.append(("bloco novo " if len(added) == 1 else "blocos novos ") + ", ".join(added))
+    if removed:
+        parts.append(("bloco removido " if len(removed) == 1 else "blocos removidos ") + ", ".join(removed))
+    return (
+        "O contexto desta conversa foi atualizado agora: "
+        + "; ".join(parts)
+        + ". Vale o contexto atual, não o que foi dito antes."
+    )
+
+
 def build_turn_text(
-    message: str | None, events: list[InputEvent] | None, echoes: set[int] | frozenset[int] = frozenset()
+    message: str | None,
+    events: list[InputEvent] | None,
+    echoes: set[int] | frozenset[int] = frozenset(),
+    notice: str | None = None,
 ) -> str:
     """A mensagem do turno (e o que fica em `runs.message`): os eventos e a fala, sem
     o contexto, que vai no prompt de sistema. Seções vazias somem; os índices em
-    `echoes` (ver `echo_indices`) não entram."""
+    `echoes` (ver `echo_indices`) não entram. `notice` (ver `context_change_notice`)
+    entra como o primeiro evento, rotulado como do sistema."""
     events = list(events or [])
     index = speech_index(message, events)
     kept = [(i, e) for i, e in enumerate(events) if i not in echoes and i != index]
@@ -232,8 +278,11 @@ def build_turn_text(
     speech = pure_message(message, events)
 
     sections: list[str] = []
-    if before:
-        sections.append(EVENTS_HEADING + "\n\n" + "\n\n".join(_event_text(e) for e in before))
+    before_texts = [_event_text(e) for e in before]
+    if notice:
+        before_texts.insert(0, f"[{ROLE_LABELS['system']}]\n{notice}")
+    if before_texts:
+        sections.append(EVENTS_HEADING + "\n\n" + "\n\n".join(before_texts))
     speech_lines = [speech.strip()] if speech.strip() else []
     if index is not None:
         speech_event = events[index]

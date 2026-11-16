@@ -118,6 +118,10 @@ prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo h
 - **Aviso de idioma legado.** Uma collection com `language` nulo (criada antes da coluna) vale
   `english`; `GET /collections` passa a trazer `search.language_legacy: true` e `warnings`, e a CLI, o
   MCP e o console mostram o aviso. Nada é alterado sozinho.
+- **Aviso de contexto atualizado.** Quando o `context` enviado difere do vigente na sessão, a
+  mensagem daquele turno ganha uma linha `[Sistema]` dizendo quais blocos mudaram (pelo título, sem
+  o conteúdo) e que vale o contexto atual. Ela aparece em `runs.message` e no histórico. Ver
+  [entrada estruturada](integracao.md#entrada-estruturada).
 - **`agent_sent` repetido não se repete no prompt.** Um evento `agent_sent` cujo texto é igual à
   última resposta do agente na sessão (ignorando espaços nas pontas e diferenças de quebra de linha
   e de espaço) sai do texto do modelo, porque o histórico já traz essa resposta. Ele continua
