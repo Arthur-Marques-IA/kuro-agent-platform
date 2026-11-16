@@ -231,7 +231,7 @@ def _extras(
         body["dry_run"] = True
 
 
-COLLECTION_FIELDS = ("label", "description", "search_mode", "max_results", "vector_weight", "reranker")
+COLLECTION_FIELDS = ("label", "description", "search_mode", "language", "max_results", "vector_weight", "reranker")
 """O que `PUT /collections/{nome}` aceita (`CollectionUpdateIn`)."""
 
 NO_LOCAL_FILES = (
@@ -794,7 +794,7 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         rules: Annotated[
             list[dict[str, Any]] | None,
             Field(
-                description='Regras de negócio: [{"name", "field", "op": eq|ne|in|not_in|lt|lte|gt|gte|exists|not_exists, '
+                description='Regras de negócio: [{"name", "field", "op": eq|ne|in|not_in|lt|lte|gt|gte|exists|not_exists|contains|matches, '
                 '"value" (ou {"$dep": "campo"}), "when"?}]. Violação reprova o caso.'
             ),
         ] = None,
@@ -806,6 +806,13 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         ] = None,
         min_pass: Annotated[float, Field(description="Taxa de acerto mínima (0 a 1) para verdict.ok.")] = 0.9,
         tolerance: Annotated[float, Field(description="Diferença aceita entre números (relativa).")] = 0.01,
+        agent_checks: Annotated[
+            bool,
+            Field(
+                description="Soma às regras as checagens do próprio agente que leem result, output, status e "
+                "dependencies (as que leem tools, latência ou metadata ficam fora: skipped_checks)."
+            ),
+        ] = False,
         dry_run: DryRun = True,
     ) -> dict[str, Any]:
         """Avalia um agente analista contra um dataset, campo a campo (o mesmo que
@@ -834,6 +841,7 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
                 min_pass=min_pass,
                 tolerance=tolerance,
                 dry_run=dry_run,
+                agent_checks=agent_checks,
             )
         except (EvalInputError, ValueError) as exc:
             raise ToolError(str(exc)) from exc
@@ -848,7 +856,7 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     @server.tool(annotations=READ)
     def tools_list() -> dict[str, Any]:
         """Tools cadastradas (as que um agente pode usar em `tools`)."""
-        keys = ("tool_name", "kind", "label", "enabled", "side_effect", "is_seed")
+        keys = ("tool_name", "kind", "label", "enabled", "side_effect", "side_effect_suggested", "is_seed")
         return {"items": [{k: t.get(k) for k in keys} for t in _call(client.list_tools)]}
 
     @server.tool(annotations=READ)
@@ -966,6 +974,10 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         ] = None,
         tool_failed: Annotated[bool, Field(description="Só os em que alguma tool falhou.")] = False,
         side_effect: Annotated[bool, Field(description="Só os que chamaram tool com efeito colateral.")] = False,
+        check_failed: Annotated[
+            bool, Field(description="Só os com alguma checagem automática do agente reprovada.")
+        ] = False,
+        check: Annotated[str | None, Field(description="Só os em que esta checagem (pelo nome) reprovou.")] = None,
         feedback: Annotated[
             Literal["up", "down", "none"] | None,
             Field(description="Pelo feedback: positivo (up), negativo (down) ou sem nota (none)."),
@@ -981,7 +993,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         cursor: Annotated[str | None, Field(description="O next_cursor da página anterior.")] = None,
     ) -> dict[str, Any]:
         """Execuções mais recentes, com filtros de revisão: `complexity` (1–3),
-        `tool_failed`, `side_effect`, `feedback`, `sample` (amostra aleatória),
+        `tool_failed`, `side_effect`, `check_failed`/`check` (checagens automáticas do agente
+        reprovadas; o resultado de cada uma vem em `checks` de cada run), `feedback`, `sample` (amostra aleatória),
         `meta` (metadata que quem chamou mandou, ex.: {"conversation_id": "98231"}).
         Os testes em dry_run (como o chat daqui) ficam de fora, a menos que `include_tests=true`
         ou que se filtre por `session_id`. Detalhe: run_show."""
@@ -999,6 +1012,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             complexity=complexity or None,
             tool_failed=True if tool_failed else None,
             side_effect=True if side_effect else None,
+            check_failed=True if check_failed else None,
+            check=check,
             feedback=feedback,
             # Numa conversa específica o teste é o que se procura: o run que o chat acabou de criar.
             include_dry_run=None if include_tests or session_id else False,
@@ -1349,7 +1364,7 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             str | None,
             Field(
                 description="Dicionário do full-text do Postgres, ex.: portuguese (padrão), english, simple. "
-                "Definitivo, como o embedder."
+                "Muda depois com collection_set."
             ),
         ] = None,
         max_results: Annotated[int | None, Field(description="Trechos por busca, o k (1 a 50; padrão 10).")] = None,
@@ -1357,9 +1372,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             float | None, Field(description="No hybrid, o peso do vetor de 0 a 1 (o resto é do texto; padrão 0.5).")
         ] = None,
     ) -> dict[str, Any]:
-        """Cria uma base de conhecimento vazia. O embedder e o idioma são escolhidos aqui e NÃO
-        mudam depois (a tabela de vetores é de um embedder só). Modo, k e peso mudam com
-        collection_set. Depois: collection_add ou collection_add_site para indexar, e
+        """Cria uma base de conhecimento vazia. O embedder é escolhido aqui e NÃO muda depois (a
+        tabela de vetores é de um embedder só). Modo, idioma, k e peso mudam com collection_set. Depois: collection_add ou collection_add_site para indexar, e
         agent_set(knowledge_collection=name) no agente."""
         payload = {
             "name": name,
@@ -1381,18 +1395,19 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         changes: Annotated[
             dict[str, Any],
             Field(
-                description="label, description e a busca: search_mode (vector|hybrid), max_results (k), "
-                'vector_weight (0–1), reranker. Ex.: {"search_mode": "hybrid", "vector_weight": 0.7}; null volta ao padrão.'
+                description="label, description e a busca: search_mode (vector|hybrid), language (dicionário do "
+                "full-text, ex.: portuguese; sem reindexar), max_results (k), vector_weight (0–1), reranker. "
+                'Ex.: {"search_mode": "hybrid", "vector_weight": 0.7}; null volta ao padrão (menos language).'
             ),
         ],
     ) -> dict[str, Any]:
         """Altera o rótulo, a descrição ou a configuração de busca de uma collection. Mudar a
-        busca gera uma versão nova (collection_versions), que os runs gravam. O embedder e o
-        idioma não mudam: para outros, crie uma collection nova e reindexe."""
-        if {"embedder", "embedder_provider", "embedder_model", "embedder_dimensions", "language"} & set(changes):
-            raise ToolError(
-                "o embedder e o idioma de uma collection não mudam: crie outra (collection_create) e reindexe"
-            )
+        busca gera uma versão nova (collection_versions), que os runs gravam. O embedder não
+        muda: para outro, crie uma collection nova e reindexe. Uma collection com
+        `search.language_legacy` verdadeiro (o inglês de antes da coluna) mostra um aviso em
+        `warnings`; language=portuguese resolve e não exige reindexar."""
+        if {"embedder", "embedder_provider", "embedder_model", "embedder_dimensions"} & set(changes):
+            raise ToolError("o embedder de uma collection não muda: crie outra (collection_create) e reindexe")
         _fields_only(changes, COLLECTION_FIELDS)
         return _call(client.update_collection, name, changes)
 

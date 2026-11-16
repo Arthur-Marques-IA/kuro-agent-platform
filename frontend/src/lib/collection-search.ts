@@ -13,11 +13,20 @@ import type { CollectionSearchConfig, ScoreKind, SearchMode } from "./types";
 export const SEARCH_DEFAULTS: CollectionSearchConfig = {
   search_mode: "vector",
   language: "portuguese",
+  language_legacy: false,
   max_results: 10,
   vector_weight: 0.5,
   reranker: null,
   score_kind: "similarity",
 };
+
+/** Os dicionários de full-text que o console oferece (o serviço aceita qualquer um do `pg_ts_config`). */
+export const LANGUAGE_OPTIONS: readonly { value: string; label: string }[] = [
+  { value: "portuguese", label: "Português" },
+  { value: "english", label: "Inglês" },
+  { value: "spanish", label: "Espanhol" },
+  { value: "simple", label: "Sem idioma (simple)" },
+];
 
 const MODES: readonly SearchMode[] = ["vector", "hybrid"];
 const SCORE_KINDS: readonly ScoreKind[] = ["similarity", "hybrid", "rerank"];
@@ -39,6 +48,7 @@ export function collectionSearch(collection: { search?: unknown } | null | undef
   return {
     search_mode: mode,
     language: typeof s.language === "string" && s.language ? s.language : SEARCH_DEFAULTS.language,
+    language_legacy: s.language_legacy === true,
     max_results: finite(s.max_results, SEARCH_DEFAULTS.max_results),
     vector_weight: finite(s.vector_weight, SEARCH_DEFAULTS.vector_weight),
     reranker: typeof s.reranker === "string" ? s.reranker : null,

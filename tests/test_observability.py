@@ -127,6 +127,18 @@ def test_run_id_is_generated_before_the_run_and_passed_to_agno(monkeypatch):
     assert [event.event for event in events] == ["RunStarted", "RunContent", "RunCompleted"]
     assert agent.calls[0]["run_id"] == run.run_id
     assert agent.calls[0]["stream"] is True and agent.calls[0]["stream_events"] is True
+    # As dependencies vão no prompt de sistema (agents/system_context.py), não na mensagem.
+    assert agent.calls[0]["add_dependencies_to_context"] is None
+    assert agent.calls[0]["dependencies"] == {"nome": "Maria"}
+
+
+def test_analyst_keeps_dependencies_in_the_message(monkeypatch):
+    monkeypatch.setattr(tracing, "_client", None)
+    run = make_run(definition={"kind": "analysis"})
+    agent = completed_run(run.run_id)
+
+    drain(agent, run)
+
     assert agent.calls[0]["add_dependencies_to_context"] is True
 
 

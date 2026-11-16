@@ -218,6 +218,11 @@ def list_runs(
             description="searched: buscou na base; empty: alguma busca voltou vazia; flagged: trecho marcado errado e aberto."
         ),
     ] = None,
+    check_failed: Annotated[
+        bool | None,
+        Query(description="true: só com alguma checagem automática reprovada; false: só sem reprovação."),
+    ] = None,
+    check: Annotated[str | None, Query(max_length=80, description="Só runs em que esta checagem reprovou.")] = None,
 ) -> RunPage:
     """Execuções de todos os agentes (ou só dos `agent_type` pedidos), mais recentes
     primeiro, com tokens, custo e feedback — a página de Execuções do console usa isto.
@@ -229,8 +234,9 @@ def list_runs(
     Um run aparece logo depois de terminar (a gravação sai do caminho da resposta).
 
     Os filtros de revisão (`complexity`, `tool_failed`, `side_effect`,
-    `min_message_chars`, `feedback`, `include_dry_run`, `sample`) montam a fila do
-    que vale um humano olhar. Só no trace store local.
+    `min_message_chars`, `feedback`, `include_dry_run`, `sample`, `check_failed`, `check`)
+    montam a fila do que vale um humano olhar. `check_failed`/`check` olham as checagens
+    automáticas do agente (`docs/observabilidade.md`). Só no trace store local.
     """
     return _list_runs(
         agent_type=agent_type,
@@ -256,6 +262,8 @@ def list_runs(
             "knowledge_collection": knowledge_collection,
             "collection_version": collection_version,
             "rag": rag,
+            "check_failed": check_failed,
+            "check": check,
         },
         sort=sort,
     )

@@ -50,8 +50,10 @@ from sqlalchemy import (
 )
 
 from agent_service.db import get_db
+from agent_service.observability.prompt_composition import history_chars
 from agent_service.tools.failures import complexity
 from agent_service.observability.trace_store import (
+    RunCheck,
     RunPage,
     RunQuery,
     RunStats,
@@ -67,6 +69,8 @@ from agent_service.observability.trace_store import (
 logger = logging.getLogger(__name__)
 
 FEEDBACK = "feedback"
+CHECK_SOURCE = "check"
+CHECK_PREFIX = "check:"
 PROCEDURE_STATE_SPAN = "procedure_state"
 """Chave de metadata do span com o `state` de um turno procedural (`agents/procedure_runner.py`)."""
 DEFAULT_TENANT = "default"
@@ -120,9 +124,17 @@ runs = Table(
     # SQLAlchemy) — `input_events IS NULL` é o filtro de "run não estruturado".
     Column("input_events", JSON(none_as_null=True), nullable=True),
     Column("input_context", JSON(none_as_null=True), nullable=True),
+    # Tokens do prompt lidos do cache e escritos nele, e a composição do prompt da primeira
+    # chamada (`prompt_composition.py`, migração 0019). `prompt_chars`/`history_chars` repetem dois
+    # números da composição para o panorama somar sem abrir o JSON.
+    Column("cache_read_tokens", Integer, nullable=False, default=0),
+    Column("cache_write_tokens", Integer, nullable=False, default=0),
+    Column("prompt_composition", JSON(none_as_null=True), nullable=True),
+    Column("prompt_chars", Integer, nullable=True),
+    Column("history_chars", Integer, nullable=True),
 )
 
-_HEAVY_COLUMNS = ("input_events", "input_context")
+_HEAVY_COLUMNS = ("input_events", "input_context", "prompt_composition")
 _LIST_COLUMNS = [c for c in runs.c if c.name not in _HEAVY_COLUMNS]
 """A listagem não carrega os eventos e os blocos de contexto (até 200 e 30 por run):
 eles saem só no detalhe (`get_run`)."""
@@ -176,6 +188,9 @@ run_scores = Table(
     Column("data_type", String, nullable=False),
     Column("comment", Text, nullable=True),
     Column("user_id", String, nullable=True),
+    # De onde veio: NULL = nota humana ou do `kuro eval`; "check" = checagem automática
+    # do agente (`observability/checks.py`) — fica fora dos votos e das notas.
+    Column("source", String, nullable=True),
     Column("timestamp", DateTime(timezone=True), nullable=False),
 )
 
@@ -223,6 +238,9 @@ class RunRecord:
     output_tokens: int = 0
     total_tokens: int = 0
     cost_usd: float | None = None
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    prompt_composition: dict[str, Any] | None = None
     ended_at: datetime | None = None
     spans: list[SpanRecord] = field(default_factory=list)
     tenant_id: str = DEFAULT_TENANT
@@ -235,6 +253,8 @@ class RunRecord:
     input_message: str | None = None
     input_events: list[dict[str, Any]] | None = None
     input_context: list[dict[str, Any]] | None = None
+    checks: list[dict[str, Any]] = field(default_factory=list)
+    """As checagens do agente quando o run começou (`observability/checks.py`)."""
 
 
 def _redacted(record: RunRecord) -> RunRecord:
@@ -273,10 +293,44 @@ def _redacted(record: RunRecord) -> RunRecord:
     )
 
 
+def _evaluate_checks(record: RunRecord, latency: float) -> list[dict[str, Any]]:
+    """O resultado de cada checagem do agente sobre este run. Nunca levanta: um defeito
+    aqui não pode custar a gravação do run (a avaliação já roda na thread de escrita,
+    fora do caminho da resposta)."""
+    if not record.checks:
+        return []
+    from agent_service.observability import checks as run_checks
+    from agent_service.observability.redaction import redact_keys
+
+    try:
+        root_input = record.input if isinstance(record.input, dict) else {}
+        facts = run_checks.run_facts(
+            output=record.output,
+            status=record.status,
+            latency_ms=latency,
+            input_tokens=record.input_tokens,
+            output_tokens=record.output_tokens,
+            spans=record.spans,
+            dependencies=root_input.get("dependencies"),
+            metadata=record.metadata,
+            checks=record.checks,
+        )
+        return run_checks.to_score_rows(
+            record.run_id,
+            run_checks.evaluate_checks(record.checks, facts, redact_keys=redact_keys()),
+            datetime.now(timezone.utc),
+        )
+    except Exception:
+        logger.exception("Falha ao avaliar as checagens do run %s", record.run_id)
+        return []
+
+
 def _write_run(record: RunRecord) -> None:
-    record = _redacted(record)
     ended_at = record.ended_at or datetime.now(timezone.utc)
     latency = round((ended_at - record.started_at).total_seconds() * 1000, 1)
+    # Antes da redação: a checagem lê os valores de verdade; só o `actual` gravado sai mascarado.
+    check_rows = _evaluate_checks(record, latency)
+    record = _redacted(record)
     root_id = f"{record.run_id}:root"
     span_rows = [
         {
@@ -350,6 +404,11 @@ def _write_run(record: RunRecord) -> None:
                 output_tokens=record.output_tokens,
                 total_tokens=record.total_tokens,
                 cost_usd=record.cost_usd,
+                cache_read_tokens=record.cache_read_tokens,
+                cache_write_tokens=record.cache_write_tokens,
+                prompt_composition=record.prompt_composition,
+                prompt_chars=(record.prompt_composition or {}).get("chars"),
+                history_chars=history_chars(record.prompt_composition),
                 latency_ms=latency,
                 started_at=record.started_at,
                 ended_at=ended_at,
@@ -357,6 +416,8 @@ def _write_run(record: RunRecord) -> None:
             )
         )
         conn.execute(insert(run_spans), span_rows)
+        if check_rows:
+            conn.execute(insert(run_scores), check_rows)
         if record.metadata:
             conn.execute(
                 insert(run_metadata),
@@ -724,6 +785,15 @@ def _review_filters(query: RunQuery) -> list[Any]:
             run_spans.c.name.in_(select(tool_definitions.c.tool_name).where(tool_definitions.c.side_effect.is_(True))),
         )
         conditions.append(called if query.side_effect else not_(called))
+    if query.check_failed is not None or query.check:
+        # Só reprovação (`value == 0`): erro de avaliação (-1) não é run ruim, é checagem ruim.
+        failed = exists().where(
+            run_scores.c.run_id == runs.c.run_id,
+            run_scores.c.source == CHECK_SOURCE,
+            run_scores.c.value == 0,
+            *([run_scores.c.name == f"{CHECK_PREFIX}{query.check}"] if query.check else []),
+        )
+        conditions.append(not_(failed) if query.check_failed is False else failed)
     if query.min_message_chars:
         conditions.append(func.length(func.trim(func.coalesce(runs.c.message, ""))) >= query.min_message_chars)
     if query.feedback in ("up", "down"):
@@ -828,11 +898,28 @@ def _attachments_of(conn: Any, run_ids: list[str]) -> dict[str, list[dict[str, A
     return found
 
 
+def _checks_of(conn: Any, run_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """O resultado das checagens de cada run (as que foram avaliadas), em ordem de nome."""
+    from agent_service.observability.checks import from_score_row
+
+    found: dict[str, list[dict[str, Any]]] = {run_id: [] for run_id in run_ids}
+    if run_ids:
+        rows = conn.execute(
+            select(run_scores.c.run_id, run_scores.c.name, run_scores.c.value, run_scores.c.comment)
+            .where(run_scores.c.run_id.in_(run_ids), run_scores.c.source == CHECK_SOURCE)
+            .order_by(run_scores.c.name)
+        )
+        for run_id, name, value, comment in rows:
+            found[run_id].append(from_score_row(name, value, comment))
+    return found
+
+
 def _summary(
     row: Any,
     votes: list[int] | None = None,
     meta: dict[str, str] | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    checks: list[dict[str, Any]] | None = None,
 ) -> RunSummary:
     up, down = votes or (0, 0)
     return RunSummary(
@@ -861,6 +948,9 @@ def _summary(
         output_tokens=row.output_tokens,
         total_tokens=row.total_tokens,
         cost_usd=row.cost_usd,
+        cache_read_tokens=row.cache_read_tokens or 0,
+        cache_write_tokens=row.cache_write_tokens or 0,
+        prompt_chars=row.prompt_chars,
         feedback_up=up,
         feedback_down=down,
         metadata=meta or {},
@@ -869,6 +959,7 @@ def _summary(
         tool_failures=row.tool_failures,
         complexity=row.complexity,
         input_message=row.input_message,
+        checks=[RunCheck(**c) for c in checks or []],
     )
 
 
@@ -884,7 +975,10 @@ class DbTraceStore:
                 votes = _feedback_votes(conn, [r.run_id for r in page])
                 meta = _metadata_of(conn, [r.run_id for r in page])
                 files = _attachments_of(conn, [r.run_id for r in page])
-            return RunPage(items=[_summary(r, votes[r.run_id], meta[r.run_id], files[r.run_id]) for r in page])
+                checks = _checks_of(conn, [r.run_id for r in page])
+            return RunPage(
+                items=[_summary(r, votes[r.run_id], meta[r.run_id], files[r.run_id], checks[r.run_id]) for r in page]
+            )
         column = _SORT_COLUMNS.get(query.sort)
         if column is not None:
             # As mais caras (ou lentas) primeiro. Run sem o valor (custo desconhecido) não tem lugar
@@ -908,7 +1002,8 @@ class DbTraceStore:
             votes = _feedback_votes(conn, [r.run_id for r in page])
             meta = _metadata_of(conn, [r.run_id for r in page])
             files = _attachments_of(conn, [r.run_id for r in page])
-        items = [_summary(r, votes[r.run_id], meta[r.run_id], files[r.run_id]) for r in page]
+            checks = _checks_of(conn, [r.run_id for r in page])
+        items = [_summary(r, votes[r.run_id], meta[r.run_id], files[r.run_id], checks[r.run_id]) for r in page]
         next_cursor = None
         if more:
             last = page[-1]
@@ -935,6 +1030,7 @@ class DbTraceStore:
             )
             run_meta = _metadata_of(conn, [run_id])[run_id]
             run_files = _attachments_of(conn, [run_id])[run_id]
+            run_checks = _checks_of(conn, [run_id])[run_id]
             reference = conn.execute(
                 select(run_references.c.reference).where(run_references.c.run_id == run_id)
             ).scalar()
@@ -950,6 +1046,7 @@ class DbTraceStore:
                 timestamp=s.timestamp,
             )
             for s in score_rows
+            if s.source != CHECK_SOURCE  # as checagens vão em `run.checks`
         ]
         feedback = [s for s in scores if s.name == FEEDBACK]
         up = sum(1 for s in feedback if s.value)
@@ -982,13 +1079,14 @@ class DbTraceStore:
         spans.sort(key=lambda s: (s.parent_id is not None, s.started_at))
         procedure_state = next((s.output for s in spans if s.metadata.get(PROCEDURE_STATE_SPAN)), None)
         return RunTrace(
-            run=_summary(row, [up, len(feedback) - up], run_meta, run_files),
+            run=_summary(row, [up, len(feedback) - up], run_meta, run_files, run_checks),
             spans=spans,
             scores=scores,
             reference=reference,
             procedure_state=procedure_state if isinstance(procedure_state, dict) else None,
             input_events=row.input_events,
             input_context=row.input_context,
+            prompt_composition=row.prompt_composition,
         )
 
     def list_sessions(self, query: RunQuery) -> SessionPage:
@@ -1255,6 +1353,7 @@ def session_timeline(
         page, more = rows[:limit], len(rows) > limit
         run_ids = [r.run_id for r in page]
         spans: dict[str, list[Any]] = {r: [] for r in run_ids}
+        checks = _checks_of(conn, run_ids)
         seed_context = None
         dry_run: set[str] = set()
         if run_ids:
@@ -1308,6 +1407,7 @@ def session_timeline(
         "agent_types": agent_types,
         "rows": page,
         "spans": spans,
+        "checks": checks,
         "seed": None if seed_context is None else (seed_context.input_context or []),
         "side_effects": side_effects,
         "dry_run": dry_run,

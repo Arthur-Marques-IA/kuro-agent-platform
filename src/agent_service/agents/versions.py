@@ -82,6 +82,8 @@ def effective_config(definition: dict[str, Any]) -> dict[str, Any]:
         config["plain_text"] = True
     if definition.get("history_tool_calls") is not None:  # 0 vale: nenhuma tool antiga
         config["history_tool_calls"] = definition["history_tool_calls"]
+    if definition.get("checks"):  # só quando há: agente sem checagem mantém a versão que já tinha
+        config["checks"] = definition["checks"]
     if config["kind"] == "procedural":
         # Só aqui: com `stages` em todo agente, os que já existiam ganhariam versão nova.
         config["stages"] = definition.get("stages") or []

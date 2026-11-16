@@ -556,6 +556,8 @@ export interface AgentDefinition {
   session_summary?: boolean;
   /** Resposta sem markdown (WhatsApp). */
   plain_text?: boolean;
+  /** Checagens determinísticas avaliadas em toda execução real. */
+  checks?: AgentCheck[];
   is_seed: boolean;
   prompt_version: number;
   created_at: string;
@@ -584,6 +586,7 @@ export interface AgentDefinitionInput {
   timeout_seconds?: number | null;
   session_summary?: boolean;
   plain_text?: boolean;
+  checks?: AgentCheck[];
 }
 
 /** `GET /agents/{tipo}/versions` — as versões do prompt. Gerado do OpenAPI. */
@@ -604,6 +607,7 @@ export interface AgentRevision {
     feedback_rules?: string[];
     response_schema?: SchemaField[];
     knowledge_collection?: string | null;
+    checks?: AgentCheck[];
     [key: string]: unknown;
   };
   created_at: string;
@@ -638,8 +642,10 @@ export type SearchMode = "vector" | "hybrid";
 /** Configuração de busca de uma collection, com os padrões resolvidos. */
 export interface CollectionSearchConfig {
   search_mode: SearchMode;
-  /** Dicionário do full-text do Postgres; fixo na criação. */
+  /** Dicionário do full-text do Postgres; muda depois, sem reindexar. */
   language: string;
+  /** `language` nulo no cadastro: o inglês legado de antes da coluna, nunca escolhido. */
+  language_legacy?: boolean;
   /** Trechos por busca (k). */
   max_results: number;
   /** No híbrido, o peso do vetor (o resto é do full-text). */
@@ -663,6 +669,8 @@ export interface Collection {
   /** Versão atual da configuração — a que os runs gravam em `collection_version`. */
   version?: number | null;
   config_hash?: string | null;
+  /** Avisos de configuração, ex.: o idioma legado em inglês. */
+  warnings?: string[];
   /** Fixo na criação: a tabela de vetores é de um embedder só. */
   embedder_provider: string;
   embedder_model: string;
@@ -693,6 +701,9 @@ export interface ToolSummary {
   is_seed: boolean;
   /** A tool muda algo no sistema chamado? `null` = ainda não classificada. */
   side_effect?: boolean | null;
+  /** Só `kind: "api"`: o que o método HTTP sugere (GET/HEAD = não muda; POST/PUT/PATCH/DELETE = muda).
+   *  É só uma sugestão: nunca é gravada sozinha. */
+  side_effect_suggested?: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -881,6 +892,48 @@ export interface UsageMetrics {
 
 export type RunStatus = "success" | "error" | "interrupted";
 
+export type CheckSeverity = "warn" | "fail";
+
+/** Um campo do run lido por uma checagem, e os operadores aceitos (`observability/checks.py`). */
+export type CheckOperator =
+  | "eq"
+  | "ne"
+  | "in"
+  | "not_in"
+  | "lt"
+  | "lte"
+  | "gt"
+  | "gte"
+  | "exists"
+  | "not_exists"
+  | "contains"
+  | "matches";
+
+export interface CheckCondition {
+  field: string;
+  op: CheckOperator;
+  value?: unknown;
+}
+
+/** Uma checagem determinística do agente, avaliada em toda execução real (sem modelo). */
+export interface AgentCheck extends CheckCondition {
+  name: string;
+  when?: CheckCondition | null;
+  severity: CheckSeverity;
+}
+
+/** O resultado de uma checagem em um run: `error` = a avaliação levantou (defeito da checagem, não do run). */
+export interface RunCheck {
+  name: string;
+  status: "passed" | "failed" | "error";
+  severity: CheckSeverity;
+  field?: string | null;
+  op?: string | null;
+  expected?: unknown;
+  actual?: unknown;
+  error?: string | null;
+}
+
 /** Uma execução de agente, lida do Langfuse pelo backend (`GET /observability/agents/{type}/runs`). */
 export interface RunSummary {
   run_id: string;
@@ -911,6 +964,11 @@ export interface RunSummary {
   output_tokens: number;
   total_tokens: number;
   cost_usd?: number | null;
+  /** Tokens do prompt lidos do cache (já dentro de `input_tokens`, exceto no Claude). 0 em run antigo. */
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  /** Tamanho do prompt da primeira chamada, em caracteres; a composição está no trace. */
+  prompt_chars?: number | null;
   /** `null` quando havia avaliações demais para contar na listagem — o trace tem a contagem exata. */
   feedback_up: number | null;
   feedback_down: number | null;
@@ -926,7 +984,30 @@ export interface RunSummary {
   /** Entrada estruturada: a fala pura do contato (`message` é o texto montado que o modelo leu).
    *  `null` em run só com `message` (legado). */
   input_message?: string | null;
+  /** As checagens automáticas do agente avaliadas neste run; vazio = o agente não tem. */
+  checks?: RunCheck[];
 }
+
+/** As partes do prompt, em caracteres exatos (`tokens_estimate` é só chars/4). */
+export interface PromptComposition {
+  chars: number;
+  parts: Partial<Record<PromptPart, number>>;
+  tokens_estimate: number;
+  tokens_estimate_method: string;
+  messages: number;
+  attachments: number;
+}
+
+export type PromptPart =
+  | "instructions"
+  | "session_context"
+  | "memories"
+  | "session_summary"
+  | "history"
+  | "history_tools"
+  | "turn"
+  | "dependencies"
+  | "other";
 
 export interface RunPage {
   items: RunSummary[];
@@ -978,6 +1059,8 @@ export interface RunTrace {
   input_events?: TimelineEvent[] | null;
   /** Entrada estruturada: os blocos de `context` (`{key, title, content, volatile, hash}`). */
   input_context?: InputContextBlock[] | null;
+  /** Quanto do prompt da primeira chamada veio de cada parte; `null` quando não foi medido. */
+  prompt_composition?: PromptComposition | null;
 }
 
 export type TimelineRole = "contact" | "human_agent" | "agent_sent" | "system";
@@ -1041,6 +1124,8 @@ export interface TimelineTurn {
   context: TimelineContextBlock[];
   steps: TimelineStep[];
   sources: ChatSource[];
+  /** As checagens automáticas do agente avaliadas neste turno. */
+  checks?: RunCheck[];
   output?: string | null;
   usage: {
     input_tokens: number;
@@ -1165,6 +1250,14 @@ export interface OverviewTotals {
   tool_failures: number;
   sessions: number;
   total_tokens: number;
+  input_tokens?: number;
+  cache_read_tokens?: number;
+  /** Fração 0–1 do prompt lida do cache; `null` sem tokens de entrada. */
+  cache_fraction?: number | null;
+  /** Média do prompt da primeira chamada (caracteres), nos runs medidos. */
+  avg_prompt_chars?: number | null;
+  /** Fração 0–1 desse prompt que é histórico. */
+  avg_history_fraction?: number | null;
   /** Runs + (no panorama geral) a coleta de sites. */
   cost_usd: number | null;
   /** Parte de `cost_usd` gasta pelo formatador das fontes de site. */
@@ -1215,6 +1308,16 @@ export interface OverviewAgent {
   trend: number[];
   /** Da versão mais nova para a mais antiga. */
   versions: OverviewVersion[];
+  /** Taxa de reprovação de cada checagem do agente no período, a pior primeiro. */
+  checks?: OverviewCheck[];
+}
+
+export interface OverviewCheck {
+  name: string;
+  evaluated: number;
+  failed: number;
+  failure_rate: number;
+  errors: number;
 }
 
 export interface OverviewToolFailure {

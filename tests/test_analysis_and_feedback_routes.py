@@ -308,7 +308,7 @@ def test_analysis_com_collection_mantem_a_busca(monkeypatch):
     )
     assert agente.db is None  # continua sem persistir sessão
     assert agente.knowledge is colecao
-    assert agente.search_knowledge is True
+    assert any(getattr(t, "name", None) == "search_knowledge_base" for t in agente.tools)
 
 
 # -- o fluxo documentado: get --editable > f.json && apply -f f.json --------------

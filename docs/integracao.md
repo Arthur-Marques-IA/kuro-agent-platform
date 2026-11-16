@@ -144,6 +144,14 @@ campo diz o que fazer com ele:
   na mensagem. Por isso ele **não entra no histórico**: um bloco que mudou aparece só com o valor
   novo, sem a versão antiga ao lado, e um turno sem `context` não perde o contexto. Mande o
   `context` quando ele mudar; mandá-lo inteiro em todo turno também funciona, e custa o mesmo.
+- **Quando um bloco muda, o turno leva um aviso do sistema.** Se o `context` enviado difere do
+  vigente (bloco alterado, novo ou removido; os `volatile` não contam), o servidor põe na mensagem
+  daquele turno uma linha `[Sistema] O contexto desta conversa foi atualizado agora: bloco "<título>".
+  Vale o contexto atual, não o que foi dito antes.` Sem ela, as respostas antigas do agente, que
+  ficam no histórico depois do contexto, às vezes venciam o valor novo: num teste com modelo real,
+  o agente repetiu o valor antigo em 4 de 16 conversas sem o aviso e em 0 de 18 com ele. O aviso
+  fica no histórico (é um fato da conversa); o conteúdo dos blocos, não. O primeiro contexto de
+  uma sessão não gera aviso.
 - **Uma `session_id` é uma conversa.** Se o canal passa a atender outra pessoa, use outra
   `session_id`: na mesma, o contexto (e o histórico) da pessoa anterior continuaria valendo até
   você mandar outro `context` ou `[]`.
@@ -155,7 +163,10 @@ Regras dos campos:
 - **`context` não é `dependencies`.** `dependencies` são valores tipados (`cpf`, `canal`), validados
   contra os `dependency_fields` do agente e entregues às tools por `source="dependency"`. `context` é
   texto livre para o modelo ler, sem validação nem uso pelas tools. Um dado que uma tool precisa
-  continua em `dependencies`; um parágrafo sobre a situação do contato vai em `context`.
+  continua em `dependencies`; um parágrafo sobre a situação do contato vai em `context`. Onde cada um
+  aparece: os dois vão ao modelo no prompt de sistema, `context` num bloco `# Contexto` que a sessão
+  herda até você trocá-lo, `dependencies` num bloco `<additional context>` (JSON) logo depois, só no
+  turno em que foram enviadas. Nenhum dos dois entra na mensagem do usuário nem no histórico.
 - **`attachments` de um evento só descrevem** o arquivo (`filename`, `mime_type`, `url`,
   `size_bytes`); o modelo vê a descrição, não o conteúdo. Para o modelo ler o arquivo, mande-o em
   `attachments` do corpo, como sempre. Um `content_base64` dentro de um evento é recusado (422).

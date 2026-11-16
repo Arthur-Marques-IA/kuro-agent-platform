@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, ChevronDown, ChevronRight, Table2, Wrench } from "lucide-react";
 import { errorMessage, requestJson } from "@/lib/http";
 import { formatCost, formatMs, formatNumber, formatRelativeTime } from "@/lib/format";
+import { formatPercent } from "@/lib/prompt-composition";
 import { TOOL_FAILURE_META } from "@/lib/tool-failures";
 import { FEW_RUNS, STACK_KEYS, bucketRate, niceMax, periodFailureRate, rateScale } from "@/lib/trend";
 import { apiSearchParams, type LogsQuery } from "@/lib/logs-query";
@@ -236,6 +237,7 @@ function KpiRow({ totals, previous, runsHref }: { totals: OverviewTotals; previo
           ? `${formatCost(((totals.cost_usd ?? 0) - (totals.ingestion_cost_usd ?? 0)) / totals.sessions)} por conversa`
           : null,
         totals.ingestion_cost_usd ? `inclui ${formatCost(totals.ingestion_cost_usd)} da coleta de sites` : null,
+        totals.cache_fraction ? `${formatPercent(totals.cache_fraction * 100)} da entrada veio do cache` : null,
       ]
         .filter(Boolean)
         .join(" · ") || "—",
@@ -977,6 +979,12 @@ function AgentsCard({ overview, runsHref }: { overview: Overview; runsHref: Runs
               <th className="py-2 pr-3 text-right font-medium">Tool falhando</th>
               <th className="py-2 pr-3 text-right font-medium">Custo</th>
               <th className="py-2 pr-3 text-right font-medium">Por conversa</th>
+              <th className="py-2 pr-3 text-right font-medium" title="Parte dos tokens de entrada lida do cache de prompt">
+                Cache
+              </th>
+              <th className="py-2 pr-3 text-right font-medium" title="Tamanho médio do prompt (caracteres) e quanto dele é histórico">
+                Prompt
+              </th>
               <th className="py-2 pr-3 text-right font-medium">p95</th>
               <th className="py-2 pr-3 text-right font-medium">Feedback</th>
               <th className="py-2 pr-3 font-medium">Versão atual</th>
@@ -1019,6 +1027,16 @@ function AgentsCard({ overview, runsHref }: { overview: Overview; runsHref: Runs
                     <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{formatRate(rate(t.tool_failure_runs, t.runs))}</td>
                     <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{formatCost(t.cost_usd)}</td>
                     <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{formatCost(agent.cost_per_session_usd)}</td>
+                    <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">
+                      {t.cache_fraction == null ? "—" : formatPercent(t.cache_fraction * 100)}
+                    </td>
+                    <td className="whitespace-nowrap py-2 pr-3 text-right text-xs tabular-nums">
+                      {t.avg_prompt_chars == null
+                        ? "—"
+                        : `${formatNumber(Math.round(t.avg_prompt_chars))} car.${
+                            t.avg_history_fraction == null ? "" : ` · ${formatPercent(t.avg_history_fraction * 100)} histórico`
+                          }`}
+                    </td>
                     <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{formatMs(t.p95_latency_ms)}</td>
                     <td className="whitespace-nowrap py-2 pr-3 text-right text-xs tabular-nums">
                       {t.feedback_up + t.feedback_down ? `👍 ${t.feedback_up} · 👎 ${t.feedback_down}` : "—"}
@@ -1032,7 +1050,7 @@ function AgentsCard({ overview, runsHref }: { overview: Overview; runsHref: Runs
                   </tr>
                   {expanded && (
                     <tr className="border-b border-border bg-muted/30">
-                      <td colSpan={10} className="px-3 py-3">
+                      <td colSpan={12} className="px-3 py-3">
                         <VersionsTable agent={agent} runsHref={runsHref} />
                       </td>
                     </tr>

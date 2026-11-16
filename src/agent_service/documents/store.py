@@ -130,8 +130,8 @@ def create_collection(
     return get_collection_row(name)  # type: ignore[return-value]
 
 
-SEARCH_FIELDS = ("search_mode", "max_results", "vector_weight", "reranker")
-"""Campos de busca que podem mudar depois da criação (`language` não: ver documents/search.py)."""
+SEARCH_FIELDS = ("search_mode", "language", "max_results", "vector_weight", "reranker")
+"""Campos de busca que podem mudar depois da criação (o embedder não: ver documents/search.py)."""
 
 
 def update_collection(

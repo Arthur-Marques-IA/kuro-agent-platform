@@ -76,6 +76,7 @@ describe("logsQueryString", () => {
       sideEffect: true,
       hideShort: true,
       feedbackDown: true,
+      checkFailed: true,
       sort: "cost" as const,
     };
     assert.deepEqual(roundTrip(query), query);

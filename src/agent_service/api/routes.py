@@ -346,8 +346,12 @@ def _input_fields(request: ChatRequest, *, procedural: bool = False) -> dict[str
     ele não aceita entrada estruturada."""
     if procedural:
         return {"message": request.message}
+    notice: str | None = None
     if request.context is not None:
         context: list[dict[str, Any]] | None = structured_input.context_for_storage(request.context)
+        # O contexto mudou em relação ao vigente? Então o turno leva um aviso: sem ele, as
+        # respostas antigas do agente no histórico às vezes vencem o contexto novo.
+        notice = structured_input.context_change_notice(session_context.current_context(request.session_id), context)
     else:
         context = session_context.current_context(request.session_id)
     if not request.structured and context is None:
@@ -357,7 +361,7 @@ def _input_fields(request: ChatRequest, *, procedural: bool = False) -> dict[str
     if any(event.role == "agent_sent" for event in events):
         echoes = structured_input.echo_indices(events, session_context.last_reply(request.session_id))
     return {
-        "message": structured_input.build_turn_text(request.message, request.events, echoes),
+        "message": structured_input.build_turn_text(request.message, request.events, echoes, notice),
         "input_message": structured_input.pure_message(request.message, events),
         "input_events": structured_input.events_for_storage(request.message, request.events, echoes),
         "input_context": context,

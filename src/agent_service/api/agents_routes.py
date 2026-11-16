@@ -43,6 +43,7 @@ from agent_service.agents.store import (
 )
 from agent_service.documents.collections import collection_exists
 from agent_service.models.params import ModelParamsError, validate_model_params
+from agent_service.observability.checks import CheckSpecError, validate_checks
 from agent_service.tools.api_tool import required_dependencies
 from agent_service.tools.registry import ToolBuildError, UnknownToolError, tool_exists
 from agent_service.tools.store import get_tool
@@ -125,6 +126,25 @@ for _model in (ResponseItemIn, ResponseFieldIn, ResponseItemOut, ResponseFieldOu
     _model.model_rebuild()
 
 
+class CheckWhenIn(BaseModel):
+    field: str
+    op: str
+    value: Any = None
+
+
+class CheckIn(BaseModel):
+    """Checagem determinística avaliada em toda execução real do agente
+    (`observability/checks.py`, `docs/observabilidade.md`). Campo e operador são
+    conferidos em `_normalize_checks`, que explica o que está errado em português."""
+
+    name: str
+    field: str = Field(description="Um fato do run: output, output_chars, tools.<nome>.called, result.<campo>...")
+    op: str = Field(description="eq ne in not_in lt lte gt gte exists not_exists contains matches")
+    value: Any = None
+    when: CheckWhenIn | None = Field(default=None, description="Só avalia quando esta condição vale para o run.")
+    severity: str = Field(default="fail", description="`warn` ou `fail`; não muda o status do run.")
+
+
 class AgentDefinitionIn(BaseModel):
     agent_type: str = Field(..., description="Slug estável, usado como agent_id no /chat")
     name: str
@@ -172,6 +192,11 @@ class AgentDefinitionIn(BaseModel):
     timeout_seconds: int | None = Field(
         default=None, ge=1, le=600, description="Tempo limite de uma execução; vazio = RUN_TIMEOUT_SECONDS."
     )
+    checks: list[CheckIn] = Field(
+        default=[],
+        description="Checagens determinísticas (sem modelo) avaliadas em toda execução real; o resultado "
+        "fica no run e filtra a fila de revisão. Campos e exemplos: docs/observabilidade.md.",
+    )
 
     @field_validator("agent_type")
     @classmethod
@@ -209,6 +234,8 @@ class AgentDefinitionUpdate(BaseModel):
     """`{}` ou `null` volta ao padrão do provedor."""
     timeout_seconds: int | None = Field(default=None, ge=1, le=600)
     """`null` volta ao RUN_TIMEOUT_SECONDS do serviço."""
+    checks: list[CheckIn] | None = None
+    """`[]` tira todas as checagens; omitir não mexe."""
 
     @field_validator("dependency_fields")
     @classmethod
@@ -238,6 +265,7 @@ class AgentDefinitionOut(BaseModel):
     stages: list[dict[str, Any]] = []
     model_params: dict[str, Any] | None = None
     timeout_seconds: int | None = None
+    checks: list[CheckIn] = []
     is_seed: bool
     prompt_version: int
     created_at: datetime
@@ -293,6 +321,13 @@ def _normalize_model_params(params: dict[str, Any] | None, provider: str | None)
     try:
         return validate_model_params(params, provider)
     except ModelParamsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _normalize_checks(checks: list[CheckIn] | None) -> list[dict[str, Any]]:
+    try:
+        return validate_checks([c.model_dump(exclude_unset=True) for c in checks or []])
+    except CheckSpecError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -496,6 +531,7 @@ def create_agent(body: AgentDefinitionIn, dry_run: bool = False) -> dict[str, An
     _validate_collection(body.knowledge_collection)
     _validate_inert_fields(body.kind, body)
     payload["model_params"] = _normalize_model_params(body.model_params, body.model_provider)
+    payload["checks"] = _normalize_checks(body.checks)
     if dry_run:
         now = datetime.now(timezone.utc)
         return {**payload, "is_seed": False, "prompt_version": 1, "created_at": now, "updated_at": now}
@@ -556,6 +592,8 @@ def update_agent(agent_type: str, body: AgentDefinitionUpdate, dry_run: bool = F
             {f["name"] for f in payload.get("dependency_fields", current["dependency_fields"] or [])},
         )
     _validate_inert_fields(payload.get("kind", current["kind"]), body)
+    if body.checks is not None:
+        payload["checks"] = _normalize_checks(body.checks)
     if "model_params" in payload or "model_provider" in payload:
         # Revalida contra o provedor final: thinking_budget só vale no google.
         payload["model_params"] = _normalize_model_params(
@@ -629,6 +667,7 @@ _PROMOTED_FIELDS = (
     "stages",
     "model_params",
     "timeout_seconds",
+    "checks",
 )
 
 

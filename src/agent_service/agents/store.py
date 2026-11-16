@@ -87,6 +87,9 @@ agent_definitions = Table(
     Column("model_params", JSON, nullable=True),
     # Tempo limite de uma execução; None = RUN_TIMEOUT_SECONDS do serviço.
     Column("timeout_seconds", Integer, nullable=True),
+    # Checagens determinísticas avaliadas em toda execução real (`observability/checks.py`);
+    # None/[] = nenhuma.
+    Column("checks", JSON, nullable=True),
     Column("is_seed", Boolean, nullable=False, default=False),
     Column("prompt_version", Integer, nullable=False, default=1),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
@@ -152,7 +155,10 @@ agent_feedback_versions = Table(
 
 
 def _row_to_dict(row: Any) -> dict[str, Any]:
-    return dict(row._mapping)
+    data = dict(row._mapping)
+    if "checks" in data:
+        data["checks"] = data["checks"] or []  # NULL (agente anterior à 0019) = nenhuma checagem
+    return data
 
 
 def list_definitions() -> list[dict[str, Any]]:
@@ -188,6 +194,7 @@ def create_definition(
     stages: list[dict[str, Any]] | None = None,
     model_params: dict[str, Any] | None = None,
     timeout_seconds: int | None = None,
+    checks: list[dict[str, Any]] | None = None,
     is_seed: bool = False,
 ) -> dict[str, Any]:
     engine = get_db().db_engine
@@ -213,6 +220,7 @@ def create_definition(
                 stages=stages or [],
                 model_params=model_params or None,
                 timeout_seconds=timeout_seconds,
+                checks=checks or None,
                 is_seed=is_seed,
                 prompt_version=1,
             )
@@ -256,6 +264,7 @@ def update_definition(
     stages: list[dict[str, Any]] | None = None,
     model_params: dict[str, Any] | None = _UNSET,
     timeout_seconds: int | None = _UNSET,
+    checks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     current = get_definition(agent_type)
     if current is None:
@@ -296,6 +305,8 @@ def update_definition(
         values["model_params"] = model_params or None
     if timeout_seconds is not _UNSET:
         values["timeout_seconds"] = timeout_seconds
+    if checks is not None:
+        values["checks"] = checks or None
 
     prompt_changed = instructions is not None and instructions != current["instructions"]
     if prompt_changed:

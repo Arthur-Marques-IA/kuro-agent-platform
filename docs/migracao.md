@@ -46,7 +46,7 @@ KURO_BUILD_SHA=$(git rev-parse --short HEAD) \
 ```
 
 O serviço e o console sobem juntos, de propósito: um console novo contra um serviço antigo quebra
-telas. Na subida, sob um lock, rodam as migrações que faltarem (até a `0018`), os seeds e a
+telas. Na subida, sob um lock, rodam as migrações que faltarem (até a `0020`), os seeds e a
 montagem do app; a porta só abre depois. A primeira subida pode levar alguns minutos.
 
 O que as migrações fazem com os dados:
@@ -57,6 +57,12 @@ O que as migrações fazem com os dados:
   não falha: deixa em texto plano e avisa no log.
 - `0018`: acrescenta `history_tool_calls` em `agent_definitions`, nula (o agente traz todas as
   chamadas de tool no histórico, como antes). Nenhum agente muda de versão.
+- `0019`: acrescenta em `runs` os tokens de cache (`cache_read_tokens`, `cache_write_tokens`) e a
+  composição do prompt (`prompt_composition`, `prompt_chars`, `history_chars`). Runs antigos ficam
+  com zero ou nulo; nada é recalculado.
+- `0020`: acrescenta `checks` em `agent_definitions` (nula = nenhuma checagem) e `source` em
+  `run_scores` (nula = nota humana ou do eval, o que sempre foi). Nada é reescrito e nenhum agente
+  muda de versão.
 
 ## 4. Conferir que deu certo
 

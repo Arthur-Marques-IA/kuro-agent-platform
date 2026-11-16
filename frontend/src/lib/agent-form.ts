@@ -22,6 +22,7 @@ import type {
   SchemaField,
 } from "./types";
 import { cleanStages } from "./procedure-stages.ts";
+import { checksFromRows, checksProblem, rowFromCheck, type CheckRow } from "./agent-checks.ts";
 
 export type AgentFormPayload = Partial<AgentDefinitionInput>;
 
@@ -58,6 +59,8 @@ export interface FormValues {
   plainText: boolean;
   /** "" = RUN_TIMEOUT_SECONDS do serviço. */
   timeoutSeconds: string;
+  /** Checagens determinísticas avaliadas em toda execução real. */
+  checks: CheckRow[];
 }
 
 /** Os modelos conhecidos e o padrão — o seletor e o corpo do `PUT` resolvem o provedor por aqui. */
@@ -99,6 +102,7 @@ export function valuesFrom(agent: AgentDefinition | undefined, defaultModelId: s
     sessionSummary: agent?.session_summary ?? false,
     plainText: agent?.plain_text ?? false,
     timeoutSeconds: asText(agent?.timeout_seconds),
+    checks: (agent?.checks ?? []).map(rowFromCheck),
   };
 }
 
@@ -209,6 +213,7 @@ export function buildUpdate(
   if (values.timeoutSeconds.trim() !== initial.timeoutSeconds.trim()) {
     payload.timeout_seconds = values.timeoutSeconds.trim() ? Number(values.timeoutSeconds) : null;
   }
+  if (!same(checksFromRows(values.checks), checksFromRows(initial.checks))) payload.checks = checksFromRows(values.checks);
   // `num_history_runs` e `memory_backend` não existem num agente analista: o
   // backend responde 422 se vierem com valor diferente do padrão.
   if (values.kind !== "analysis") {
@@ -242,6 +247,7 @@ export function buildCreate(values: FormValues, ctx: ModelContext): AgentDefinit
     stages: values.kind === "procedural" ? cleanStages(values.stages) : [],
     model_params: paramsFrom(values, model.provider),
     timeout_seconds: values.timeoutSeconds.trim() ? Number(values.timeoutSeconds) : null,
+    checks: checksFromRows(values.checks),
     // Omitidos em analysis: o backend recusa com 422 um campo que não
     // faz nada num agente one-shot, em vez de aceitá-lo calado.
     ...(analysis
@@ -267,7 +273,8 @@ export type FormSectionId =
   | "memoria"
   | "saida"
   | "contexto"
-  | "tools";
+  | "tools"
+  | "checagens";
 
 export interface FormSectionInfo {
   id: FormSectionId;
@@ -286,6 +293,7 @@ export function formSections(kind: AgentKind): FormSectionInfo[] {
     kind === "analysis" ? { id: "saida", label: "Saída" } : null,
     { id: "contexto", label: "Contexto" },
     { id: "tools", label: "Tools" },
+    { id: "checagens", label: "Checagens" },
   ];
   return list.filter((s): s is FormSectionInfo => s !== null);
 }
@@ -310,6 +318,7 @@ const PAYLOAD_SECTION: Record<keyof AgentDefinitionInput, FormSectionId> = {
   response_schema: "saida",
   dependency_fields: "contexto",
   tools: "tools",
+  checks: "checagens",
 };
 
 /** Os erros de validação do formulário, por campo (`null` = ok). */
@@ -322,7 +331,10 @@ export interface FormErrors {
   modelParams: string | null;
   responseSchema: string | null;
   stages: string | null;
+  checks: string | null;
 }
+
+export { checksProblem };
 
 const ERROR_SECTION: Record<keyof FormErrors, FormSectionId> = {
   name: "identidade",
@@ -333,6 +345,7 @@ const ERROR_SECTION: Record<keyof FormErrors, FormSectionId> = {
   modelParams: "modelo",
   responseSchema: "saida",
   stages: "etapas",
+  checks: "checagens",
 };
 
 /** Quais seções têm alteração não salva e quais têm erro — para o índice lateral. */

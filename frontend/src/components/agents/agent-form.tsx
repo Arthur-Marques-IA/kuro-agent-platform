@@ -15,6 +15,7 @@ import {
   valuesFrom,
   type AgentFormPayload,
   type FormErrors,
+  checksProblem,
   type FormSectionId,
   type FormValues,
   type ModelContext,
@@ -34,6 +35,7 @@ import { ModelSection } from "@/components/agents/form/model-section";
 import { MemorySection } from "@/components/agents/form/memory-section";
 import { OutputSection, StagesSection } from "@/components/agents/form/structure-sections";
 import { ContextSection } from "@/components/agents/form/context-section";
+import { ChecksSection } from "@/components/agents/form/checks-section";
 import { ToolsSection } from "@/components/agents/form/tools-section";
 import { SectionNav } from "@/components/agents/form/section-nav";
 import { SaveReviewDialog } from "@/components/agents/form/save-review-dialog";
@@ -133,6 +135,7 @@ export function AgentForm({
           ? "Um agente analista precisa de ao menos um campo na saída."
           : schemaProblem(values.responseSchema),
     stages: values.kind === "procedural" ? stagesProblem(values.stages) : null,
+    checks: checksProblem(values.checks),
   };
   const hasErrors = Object.values(errors).some(Boolean);
 
@@ -239,6 +242,7 @@ export function AgentForm({
       {values.kind === "analysis" && <OutputSection {...common} anchor={anchor("saida")} />}
       <ContextSection {...common} anchor={anchor("contexto")} />
       <ToolsSection {...common} anchor={anchor("tools")} availableTools={availableTools} />
+      <ChecksSection {...common} anchor={anchor("checagens")} />
     </>
   );
 

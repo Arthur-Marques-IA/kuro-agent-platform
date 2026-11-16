@@ -3,7 +3,7 @@
 Pulados sem `TEST_DATABASE_URL` (ver `tests/pg.py` e docs/desenvolvimento.md):
 
 - migrações: do zero até a última revisão num banco limpo, o schema batendo com as
-  tabelas do código, e o caminho de volta (as revisões com `downgrade`, 0018 → 0007);
+  tabelas do código, e o caminho de volta (as revisões com `downgrade`, 0020 → 0007);
 - fila de jobs: `FOR UPDATE SKIP LOCKED` (o SQLite não tem; lá quem segura é o
   `status='queued'` do UPDATE) e `LISTEN/NOTIFY` acordando o worker;
 - busca híbrida: pgvector + `tsvector` numa collection pequena, com embedder falso;
@@ -159,13 +159,14 @@ def test_migracoes_do_zero_ate_head_e_de_volta(banco_postgres_vazio):
     _alembic(engine, command.downgrade, "0016")
     assert _config_da_tool(engine, "legada") == config
 
-    # Até onde há downgrade (0001–0007 não têm): 0018 → 0007, passando por todas.
+    # Até onde há downgrade (0001–0007 não têm): 0020 → 0007, passando por todas.
     _alembic(engine, command.downgrade, "0007")
     assert _revisao(engine) == "0007"
     tabelas = set(sa.inspect(engine).get_table_names())
     assert not {"jobs", "idempotency_keys", "knowledge_sources", "chunk_feedback", "document_revisions"} & tabelas
     assert not {"input_events", "input_message", "collection_version"} & _colunas(engine, "runs")
-    assert not {"plain_text", "history_tool_calls"} & _colunas(engine, "agent_definitions")
+    assert not {"plain_text", "history_tool_calls", "checks"} & _colunas(engine, "agent_definitions")
+    assert "source" not in _colunas(engine, "run_scores")
 
     # E de volta até a última, sem perder o que já estava gravado.
     upgrade_database(engine)
@@ -367,6 +368,28 @@ def test_busca_hibrida_soma_vetor_e_texto(collection_hibrida):
     alfa, beta = (d.meta_data["similarity_score"] for d in resultado)
     assert alfa == pytest.approx(0.5, abs=0.01)  # vetor inteiro × 0,5, texto zero
     assert 0.05 < beta < 0.5  # quase só o texto × 0,5
+
+
+def test_trocar_o_idioma_muda_o_que_casa_no_hibrido_sem_reindexar(collection_hibrida):
+    from agent_service.documents.search import SearchConfigError, validate_language
+
+    nome = collection_hibrida
+    asyncio.run(collections.add_text(nome, text="beta: a garantia cobre defeitos de fabricação.", name="garantia"))
+
+    def texto(language: str) -> float:
+        knowledge = collections._build_collection(
+            nome, None, None, None, SearchConfig(search_mode="hybrid", language=language, vector_weight=0.0)
+        )
+        return asyncio.run(knowledge.asearch(query="fabricações", max_results=5))[0].meta_data["similarity_score"]
+
+    # "fabricações" casa com "fabricação" só com o radical do português; em inglês o texto não pesa.
+    # O mesmo conteúdo indexado, sem reindexar: só o dicionário da consulta mudou.
+    assert texto("portuguese") > 0.05
+    assert texto("english") == pytest.approx(0.0)
+    # O nome é conferido no pg_ts_config de verdade.
+    validate_language("portuguese", get_db().db_engine)
+    with pytest.raises(SearchConfigError, match="pg_ts_config"):
+        validate_language("klingon", get_db().db_engine)
 
 
 # -- trace store --------------------------------------------------------------------

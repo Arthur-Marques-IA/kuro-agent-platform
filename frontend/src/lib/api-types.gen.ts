@@ -1199,8 +1199,9 @@ export interface paths {
          *     Um run aparece logo depois de terminar (a gravação sai do caminho da resposta).
          *
          *     Os filtros de revisão (`complexity`, `tool_failed`, `side_effect`,
-         *     `min_message_chars`, `feedback`, `include_dry_run`, `sample`) montam a fila do
-         *     que vale um humano olhar. Só no trace store local.
+         *     `min_message_chars`, `feedback`, `include_dry_run`, `sample`, `check_failed`, `check`)
+         *     montam a fila do que vale um humano olhar. `check_failed`/`check` olham as checagens
+         *     automáticas do agente (`docs/observabilidade.md`). Só no trace store local.
          */
         get: operations["list_runs_observability_runs_get"];
         put?: never;
@@ -1553,6 +1554,12 @@ export interface components {
              */
             agent_type: string;
             /**
+             * Checks
+             * @description Checagens determinísticas (sem modelo) avaliadas em toda execução real; o resultado fica no run e filtra a fila de revisão. Campos e exemplos: docs/observabilidade.md.
+             * @default []
+             */
+            checks: components["schemas"]["CheckIn"][];
+            /**
              * Dependency Fields
              * @default []
              */
@@ -1641,6 +1648,11 @@ export interface components {
             /** Agent Type */
             agent_type: string;
             /**
+             * Checks
+             * @default []
+             */
+            checks: components["schemas"]["CheckIn"][];
+            /**
              * Created At
              * Format: date-time
              */
@@ -1709,6 +1721,8 @@ export interface components {
         };
         /** AgentDefinitionUpdate */
         AgentDefinitionUpdate: {
+            /** Checks */
+            checks?: components["schemas"]["CheckIn"][] | null;
             /** Dependency Fields */
             dependency_fields?: components["schemas"]["DependencyFieldIn"][] | null;
             /** History Tool Calls */
@@ -1756,6 +1770,11 @@ export interface components {
             agent_name?: string | null;
             /** Agent Type */
             agent_type: string;
+            /**
+             * Checks
+             * @default []
+             */
+            checks: components["schemas"]["CheckRateRow"][];
             /** Cost Per Session Usd */
             cost_per_session_usd?: number | null;
             /**
@@ -1979,6 +1998,64 @@ export interface components {
             /** Trace Id */
             trace_id?: string | null;
         };
+        /**
+         * CheckIn
+         * @description Checagem determinística avaliada em toda execução real do agente
+         *     (`observability/checks.py`, `docs/observabilidade.md`). Campo e operador são
+         *     conferidos em `_normalize_checks`, que explica o que está errado em português.
+         */
+        CheckIn: {
+            /**
+             * Field
+             * @description Um fato do run: output, output_chars, tools.<nome>.called, result.<campo>...
+             */
+            field: string;
+            /** Name */
+            name: string;
+            /**
+             * Op
+             * @description eq ne in not_in lt lte gt gte exists not_exists contains matches
+             */
+            op: string;
+            /**
+             * Severity
+             * @description `warn` ou `fail`; não muda o status do run.
+             * @default fail
+             */
+            severity: string;
+            /** Value */
+            value?: unknown;
+            /** @description Só avalia quando esta condição vale para o run. */
+            when?: components["schemas"]["CheckWhenIn"] | null;
+        };
+        /**
+         * CheckRateRow
+         * @description Uma checagem automática do agente no período (`observability/checks.py`).
+         */
+        CheckRateRow: {
+            /**
+             * Errors
+             * @default 0
+             */
+            errors: number;
+            /** Evaluated */
+            evaluated: number;
+            /** Failed */
+            failed: number;
+            /** Failure Rate */
+            failure_rate: number;
+            /** Name */
+            name: string;
+        };
+        /** CheckWhenIn */
+        CheckWhenIn: {
+            /** Field */
+            field: string;
+            /** Op */
+            op: string;
+            /** Value */
+            value?: unknown;
+        };
         /** ChunkFeedbackIn */
         ChunkFeedbackIn: {
             /**
@@ -2104,7 +2181,7 @@ export interface components {
             label: string;
             /**
              * Language
-             * @description Dicionário do full-text do Postgres (portuguese por padrão). Fixo depois de criada.
+             * @description Dicionário do full-text do Postgres (portuguese por padrão). Muda depois com PUT.
              */
             language?: string | null;
             /**
@@ -2174,6 +2251,11 @@ export interface components {
             updated_at: string;
             /** Version */
             version?: number | null;
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: string[];
         };
         /** CollectionUpdateIn */
         CollectionUpdateIn: {
@@ -2183,7 +2265,7 @@ export interface components {
             label?: string | null;
             /**
              * Language
-             * @description Não muda depois da criação: só aceita o valor atual.
+             * @description Dicionário do full-text do Postgres (validado em pg_ts_config). Muda quais trechos casam no híbrido; não exige reindexar. Não aceita null.
              */
             language?: string | null;
             /** Max Results */
@@ -2908,6 +2990,17 @@ export interface components {
         };
         /** OverviewTotals */
         OverviewTotals: {
+            /** Avg History Fraction */
+            avg_history_fraction?: number | null;
+            /** Avg Prompt Chars */
+            avg_prompt_chars?: number | null;
+            /** Cache Fraction */
+            cache_fraction?: number | null;
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
             /** Cost Usd */
             cost_usd?: number | null;
             /**
@@ -2932,6 +3025,11 @@ export interface components {
              * @default 0
              */
             ingestion_tokens: number;
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
             /**
              * Interrupted
              * @default 0
@@ -3258,6 +3356,35 @@ export interface components {
             /** Score */
             score?: number | null;
         };
+        /**
+         * RunCheck
+         * @description Resultado de uma checagem automática do agente sobre este run (`observability/checks.py`).
+         */
+        RunCheck: {
+            /** Actual */
+            actual?: unknown;
+            /** Error */
+            error?: string | null;
+            /** Expected */
+            expected?: unknown;
+            /** Field */
+            field?: string | null;
+            /** Name */
+            name: string;
+            /** Op */
+            op?: string | null;
+            /**
+             * Severity
+             * @default fail
+             * @enum {string}
+             */
+            severity: "warn" | "fail";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "passed" | "failed" | "error";
+        };
         /** RunFeedbackIn */
         RunFeedbackIn: {
             /** Comment */
@@ -3325,6 +3452,21 @@ export interface components {
             attachments: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
+            /**
+             * Cache Write Tokens
+             * @default 0
+             */
+            cache_write_tokens: number;
+            /**
+             * Checks
+             * @default []
+             */
+            checks: components["schemas"]["RunCheck"][];
             /** Collection Config Hash */
             collection_config_hash?: string | null;
             /** Collection Version */
@@ -3380,6 +3522,8 @@ export interface components {
              * @default 0
              */
             output_tokens: number;
+            /** Prompt Chars */
+            prompt_chars?: number | null;
             /** Prompt Version */
             prompt_version?: number | null;
             /** Run Id */
@@ -3426,6 +3570,10 @@ export interface components {
             procedure_state?: {
                 [key: string]: unknown;
             } | null;
+            /** Prompt Composition */
+            prompt_composition?: {
+                [key: string]: unknown;
+            } | null;
             /** Reference */
             reference?: unknown;
             run: components["schemas"]["RunSummary"];
@@ -3469,6 +3617,11 @@ export interface components {
         SearchConfigOut: {
             /** Language */
             language: string;
+            /**
+             * Language Legacy
+             * @default false
+             */
+            language_legacy: boolean;
             /** Max Results */
             max_results: number;
             /** Reranker */
@@ -3995,6 +4148,11 @@ export interface components {
              */
             at: string;
             /**
+             * Checks
+             * @default []
+             */
+            checks: components["schemas"]["RunCheck"][];
+            /**
              * Context
              * @default []
              */
@@ -4096,6 +4254,8 @@ export interface components {
             secrets_at_rest?: ("encrypted" | "plaintext") | null;
             /** Side Effect */
             side_effect?: boolean | null;
+            /** Side Effect Suggested */
+            side_effect_suggested?: boolean | null;
             /** Tool Name */
             tool_name: string;
             /**
@@ -4103,6 +4263,11 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: string[];
         };
         /** ToolFailureRow */
         ToolFailureRow: {
@@ -4222,6 +4387,8 @@ export interface components {
             secrets_at_rest?: ("encrypted" | "plaintext") | null;
             /** Side Effect */
             side_effect?: boolean | null;
+            /** Side Effect Suggested */
+            side_effect_suggested?: boolean | null;
             /** Tool Name */
             tool_name: string;
             /**
@@ -4229,6 +4396,11 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: string[];
         };
         /** ToolUpdateIn */
         ToolUpdateIn: {
@@ -6758,6 +6930,10 @@ export interface operations {
                 collection_version?: number | null;
                 /** @description searched: buscou na base; empty: alguma busca voltou vazia; flagged: trecho marcado errado e aberto. */
                 rag?: ("searched" | "empty" | "flagged") | null;
+                /** @description true: só com alguma checagem automática reprovada; false: só sem reprovação. */
+                check_failed?: boolean | null;
+                /** @description Só runs em que esta checagem reprovou. */
+                check?: string | null;
             };
             header?: never;
             path?: never;

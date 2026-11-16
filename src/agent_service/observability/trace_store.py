@@ -58,6 +58,21 @@ class TraceStoreError(RuntimeError):
     """O backend de traces falhou ou está inacessível."""
 
 
+class RunCheck(BaseModel):
+    """Resultado de uma checagem automática do agente sobre este run (`observability/checks.py`)."""
+
+    name: str
+    status: Literal["passed", "failed", "error"]
+    """`error` = a avaliação da checagem levantou (campo ou padrão inválido): não é falha do run."""
+    severity: Literal["warn", "fail"] = "fail"
+    field: str | None = None
+    op: str | None = None
+    expected: Any = None
+    actual: Any = None
+    """O valor visto (texto longo truncado; `[redigido]` se a chave está em `TRACE_REDACT_KEYS`)."""
+    error: str | None = None
+
+
 class RunSummary(BaseModel):
     run_id: str
     trace_id: str
@@ -88,6 +103,15 @@ class RunSummary(BaseModel):
     output_tokens: int = 0
     total_tokens: int = 0
     cost_usd: float | None = None
+    cache_read_tokens: int = 0
+    """Tokens do prompt lidos do cache (já contados em `input_tokens`, exceto no Claude,
+    onde vêm à parte). O `cost_usd` os cobra a preço de cache (`models/pricing.py`) nos runs
+    novos; os antigos não foram recalculados."""
+    cache_write_tokens: int = 0
+    """Tokens escritos no cache (só o Claude cobra e informa)."""
+    prompt_chars: int | None = None
+    """Tamanho, em caracteres, do prompt da primeira chamada ao modelo (a composição está no
+    detalhe, `RunTrace.prompt_composition`). `None` em run antigo, procedural ou sem medição."""
     feedback_up: int | None = 0
     feedback_down: int | None = 0
     """`None` quando havia avaliações demais para contar com segurança na listagem — veja o trace."""
@@ -102,6 +126,9 @@ class RunSummary(BaseModel):
     muda por isso. `None` = não informado; 0 = nenhuma falha."""
     complexity: int | None = None
     """1 = nenhuma tool de negócio; 2 = uma ou duas distintas; 3 = três ou mais (`tools/failures.py`)."""
+    checks: list[RunCheck] = []
+    """As checagens do agente avaliadas neste run (as cujo `when` não valeu ficam de fora).
+    Vazio = o agente não tem checagens, ou o run é anterior a elas. Só no trace store local."""
     input_message: str | None = None
     """Entrada estruturada do `/chat`: a fala pura do contato, sem contexto nem histórico
     (`message` traz o texto montado que o modelo leu). `None` = run só com `message`
@@ -160,6 +187,11 @@ class RunTrace(BaseModel):
     `{role, content, at, kind, attachments, speech}`; `speech: true` marca o evento que
     é a fala nova (`run.input_message`), se algum é. `[]` quando veio só `context`;
     `None` em run não estruturado."""
+    prompt_composition: dict[str, Any] | None = None
+    """Quanto do prompt da primeira chamada ao modelo veio de cada parte (`observability/prompt_composition.py`):
+    `{chars, parts: {instructions, session_context, memories, session_summary, history, history_tools,
+    turn, dependencies, other}, tokens_estimate, tokens_estimate_method, messages, attachments}`. Os
+    números de `parts` são caracteres exatos; `tokens_estimate` é só chars/4. `None` quando não foi medido."""
     input_context: list[dict[str, Any]] | None = None
     """Entrada estruturada: os blocos de `context` — `{key, title, content, volatile, hash}`,
     com `hash` = sha256 hex do `content`. `[]` quando veio só `events`; `None` em run não
@@ -258,6 +290,12 @@ class RunQuery:
     statuses: tuple[RunStatus, ...] = ()
     """Só estes status (qualquer um deles) — ex.: `error` + `interrupted`, o "falharam" do panorama."""
     sort: RunSort = "recent"
+    check_failed: bool | None = None
+    """`True`: só runs com alguma checagem automática reprovada (qualquer severidade);
+    `False`: só os sem reprovação. Erro de avaliação não conta — só no trace store local."""
+    check: str | None = None
+    """Só runs em que a checagem com este nome reprovou (com `check_failed=False`: os que não) —
+    só no trace store local."""
     rag: RagFilter | None = None
     """Só runs que buscaram na base (`searched`), com alguma busca sem trecho nenhum
     (`empty`) ou com trecho marcado errado e ainda aberto (`flagged`) — só no trace store local."""

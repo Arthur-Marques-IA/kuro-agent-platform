@@ -27,6 +27,15 @@ prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo h
 
 ### Ação necessária
 
+- **O custo mostrado cai para runs novos: o cache de prompt passa a ser cobrado a preço de cache.**
+  `cost_usd` (do run e das spans) descontava nada do cache e usava o preço de lista da entrada
+  inteira; agora o token lido do cache custa o preço de cache do modelo (Gemini e OpenAI: uma
+  fração da entrada; Claude: leitura barata e escrita mais cara), de `CACHE_PRICES` em
+  `models/pricing.py`. Modelo sem preço de cache confirmado (`gemini-2.0-flash`, `gemini-3.5-flash`,
+  `gemini-omni-1.1-flash`) segue a preço de lista. **Runs antigos não são recalculados**, então uma
+  série de custo mostra uma queda na data da atualização que é de método, não de consumo.
+  `MODEL_PRICES` aceita agora `[entrada, saída, leitura_cache, escrita_cache]` (os dois últimos
+  opcionais); quem já sobrescreve com dois números não muda.
 - **O `context` do `/chat` e do `/chat/stream` mudou de comportamento em relação à `0.3.0`.**
   Na `0.3.0` os blocos eram colados no começo da mensagem do turno, e o histórico da sessão os
   reenviava por até `num_history_runs` turnos: o modelo via o mesmo contexto até 11 vezes, o antigo
@@ -56,8 +65,63 @@ prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo h
   seguintes herdaria contexto nenhum. E os turnos gravados pela `0.3.0` trazem o contexto colado na
   mensagem, que continua voltando pelo histórico até sair da janela de `num_history_runs`.
 
+- **As `dependencies` do `/chat` agora chegam ao modelo no prompt de sistema, não na mensagem do
+  usuário.** Até a `0.3.0` o Agno colava `<additional context>{...}</additional context>` no fim da
+  mensagem do turno; ela era gravada na sessão e voltava como histórico: as dependencies de cada
+  turno se repetiam por até `num_history_runs` turnos, o valor antigo ao lado do novo. Agora o mesmo
+  bloco, com o mesmo formato (JSON) e o mesmo rótulo, vai uma vez por chamada no fim do prompt de
+  sistema, depois do contexto da sessão, e não entra na mensagem nem no histórico. Elas continuam
+  valendo só para o turno que as enviou. As tools (`source="dependency"`, `dependencies.dry_run`), as
+  variáveis `{campo}` das instructions e o Mem0 (`dependencies.mem0_memories`) não mudam. O agente
+  procedural também (o `procedimento` de cada turno), e o `kind="analysis"`, sem histórico, segue com
+  o bloco na mensagem. **O que fazer:** instructions que mandam "olhe o additional context da
+  mensagem" devem passar a dizer "do contexto adicional" (ou só citar os campos); revise no draft. Os
+  turnos já gravados mantêm o bloco antigo dentro da mensagem até saírem da janela de
+  `num_history_runs`; o histórico não é reescrito.
+
+- **A tool de busca na base de conhecimento passou a ser do Kuro, em português.** Antes, um agente
+  com `knowledge_collection` recebia a tool `search_knowledge_base` do Agno ("Use this function to
+  search the knowledge base...") e um bloco `<knowledge_base>` em inglês no prompt de sistema. Agora
+  a descrição da tool, a do parâmetro `query`, a instrução do prompt e as respostas "Nenhum documento
+  encontrado." e "Erro ao buscar na base de conhecimento: ..." são em português. O nome
+  (`search_knowledge_base`), o parâmetro, o formato dos trechos devolvidos e o rastro em
+  `metadata.references` não mudam. **O que fazer:** se um prompt ou um eval depende do texto em inglês
+  ("No documents found"), ajuste no draft.
+
 ### Novo
 
+- **Composição do prompt por execução.** Cada run de `/chat`, `/chat/stream` e `/analyze` grava quanto
+  do prompt da **primeira** chamada ao modelo veio de cada parte, em caracteres exatos: instruções,
+  contexto da sessão, memórias, resumo da sessão, histórico da conversa, tools do histórico,
+  dependencies (o bloco que o Agno cola na mensagem) e a mensagem do turno, mais a contagem de
+  anexos; `tokens_estimate` é só `chars/4`. Sai em `GET /observability/runs/{id}/trace`
+  (`prompt_composition`), em `kuro runs show`, em `run_show` (MCP), na tela da execução e no `kuro
+  dash`; `prompt_chars` vai também na listagem. Fora da conta ficam as definições das tools e o
+  conteúdo dos anexos. Uma medição que falha deixa o campo nulo e não derruba o run; um run
+  interrompido antes do fim também fica sem ela.
+- **Uma span `GENERATION` por chamada ao modelo.** Um run com uma tool tem agora duas gerações
+  (`metadata.call` = 1, 2...), intercaladas com as spans de tool na ordem real, cada uma com
+  `started_at`, `ended_at`, `latency_ms`, tokens, cache e custo próprios. Antes era uma span só,
+  somada, sem fim nem latência. Os totais do run não mudam. O Agno só dá o agregado para o modelo
+  de memória, de resumo e para o agente procedural: nesses a span continua agregada. Se as
+  chamadas não fecham com o agregado do Agno (ou o Agno informa o custo), fica o agregado. A latência
+  de cada chamada é medida entre os eventos do stream.
+- **Cache de prompt como campo do run.** `cache_read_tokens` e `cache_write_tokens` na listagem e no
+  detalhe de `/observability/runs`, em `kuro runs list/show`, na lista e na tela da execução do
+  console. O panorama (`/observability/overview`) ganha, por agente e no total, `cache_read_tokens`,
+  `input_tokens`, `cache_fraction`, `avg_prompt_chars` e `avg_history_fraction`.
+- **O idioma de uma collection muda depois da criação** (`kuro collections set <nome>
+  language=portuguese`, `PUT /collections/{nome}`, `collection_set` no MCP e a tela da base no
+  console). O nome é validado em `pg_ts_config`, `null` é recusado, e a troca gera uma versão nova da
+  configuração de busca. Não precisa reindexar: não há índice por idioma. Só muda quais trechos casam
+  no modo híbrido. Antes era fixo (422).
+- **Aviso de idioma legado.** Uma collection com `language` nulo (criada antes da coluna) vale
+  `english`; `GET /collections` passa a trazer `search.language_legacy: true` e `warnings`, e a CLI, o
+  MCP e o console mostram o aviso. Nada é alterado sozinho.
+- **Aviso de contexto atualizado.** Quando o `context` enviado difere do vigente na sessão, a
+  mensagem daquele turno ganha uma linha `[Sistema]` dizendo quais blocos mudaram (pelo título, sem
+  o conteúdo) e que vale o contexto atual. Ela aparece em `runs.message` e no histórico. Ver
+  [entrada estruturada](integracao.md#entrada-estruturada).
 - **`agent_sent` repetido não se repete no prompt.** Um evento `agent_sent` cujo texto é igual à
   última resposta do agente na sessão (ignorando espaços nas pontas e diferenças de quebra de linha
   e de espaço) sai do texto do modelo, porque o histórico já traz essa resposta. Ele continua
@@ -69,10 +133,37 @@ prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo h
   MCP e no formulário do agente (seção Memória). Recusado com 422 em `kind="analysis"`. Os agentes
   que já existem não mudam, nem de versão. Ver [conceitos](conceitos.md#histórico-da-conversa).
 
+- **Checagens automáticas por agente (`checks`).** Regras determinísticas, sem modelo, avaliadas em
+  toda execução real (dry_run incluído) ao fim do run e gravadas em `run_scores` (`source = "check"`).
+  Campos do run (`output`, `output_chars`, `status`, `latency_ms`, tokens, `tool_calls`,
+  `tools.<nome>.called|calls|ok|args.<campo>`, `result.*`, `dependencies.*`, `metadata.*`) e os
+  operadores do `kuro eval`, mais `contains` e `matches` (regex com limites). Filtro
+  `--check-failed`/`--check` em `runs list` (API `check_failed`/`check`, MCP e fila de revisão do
+  console), `checks` em cada run, em cada turno da sessão e, por agente, a taxa de reprovação em
+  `/observability/overview`; `kuro eval --agent-checks`. Seção Checagens no formulário do agente. Ver
+  [observabilidade](observabilidade.md#checagens-automáticas).
+- **`side_effect_suggested` nas tools `api`**, pelo método HTTP (nunca gravado sozinho), `warnings` ao
+  criar ou atualizar tool sem classificação, botão de aceitar a sugestão no console e
+  `kuro tools audit`. O comportamento de `null` em tempo de execução não mudou (vale como "sem
+  efeito"); está descrito em [conceitos](conceitos.md#efeito-colateral-a-classificação-das-tools).
+- `matches` e `contains` também valem nas regras do `kuro eval`.
+
 ### Como atualizar
 
-1. A migração `0018` (a coluna `history_tool_calls` em `agent_definitions`, nula) roda sozinha na
-   subida. Para voltar à `0.3.0`, siga o [roteiro de migração](migracao.md#6-voltar-atrás).
+1. As migrações `0018` (a coluna `history_tool_calls` em `agent_definitions`, nula), `0019` (em
+   `runs`: `cache_read_tokens`, `cache_write_tokens`, `prompt_composition`, `prompt_chars`,
+   `history_chars`) e `0020` (as colunas `agent_definitions.checks` e `run_scores.source`, nulas)
+   rodam sozinhas na subida, nessa ordem. Para voltar à `0.3.0`, siga o
+   [roteiro de migração](migracao.md#6-voltar-atrás).
+2. **Opcional, se `kuro collections get general` (ou o console) mostrar o idioma legado:** troque o
+   idioma das collections que guardam texto em português, uma a uma. É um comando, sem reindexar, e
+   só importa se a collection usa ou vai usar `search_mode=hybrid`:
+
+   ```bash
+   kuro collections set general language=portuguese
+   ```
+
+   O Kuro não faz isso sozinho nas instalações em uso.
 
 ---
 

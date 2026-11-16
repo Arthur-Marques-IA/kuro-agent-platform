@@ -62,6 +62,8 @@ export interface LogsQuery {
   sideEffect: boolean;
   hideShort: boolean;
   feedbackDown: boolean;
+  /** Só runs com alguma checagem automática do agente reprovada. */
+  checkFailed: boolean;
   // A aba RAG.
   rag: RagFilterValue;
   /** Só runs de agentes que consultavam esta collection. Vazio = todas. */
@@ -85,6 +87,7 @@ export const EMPTY_LOGS_QUERY: LogsQuery = {
   sideEffect: false,
   hideShort: false,
   feedbackDown: false,
+  checkFailed: false,
   rag: "searched",
   collection: "",
 };
@@ -161,6 +164,7 @@ export function parseLogsQuery(params: SearchParams): LogsQuery {
     sideEffect: flag(params.side_effect),
     hideShort: flag(params.hide_short),
     feedbackDown: first(params.feedback) === "down",
+    checkFailed: flag(params.check_failed),
     rag: RAG_FILTERS.some((r) => r.value === rag) ? (rag as RagFilterValue) : "searched",
     collection: first(params.collection),
   };
@@ -194,6 +198,7 @@ export function logsQueryString(query: Partial<LogsQuery>): string {
   if (q.sideEffect) out.set("side_effect", "1");
   if (q.hideShort) out.set("hide_short", "1");
   if (q.feedbackDown) out.set("feedback", "down");
+  if (q.checkFailed) out.set("check_failed", "1");
   if (q.rag !== "searched") out.set("rag", q.rag);
   if (q.collection) out.set("collection", q.collection);
   return out.toString();

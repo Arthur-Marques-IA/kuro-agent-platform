@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Activity, ChevronRight } from "lucide-react";
 import { errorMessage, requestJson } from "@/lib/http";
 import { formatCost, formatMs, formatNumber } from "@/lib/format";
+import { cacheFraction, formatPercent } from "@/lib/prompt-composition";
 import { mergeFirstPage } from "@/lib/logs-lists";
 import { useListKeyboardNav } from "@/lib/use-list-nav";
 import type { RunPage, RunSummary } from "@/lib/types";
@@ -12,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState, RelativeTime, Skeleton, Spinner } from "@/components/ui/primitives";
+import { ChecksBadge } from "@/components/observability/run-checks";
 import { FeedbackCount, RunStatusBadge } from "@/components/observability/run-status";
 
 const PAGE_SIZE = 25;
@@ -268,6 +270,7 @@ function RunCard({ run, showAgent }: { run: RunSummary; showAgent: boolean }) {
               {run.tool_failures} {run.tool_failures === 1 ? "tool falhou" : "tools falharam"}
             </Badge>
           )}
+          <ChecksBadge checks={run.checks} />
           <span className="ml-auto whitespace-nowrap">
             <RelativeTime date={run.started_at} />
           </span>
@@ -318,7 +321,8 @@ function RunRow({ run, showAgentColumn }: { run: RunSummary; showAgentColumn: bo
               {run.tool_failures} {run.tool_failures === 1 ? "falhou" : "falharam"}
             </Badge>
           )}
-          {run.complexity == null && !run.tool_failures && <span className="text-muted-foreground">—</span>}
+          <ChecksBadge checks={run.checks} />
+          {run.complexity == null && !run.tool_failures && !run.checks?.length && <span className="text-muted-foreground">—</span>}
         </span>
       </td>
       <td className="px-3 py-2.5">
@@ -335,7 +339,16 @@ function RunRow({ run, showAgentColumn }: { run: RunSummary; showAgentColumn: bo
         )}
       </td>
       <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums">{formatMs(run.latency_ms)}</td>
-      <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums">{run.total_tokens ? formatNumber(run.total_tokens) : "—"}</td>
+      <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums">{run.total_tokens ? formatNumber(run.total_tokens) : "—"}
+        {!!run.cache_read_tokens && (
+          <span
+            className="ml-1 text-[11px] text-muted-foreground"
+            title={`${formatNumber(run.cache_read_tokens)} tokens do prompt lidos do cache`}
+          >
+            {formatPercent((cacheFraction(run.cache_read_tokens, run.input_tokens) ?? 0) * 100)} cache
+          </span>
+        )}
+      </td>
       <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums">{formatCost(run.cost_usd)}</td>
       <td className="px-3 py-2.5 text-xs">
         <FeedbackCount up={run.feedback_up} down={run.feedback_down} />

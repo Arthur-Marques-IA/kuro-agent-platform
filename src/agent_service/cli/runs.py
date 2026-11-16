@@ -14,9 +14,46 @@ from agent_service.cli.common import EXIT_USAGE, call, console, emit, fail, fail
 app = typer.Typer(help="Execuções: listar, acompanhar ao vivo, ver trace, resumir, registrar score.")
 
 
+PART_LABELS = {
+    "instructions": "instruções",
+    "session_context": "contexto da sessão",
+    "memories": "memórias",
+    "session_summary": "resumo da sessão",
+    "history": "histórico",
+    "history_tools": "tools do histórico",
+    "turn": "mensagem do turno",
+    "dependencies": "dependencies",
+    "other": "outras",
+}
+
+
+def _cache_note(run: dict[str, Any]) -> str:
+    """` · 84% do cache` quando o run leu do cache de prompt."""
+    read, total = run.get("cache_read_tokens") or 0, run.get("input_tokens") or 0
+    if not read:
+        return ""
+    return f" · {read} do cache ({min(read / total, 1):.0%})" if total else f" · {read} do cache"
+
+
+def _composition_lines(composition: dict[str, Any] | None) -> list[str]:
+    """O prompt da primeira chamada, parte a parte (caracteres exatos; tokens são estimativa)."""
+    if not composition or not composition.get("chars"):
+        return []
+    total = composition["chars"]
+    parts = composition.get("parts") or {}
+    shown = [f"{PART_LABELS.get(name, name)} {chars} ({chars / total:.0%})" for name, chars in parts.items() if chars]
+    lines = [f"[dim]prompt: {total} caracteres (~{composition.get('tokens_estimate', 0)} tokens, estimativa)[/]"]
+    lines.append("[dim]  " + " · ".join(shown) + "[/]")
+    if composition.get("attachments"):
+        lines.append(f"[dim]  anexos: {composition['attachments']}[/]")
+    return lines
+
+
 def _runs_table(rows: list[dict[str, Any]], *, header: bool = True) -> Table:
     table = Table(show_edge=False, header_style="bold", show_header=header)
-    for column in ("início", "run_id", "agente", "status", "tokens", "latência"):
+    show_checks = any(r.get("checks") for r in rows)
+    columns = ("início", "run_id", "agente", "status", "tokens", "latência", *(("checagens",) if show_checks else ()))
+    for column in columns:
         table.add_column(column, no_wrap=True)
     for r in rows:
         status = "[green]ok[/]" if r["status"] == "success" else f"[red]{r['status']}[/]"
@@ -26,10 +63,22 @@ def _runs_table(rows: list[dict[str, Any]], *, header: bool = True) -> Table:
             r["run_id"],
             r["agent_type"],
             status,
-            str(r["total_tokens"]),
+            str(r["total_tokens"]) + _cache_note(r).replace(" do cache", "c").replace(" · ", " "),
             latency,
+            *((_check_marks(r.get("checks") or []),) if show_checks else ()),
         )
     return table
+
+
+def _check_marks(checks: list[dict[str, Any]]) -> str:
+    """Resumo das checagens de um run para a listagem: só o que não passou."""
+    marks = []
+    for c in checks:
+        if c["status"] == "failed":
+            marks.append(f"[red]✗ {c['name']}[/]" if c.get("severity") == "fail" else f"[yellow]✗ {c['name']}[/]")
+        elif c["status"] == "error":
+            marks.append(f"[dim]? {c['name']}[/]")
+    return " ".join(marks)
 
 
 def _render_runs(page: dict[str, Any]) -> None:
@@ -41,8 +90,10 @@ def _render_runs(page: dict[str, Any]) -> None:
 def _render_trace(trace: dict[str, Any]) -> None:
     run = trace["run"]
     console.print(
-        f"[bold]{run['agent_type']}[/] [dim]run {run['run_id']} · {run['status']} · {run['total_tokens']} tokens[/]"
+        f"[bold]{run['agent_type']}[/] [dim]run {run['run_id']} · {run['status']} · {run['total_tokens']} tokens{_cache_note(run)}[/]"
     )
+    for line in _composition_lines(trace.get("prompt_composition")):
+        console.print(line, highlight=False)
     if run.get("input_message") is not None:
         # Entrada estruturada: a fala, os eventos e os blocos em vez do texto montado.
         for block in trace.get("input_context") or []:
@@ -84,6 +135,17 @@ def _render_trace(trace: dict[str, Any]) -> None:
             f"{span['type'].lower()} [bold]{span['name']}[/][dim]{latency}[/]{level}"
         )
     console.print(root)
+    for c in run.get("checks") or []:
+        color = {"passed": "green", "failed": "red" if c.get("severity") == "fail" else "yellow", "error": "dim"}[
+            c["status"]
+        ]
+        if c["status"] == "error":
+            detail = f"erro de avaliação: {c.get('error')}"
+        else:
+            detail = f"{c['field']} {c['op']} {c.get('expected')!r}; veio {c.get('actual')!r}"
+        console.print(
+            f"[{color}]checagem {c['name']}: {c['status']}[/] [dim]({c.get('severity')}; {detail})[/]", highlight=False
+        )
     for score in trace.get("scores") or []:
         console.print(f"score {score['name']} = {score['value']} [dim]{score.get('comment') or ''}[/]")
 
@@ -103,6 +165,15 @@ def runs(ctx: typer.Context) -> None:
             version=None,
             collection=None,
             collection_version=None,
+            complexity=[],
+            tool_failed=False,
+            side_effect=False,
+            min_chars=None,
+            feedback=None,
+            no_tests=False,
+            sample=None,
+            check_failed=False,
+            check=None,
         )
 
 
@@ -137,9 +208,14 @@ def list_runs(
     feedback: str | None = typer.Option(None, "--feedback", help="up | down | none"),
     no_tests: bool = typer.Option(False, "--no-tests", help="Tira os testes do Playground (dry_run)."),
     sample: int | None = typer.Option(None, "--sample", min=1, max=100, help="Amostra aleatória deste tamanho."),
+    check_failed: bool = typer.Option(
+        False, "--check-failed", help="Só runs com alguma checagem automática do agente reprovada."
+    ),
+    check: str | None = typer.Option(None, "--check", help="Só runs em que esta checagem (pelo nome) reprovou."),
 ) -> None:
     """Execuções mais recentes. Os filtros de revisão montam a fila do que vale olhar,
-    ex.: `kuro runs list -a r8 -c 3 --no-tests` ou `kuro runs list -a r8 --sample 20 --no-tests`."""
+    ex.: `kuro runs list -a r8 -c 3 --no-tests`, `kuro runs list -a r8 --sample 20 --no-tests`
+    ou `kuro runs list -a r8 --check-failed --no-tests`."""
     st = state(ctx)
     page = call(
         st,
@@ -161,6 +237,8 @@ def list_runs(
         feedback=feedback,
         include_dry_run=False if no_tests else None,
         sample=sample,
+        check_failed=True if check_failed else None,
+        check=check,
     )
     emit(st, page, _render_runs)
 
