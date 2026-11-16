@@ -110,7 +110,7 @@ como foi gravado.
 ## 6. Voltar atrás
 
 Voltar só a imagem não funciona: o serviço antigo não sobe com o banco numa revisão que ele não
-conhece (`0017` para quem vem da `0.2.0`, `0018` para quem vem da `0.3.0`). O caminho é
+conhece (a `0.4.0` deixa o banco na `0020`; a `0.3.0` conhece até a `0017`). O caminho é
 restaurar o dump junto com o código de antes:
 
 ```bash
@@ -143,7 +143,7 @@ trecho do texto atual para `events` e `context` está em
    funciona). Instruções como "vale sempre o contexto mais recente" deixam de ser necessárias. Se a
    conversa passa a ser com outra pessoa, use outra `session_id`. Quem já integrava pela entrada
    estruturada da `0.3.0` não precisa mudar a chamada, mas veja a
-   [Ação necessária](notas-de-versao.md#não-lançada): o contexto deixou de ir na mensagem.
+   [Ação necessária](notas-de-versao.md#040--2026-11-16): o contexto deixou de ir na mensagem.
 3. **Faça pelo draft.** `agents promote <agente> --to <agente>-draft`, ajuste o prompt no draft,
    mande a entrada estruturada para o draft em shadow ou com `kuro eval --compare`, e só então
    promova. O passo a passo está em [integração](integracao.md).

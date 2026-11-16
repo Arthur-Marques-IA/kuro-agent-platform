@@ -343,6 +343,9 @@ def _copy_run_id(screen: Screen, run_id: str) -> None:
 
 
 class RunScreen(Screen):
+    # O foco inicial é a árvore de spans. Sem isto, o foco automático da tela (o primeiro
+    # widget focável, a caixa da mensagem) às vezes vencia o `tree.focus()` do on_mount.
+    AUTO_FOCUS = "#spans"
     BINDINGS = [
         BACK,
         Binding("c", "context", "contexto"),

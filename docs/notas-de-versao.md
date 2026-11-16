@@ -20,7 +20,7 @@ Aqui não entram as mudanças internas; essas ficam no histórico do git.
 
 ---
 
-## Não lançada
+## 0.4.0 — 2026-11-16
 
 O contexto da entrada estruturada vira estado da sessão: o modelo o lê uma vez por turno, no
 prompt de sistema, em vez de recebê-lo colado em cada mensagem e de novo pelo histórico.
