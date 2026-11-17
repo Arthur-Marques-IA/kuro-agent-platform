@@ -14,11 +14,15 @@
       índice GIN em uso, e numa collection muito grande o híbrido custa um full scan;
     * o `_create_gin_index` dele interpola o idioma sem aspas (vira nome de
       coluna) — por isso não é chamado aqui.
-  Mesmo sem índice, o idioma fica fixo depois da criação, como o embedder: é
-  regra de produto. Trocar o dicionário muda quais trechos casam, e um índice
-  GIN futuro (`to_tsvector('<idioma>', content)`) seria de um idioma só. Para
-  trocar, crie outra collection. Collections anteriores a esta configuração têm
-  `language` nulo, que é o `english` do Agno.
+  O idioma pode mudar depois da criação (`collections set <nome> language=...`),
+  diferente do embedder: não há índice nem coluna por idioma, o `to_tsvector` é
+  calculado na hora, então nenhuma reindexação é necessária. O que muda é só
+  quais trechos casam no modo híbrido (no vetorial o idioma não entra na busca);
+  a troca vira uma versão nova da configuração. Se um dia houver um índice GIN
+  (`to_tsvector('<idioma>', content)`, de um idioma só), trocar o idioma passa a
+  exigir recriá-lo. Collections anteriores a esta configuração têm `language`
+  nulo, que é o `english` do Agno (`LEGACY_LANGUAGE`): a API as mostra com
+  `language_legacy: true` e um aviso, e a troca para `portuguese` é um comando.
 - `max_results`: quantos trechos a busca devolve (k), para o agente e para o
   `/search` da collection.
 - `reranker`: só o gancho. Os rerankers do Agno precisam de dependência pesada
@@ -81,6 +85,11 @@ class SearchConfig:
         return self.language or LEGACY_LANGUAGE
 
     @property
+    def language_legacy(self) -> bool:
+        """`language` nulo: o `english` do Agno, de antes de a coluna existir — não foi uma escolha."""
+        return self.language is None
+
+    @property
     def score_kind(self) -> str:
         """O que o `score` de um trecho mede — o trace e o console rotulam por isto."""
         if self.reranker:
@@ -92,6 +101,7 @@ class SearchConfig:
         return {
             "search_mode": self.search_mode,
             "language": self.content_language,
+            "language_legacy": self.language_legacy,
             "max_results": self.max_results,
             "vector_weight": self.vector_weight,
             "reranker": self.reranker,
@@ -142,7 +152,9 @@ def validate_language(language: str, engine: Any) -> None:
     """O dicionário existe neste Postgres? O nome vai para o SQL do full-text,
     então o formato é conferido mesmo onde não dá para consultar `pg_ts_config`."""
     if not _LANGUAGE_RE.match(language):
-        raise SearchConfigError(f"language deve ser o nome de um dicionário do Postgres (ex.: portuguese), veio {language!r}")
+        raise SearchConfigError(
+            f"language deve ser o nome de um dicionário do Postgres (ex.: portuguese), veio {language!r}"
+        )
     if engine.dialect.name != "postgresql":
         return
     with engine.connect() as conn:
@@ -151,6 +163,17 @@ def validate_language(language: str, engine: Any) -> None:
         raise SearchConfigError(
             f"language {language!r} não é um dicionário de full-text deste Postgres (veja SELECT cfgname FROM pg_ts_config)"
         )
+
+
+def language_notice(config: SearchConfig) -> str | None:
+    """O aviso de uma collection com `language` nulo (o inglês legado), ou `None`."""
+    if not config.language_legacy:
+        return None
+    return (
+        f"O idioma desta collection é {LEGACY_LANGUAGE!r} por herança (nunca foi escolhido). No modo híbrido, o "
+        f"full-text usaria o dicionário errado para texto em português. Para trocar, sem reindexar: "
+        f"`kuro collections set <nome> language={DEFAULT_LANGUAGE}`."
+    )
 
 
 def build_reranker(name: str | None) -> Any:

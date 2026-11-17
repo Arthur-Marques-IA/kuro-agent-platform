@@ -44,13 +44,13 @@ const UNCLASSIFIED_HINT =
   "Ainda não se sabe se esta tool grava, cobra ou envia algo. A fila de revisão dos Logs usa isso para apontar " +
   "as execuções que mudaram algo — edite a tool e classifique.";
 
-export function ToolsIndex() {
+export function ToolsIndex({ initialQuery = "" }: { initialQuery?: string }) {
   const router = useRouter();
   const { availableTools, agents, backendReachable } = useWorkspace();
   const toast = useToast();
   const confirm = useConfirm();
 
-  const [filters, setFilters] = useState<ToolFilters>(EMPTY_FILTERS);
+  const [filters, setFilters] = useState<ToolFilters>(() => ({ ...EMPTY_FILTERS, query: initialQuery }));
   const [editing, setEditing] = useState<ToolSummary | "new" | null>(null);
   const [invoking, setInvoking] = useState<ToolSummary | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -116,6 +116,25 @@ export function ToolsIndex() {
       refresh();
     } catch (err) {
       toast({ title: "Não foi possível salvar", description: errorMessage(err), variant: "error" });
+    } finally {
+      setToggling(null);
+    }
+  }
+
+  /** Aceita a sugestão pelo método HTTP: é o operador que grava, a sugestão nunca é gravada sozinha. */
+  async function handleClassify(tool: ToolSummary, sideEffect: boolean) {
+    setToggling(tool.tool_name);
+    try {
+      const payload: ToolUpdateInput = { side_effect: sideEffect };
+      await requestJson(`/api/tools/${encodeURIComponent(tool.tool_name)}`, {
+        method: "PUT",
+        json: payload,
+        fallbackError: "Falha ao classificar a tool"
+      });
+      toast({ title: sideEffect ? "Classificada: tem efeito colateral" : "Classificada: sem efeito colateral", variant: "success" });
+      refresh();
+    } catch (err) {
+      toast({ title: "Não foi possível classificar", description: errorMessage(err), variant: "error" });
     } finally {
       setToggling(null);
     }
@@ -292,6 +311,7 @@ export function ToolsIndex() {
                       onEdit={() => setEditing(tool)}
                       onInvoke={() => setInvoking(tool)}
                       onToggleEnabled={() => void handleToggleEnabled(tool)}
+                      onClassify={(value) => void handleClassify(tool, value)}
                       onDelete={() => void handleDelete(tool)}
                     />
                   ))}
@@ -308,6 +328,8 @@ export function ToolsIndex() {
           existingNames={availableTools.map((t) => t.tool_name)}
           onOpenChange={(open) => !open && setEditing(null)}
           onSaved={() => {
+            // O toast também é lido pelo anunciador (salvar uma tool não dizia nada antes).
+            toast({ title: editing === "new" ? "Tool criada" : "Tool salva", variant: "success" });
             setEditing(null);
             refresh();
           }}
@@ -413,6 +435,7 @@ function ToolRow({
   onEdit,
   onInvoke,
   onToggleEnabled,
+  onClassify,
   onDelete
 }: {
   tool: ToolSummary;
@@ -423,6 +446,7 @@ function ToolRow({
   onEdit: () => void;
   onInvoke: () => void;
   onToggleEnabled: () => void;
+  onClassify: (sideEffect: boolean) => void;
   onDelete: () => void;
 }) {
   const endpoint = apiEndpoint(tool);
@@ -453,15 +477,15 @@ function ToolRow({
               {tool.label}
             </button>
             <span className="font-mono text-xs text-muted-foreground">{tool.tool_name}</span>
-            <StatusBadges tool={tool} />
+            <StatusBadges tool={tool} busy={busy} onClassify={onClassify} />
           </div>
           {summary.head ? (
             <p className="line-clamp-2 text-[13px] text-muted-foreground" title={tool.description ?? undefined}>
               {summary.head}
-              {summary.rest && !expanded && <span className="text-muted-foreground/70"> …</span>}
+              {summary.rest && !expanded && <span className="text-muted-foreground"> …</span>}
             </p>
           ) : (
-            <p className="text-[13px] italic text-muted-foreground/70">
+            <p className="text-[13px] italic text-muted-foreground">
               {tool.kind === "builtin" ? "Descrição vem da toolkit." : "Sem descrição — o modelo só vê o nome."}
             </p>
           )}
@@ -514,7 +538,16 @@ function ToolRow({
   );
 }
 
-function StatusBadges({ tool }: { tool: ToolSummary }) {
+function StatusBadges({
+  tool,
+  busy,
+  onClassify
+}: {
+  tool: ToolSummary;
+  busy: boolean;
+  onClassify: (sideEffect: boolean) => void;
+}) {
+  const suggested = tool.side_effect_suggested;
   return (
     <>
       {!tool.enabled && <Badge variant="secondary">desligada</Badge>}
@@ -527,6 +560,17 @@ function StatusBadges({ tool }: { tool: ToolSummary }) {
         <Badge variant="warning" title={UNCLASSIFIED_HINT}>
           não classificada
         </Badge>
+      )}
+      {isUnclassified(tool) && suggested != null && (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() => onClassify(suggested)}
+          title={`Pelo método HTTP (${String((tool.config as { method?: string }).method ?? "GET").toUpperCase()}). Só grava quando você clica.`}
+        >
+          Aceitar sugestão: {suggested ? "tem efeito colateral" : "sem efeito colateral"}
+        </Button>
       )}
     </>
   );

@@ -51,7 +51,9 @@ def test_create_conversational_with_response_schema_is_422():
     with pytest.raises(HTTPException) as exc:
         create_agent(
             AgentDefinitionIn(
-                agent_type="x", name="X", instructions=["a"],
+                agent_type="x",
+                name="X",
+                instructions=["a"],
                 response_schema=[{"name": "v", "type": "number"}],
             )
         )
@@ -152,7 +154,10 @@ def test_create_analysis_com_object_sem_fields_e_422():
     with pytest.raises(HTTPException) as exc:
         create_agent(
             AgentDefinitionIn(
-                agent_type="rota_ruim", name="Ruim", instructions=["a"], kind="analysis",
+                agent_type="rota_ruim",
+                name="Ruim",
+                instructions=["a"],
+                kind="analysis",
                 response_schema=[{"name": "cliente", "type": "object"}],
             )
         )
@@ -167,7 +172,10 @@ def test_create_analysis_com_num_history_runs_e_422():
     with pytest.raises(HTTPException) as exc:
         create_agent(
             AgentDefinitionIn(
-                agent_type="rota_inerte", name="X", instructions=["a"], kind="analysis",
+                agent_type="rota_inerte",
+                name="X",
+                instructions=["a"],
+                kind="analysis",
                 num_history_runs=5,
                 response_schema=[{"name": "v", "type": "number"}],
             )
@@ -180,13 +188,40 @@ def test_create_analysis_com_mem0_e_422():
     with pytest.raises(HTTPException) as exc:
         create_agent(
             AgentDefinitionIn(
-                agent_type="rota_inerte2", name="X", instructions=["a"], kind="analysis",
+                agent_type="rota_inerte2",
+                name="X",
+                instructions=["a"],
+                kind="analysis",
                 memory_backend="mem0",
                 response_schema=[{"name": "v", "type": "number"}],
             )
         )
     assert exc.value.status_code == 422
     assert "memory_backend" in str(exc.value.detail)
+
+
+def test_analysis_com_history_tool_calls_e_422(analysis_agent):
+    with pytest.raises(HTTPException) as exc:
+        update_agent(analysis_agent, AgentDefinitionUpdate(history_tool_calls=2))
+    assert exc.value.status_code == 422 and "history_tool_calls" in str(exc.value.detail)
+    # `null` é o padrão: reenviar o JSON editável de um analista não quebra.
+    assert update_agent(analysis_agent, AgentDefinitionUpdate(history_tool_calls=None))["history_tool_calls"] is None
+
+
+def test_history_tool_calls_nulo_nao_muda_a_versao_e_definido_muda(conversational_agent):
+    from agent_service.agents.store import get_definition
+    from agent_service.agents.versions import effective_config
+
+    antes = effective_config(get_definition(conversational_agent))
+    assert "history_tool_calls" not in antes, "nulo fica fora do config_hash: agente existente não ganha versão"
+    assert update_agent(conversational_agent, AgentDefinitionUpdate(history_tool_calls=0))["history_tool_calls"] == 0
+    assert effective_config(get_definition(conversational_agent))["history_tool_calls"] == 0
+    assert (
+        update_agent(conversational_agent, AgentDefinitionUpdate(history_tool_calls=None))["history_tool_calls"] is None
+    )
+    assert effective_config(get_definition(conversational_agent)) == antes
+    with pytest.raises(ValueError):
+        AgentDefinitionUpdate(history_tool_calls=-1)
 
 
 def test_update_de_analysis_sem_tocar_nos_inertes_passa(analysis_agent):
@@ -265,12 +300,15 @@ def test_analysis_com_collection_mantem_a_busca(monkeypatch):
     colecao = object()
     monkeypatch.setattr(base, "get_collection", lambda nome: colecao)
     agente = base.build_agent(
-        agent_id="a", name="A", instructions=["Extraia."], kind="analysis",
+        agent_id="a",
+        name="A",
+        instructions=["Extraia."],
+        kind="analysis",
         knowledge_collection="manuais",
     )
     assert agente.db is None  # continua sem persistir sessão
     assert agente.knowledge is colecao
-    assert agente.search_knowledge is True
+    assert any(getattr(t, "name", None) == "search_knowledge_base" for t in agente.tools)
 
 
 # -- o fluxo documentado: get --editable > f.json && apply -f f.json --------------
@@ -293,8 +331,11 @@ def test_editable_volta_por_apply_sem_perder_o_schema_aninhado():
 
     original = create_agent(
         AgentDefinitionIn(
-            agent_type="rt_schema", name="RT", instructions=["Extraia."],
-            kind="analysis", response_schema=SCHEMA_ANINHADO,
+            agent_type="rt_schema",
+            name="RT",
+            instructions=["Extraia."],
+            kind="analysis",
+            response_schema=SCHEMA_ANINHADO,
         )
     )
     saida = editable(original)
@@ -314,8 +355,11 @@ def test_editable_de_analysis_nao_oferece_campo_inerte():
 
     definicao = create_agent(
         AgentDefinitionIn(
-            agent_type="rt_inerte", name="RT", instructions=["a"],
-            kind="analysis", response_schema=[{"name": "v", "type": "number"}],
+            agent_type="rt_inerte",
+            name="RT",
+            instructions=["a"],
+            kind="analysis",
+            response_schema=[{"name": "v", "type": "number"}],
         )
     )
     try:
@@ -330,8 +374,12 @@ def test_reenviar_os_defaults_nao_e_erro():
     inertes com o valor padrão. Isso não configurou nada, então não é 422."""
     criado = create_agent(
         AgentDefinitionIn(
-            agent_type="rt_default", name="RT", instructions=["a"], kind="analysis",
-            num_history_runs=10, memory_backend="common",
+            agent_type="rt_default",
+            name="RT",
+            instructions=["a"],
+            kind="analysis",
+            num_history_runs=10,
+            memory_backend="common",
             response_schema=[{"name": "v", "type": "number"}],
         )
     )

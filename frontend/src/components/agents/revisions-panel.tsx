@@ -155,6 +155,8 @@ function RevisionSummary({ revision }: { revision: AgentRevision }) {
     ["Modelo", `${c.model_provider ?? "—"} / ${c.model_id ?? "—"}`],
     ["Parâmetros", params.length ? params.map(([k, v]) => `${k}=${v}`).join(", ") : "padrão do provedor"],
     ["Tempo limite", c.timeout_seconds ? `${c.timeout_seconds}s` : "padrão do serviço"],
+    ["Checagens", c.checks?.length ? c.checks.map((k) => k.name).join(", ") : "nenhuma"],
+    ["Tools no histórico", c.history_tool_calls != null ? `as ${c.history_tool_calls} mais recentes` : "todas"],
     ["Instruções", `${c.instructions?.length ?? 0}`],
     ["Tools", c.tools?.map((t) => t.tool_name).join(", ") || "—"],
     ["Campos da saída", `${c.response_schema?.length ?? 0}`],

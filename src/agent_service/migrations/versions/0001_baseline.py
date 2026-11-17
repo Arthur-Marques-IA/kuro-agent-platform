@@ -240,9 +240,7 @@ def migrate_markdown_notes(connection: sa.engine.Connection) -> None:
 
     Converter só na leitura não bastava: os ids saíam diferentes a cada consulta
     (`--remove <id>` nunca casava) e não havia v1 para onde voltar."""
-    notes = sa.table(
-        "agent_feedback_notes", sa.column("agent_type"), sa.column("content"), sa.column("rules", sa.JSON)
-    )
+    notes = sa.table("agent_feedback_notes", sa.column("agent_type"), sa.column("content"), sa.column("rules", sa.JSON))
     versions = sa.table(
         "agent_feedback_versions",
         sa.column("agent_type"),
@@ -252,7 +250,9 @@ def migrate_markdown_notes(connection: sa.engine.Connection) -> None:
         sa.column("origin"),
     )
     # O filtro é em Python: comparar JSON com `[]` no SQL depende do dialeto.
-    for agent_type, content, rules in connection.execute(sa.select(notes.c.agent_type, notes.c.content, notes.c.rules)).all():
+    for agent_type, content, rules in connection.execute(
+        sa.select(notes.c.agent_type, notes.c.content, notes.c.rules)
+    ).all():
         if rules or not content:
             continue
         converted = _rules_from_markdown(content)
@@ -263,7 +263,9 @@ def migrate_markdown_notes(connection: sa.engine.Connection) -> None:
             sa.update(notes).where(notes.c.agent_type == agent_type).values(rules=converted, content=markdown)
         )
         connection.execute(
-            sa.insert(versions).values(agent_type=agent_type, version=1, rules=converted, content=markdown, origin="merge")
+            sa.insert(versions).values(
+                agent_type=agent_type, version=1, rules=converted, content=markdown, origin="merge"
+            )
         )
 
 
@@ -272,9 +274,23 @@ def _migrate_legacy_credentials() -> None:
     connection = op.get_bind()
     if not sa.inspect(connection).has_table("model_provider_credentials"):
         return
-    columns = ("api_key_encrypted", "key_hint", "base_url", "enabled", "last_tested_at", "last_test_ok", "last_test_message")
+    columns = (
+        "api_key_encrypted",
+        "key_hint",
+        "base_url",
+        "enabled",
+        "last_tested_at",
+        "last_test_ok",
+        "last_test_message",
+    )
     legacy = sa.table("model_provider_credentials", sa.column("provider"), *(sa.column(c) for c in columns))
-    current = sa.table("model_credentials", sa.column("id"), sa.column("provider"), sa.column("label"), *(sa.column(c) for c in columns))
+    current = sa.table(
+        "model_credentials",
+        sa.column("id"),
+        sa.column("provider"),
+        sa.column("label"),
+        *(sa.column(c) for c in columns),
+    )
     if connection.execute(sa.select(current.c.id).limit(1)).first() is not None:
         return  # já migrado (ou já há credenciais cadastradas)
     for row in connection.execute(sa.select(legacy)).all():

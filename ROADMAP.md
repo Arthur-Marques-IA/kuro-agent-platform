@@ -4,7 +4,7 @@ O que já existe, o que vem a seguir e o que fica de fora de propósito. O detal
 está em [docs/notas-de-versao.md](docs/notas-de-versao.md) e no histórico do git; aqui fica só o
 mapa.
 
-> Última revisão: 2026-10-30, conferida contra o código.
+> Última revisão: 2026-11-12, conferida contra o código.
 
 **Como ler:** [Feito](#feito) é o que já está no ar, por área. [Próximo](#próximo) é o que vale fazer
 agora, em ordem. [Quando houver necessidade](#quando-houver-necessidade) é o que só se paga com um
@@ -65,6 +65,11 @@ tomadas, com o motivo.
   custo estimado. O Langfuse é opcional.
 - Panorama (totais contra o período anterior, por agente e por versão, tools falhando), fila de
   revisão (`--tool-failed`, `--side-effect`, `--feedback`, `--sample`) e correlação por `metadata`.
+- Entrada estruturada no `/chat` (`events` e `context` em campos, sem marcadores de texto) e a linha
+  do tempo da sessão servida pronta: é o que o console, o `kuro sessions show`, o MCP e o
+  `kuro dash` leem.
+- Retenção do trace store (`RUN_RETENTION_DAYS`, apagar ou anonimizar) e redação por chave na
+  gravação (`TRACE_REDACT_KEYS`).
 
 ### Interfaces
 
@@ -80,8 +85,14 @@ tomadas, com o motivo.
 
 ### Operação e segurança
 
-- Autenticação por chave de API com escopos `runtime` e `admin`.
-- Migrações com Alembic, CI (testes, lint, build do frontend e das imagens).
+- Autenticação por chave de API com escopos `runtime` e `admin`; sem chave, o serviço só sobe com
+  `ALLOW_OPEN=1`. Login (`basic_auth`) no console publicado pelo profile `tls`.
+- Segredos das tools `api` cifrados em repouso; egress só para endereço público; limite de
+  requisições por chave (`RATE_LIMIT_PER_MINUTE`).
+- Migrações com Alembic, sob lock na subida (várias réplicas sobem uma de cada vez). Imagem em dois
+  estágios, sem root.
+- CI: testes (SQLite e, marcados, Postgres com pgvector), `ruff`, `mypy` gradual, build do frontend
+  e das imagens, smoke do console com Playwright e tipos do console conferidos contra o OpenAPI.
 - Fila de jobs no Postgres (`SKIP LOCKED`, lease, retentativa), usada pelo sync de sites.
 - Limite de execuções simultâneas com fila de espera (503 com `Retry-After` quando cheia).
 - Instalação enxuta: o núcleo sobe só com Postgres e o serviço; console, Langfuse e HTTPS são
@@ -129,8 +140,8 @@ Cada item tem o gatilho que justifica fazê-lo.
 | O quê | Quando |
 |---|---|
 | Tabela `api_keys` (várias chaves, revogação sem restart, `last_used_at`) | Mais de um sistema integrando |
-| Multi-tenancy (`tenant_id` nas tabelas antigas, RLS) e RBAC no console | O segundo cliente. As tabelas novas já nascem com `tenant_id` |
-| Cache de agentes com invalidação por `LISTEN/NOTIFY` e lock nas migrações | Rodar com mais de um worker ou réplica |
+| Multi-tenancy (`tenant_id` nas tabelas antigas, RLS) e RBAC no console (usuários e papéis, no lugar do `basic_auth` do profile `tls`) | O segundo cliente. As tabelas novas já nascem com `tenant_id` |
+| Cache de agentes com invalidação por `LISTEN/NOTIFY` (hoje é uma consulta de carimbos por requisição; o lock nas migrações já existe) | Rodar com muitos workers ou réplicas e a consulta por requisição pesar |
 | Webhook de conclusão do procedural (a fila de jobs já existe) | Um integrador que não queira ler `state.done` na resposta |
 | Fixar versão por chamada (`agente@12`) e canário por % de sessões | Precisar de duas versões de um agente no ar ao mesmo tempo |
 | Orçamento por agente (tokens/dia ou R$/mês, com alerta e corte) | Custo virar assunto. O dado já está no trace store |

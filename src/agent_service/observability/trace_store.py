@@ -36,7 +36,13 @@ RagFilter = Literal["searched", "empty", "flagged"]
 _LEVEL_BY_STATUS: dict[RunStatus, str] = {"success": "DEFAULT", "error": "ERROR", "interrupted": "WARNING"}
 _STATUS_BY_LEVEL: dict[str, RunStatus] = {"ERROR": "error", "WARNING": "interrupted"}
 # Metadata que o OpenTelemetry/Langfuse anexam a todo span — ruído para quem lê o trace.
-_NOISY_METADATA_PREFIXES = ("resourceAttributes.", "scope.", "attributes.langfuse.", "attributes.session.", "attributes.user.")
+_NOISY_METADATA_PREFIXES = (
+    "resourceAttributes.",
+    "scope.",
+    "attributes.langfuse.",
+    "attributes.session.",
+    "attributes.user.",
+)
 _OBSERVATIONS_PAGE = 1000
 _SCORES_PAGE = 100
 _MAX_SCORE_PAGES = 5
@@ -50,6 +56,21 @@ pode estar cortando dados mais antigos."""
 
 class TraceStoreError(RuntimeError):
     """O backend de traces falhou ou está inacessível."""
+
+
+class RunCheck(BaseModel):
+    """Resultado de uma checagem automática do agente sobre este run (`observability/checks.py`)."""
+
+    name: str
+    status: Literal["passed", "failed", "error"]
+    """`error` = a avaliação da checagem levantou (campo ou padrão inválido): não é falha do run."""
+    severity: Literal["warn", "fail"] = "fail"
+    field: str | None = None
+    op: str | None = None
+    expected: Any = None
+    actual: Any = None
+    """O valor visto (texto longo truncado; `[redigido]` se a chave está em `TRACE_REDACT_KEYS`)."""
+    error: str | None = None
 
 
 class RunSummary(BaseModel):
@@ -82,6 +103,15 @@ class RunSummary(BaseModel):
     output_tokens: int = 0
     total_tokens: int = 0
     cost_usd: float | None = None
+    cache_read_tokens: int = 0
+    """Tokens do prompt lidos do cache (já contados em `input_tokens`, exceto no Claude,
+    onde vêm à parte). O `cost_usd` os cobra a preço de cache (`models/pricing.py`) nos runs
+    novos; os antigos não foram recalculados."""
+    cache_write_tokens: int = 0
+    """Tokens escritos no cache (só o Claude cobra e informa)."""
+    prompt_chars: int | None = None
+    """Tamanho, em caracteres, do prompt da primeira chamada ao modelo (a composição está no
+    detalhe, `RunTrace.prompt_composition`). `None` em run antigo, procedural ou sem medição."""
     feedback_up: int | None = 0
     feedback_down: int | None = 0
     """`None` quando havia avaliações demais para contar com segurança na listagem — veja o trace."""
@@ -96,6 +126,14 @@ class RunSummary(BaseModel):
     muda por isso. `None` = não informado; 0 = nenhuma falha."""
     complexity: int | None = None
     """1 = nenhuma tool de negócio; 2 = uma ou duas distintas; 3 = três ou mais (`tools/failures.py`)."""
+    checks: list[RunCheck] = []
+    """As checagens do agente avaliadas neste run (as cujo `when` não valeu ficam de fora).
+    Vazio = o agente não tem checagens, ou o run é anterior a elas. Só no trace store local."""
+    input_message: str | None = None
+    """Entrada estruturada do `/chat`: a fala pura do contato, sem contexto nem histórico
+    (`message` traz o texto montado que o modelo leu). `None` = run só com `message`
+    (o legado, ou anterior à entrada estruturada) ou backend Langfuse. Os eventos e os
+    blocos de contexto vêm no detalhe (`RunTrace.input_events`, `RunTrace.input_context`)."""
 
 
 class RunPage(BaseModel):
@@ -144,6 +182,20 @@ class RunTrace(BaseModel):
     procedure_state: dict[str, Any] | None = None
     """Só em turno de agente procedural: o `state` como o turno terminou (etapa,
     collected, missing, invalid, done) — o mesmo que o `/chat` devolveu."""
+    input_events: list[dict[str, Any]] | None = None
+    """Entrada estruturada: os `events` da requisição, na ordem recebida —
+    `{role, content, at, kind, attachments, speech}`; `speech: true` marca o evento que
+    é a fala nova (`run.input_message`), se algum é. `[]` quando veio só `context`;
+    `None` em run não estruturado."""
+    prompt_composition: dict[str, Any] | None = None
+    """Quanto do prompt da primeira chamada ao modelo veio de cada parte (`observability/prompt_composition.py`):
+    `{chars, parts: {instructions, session_context, memories, session_summary, history, history_tools,
+    turn, dependencies, other}, tokens_estimate, tokens_estimate_method, messages, attachments}`. Os
+    números de `parts` são caracteres exatos; `tokens_estimate` é só chars/4. `None` quando não foi medido."""
+    input_context: list[dict[str, Any]] | None = None
+    """Entrada estruturada: os blocos de `context` — `{key, title, content, volatile, hash}`,
+    com `hash` = sha256 hex do `content`. `[]` quando veio só `events`; `None` em run não
+    estruturado."""
 
 
 class SessionSummary(BaseModel):
@@ -159,6 +211,14 @@ class SessionSummary(BaseModel):
     feedback_up: int | None = 0
     feedback_down: int | None = 0
     """`None` quando havia avaliações demais para contar com segurança — ver `RunSummary.feedback_up`."""
+    last_message: str | None = None
+    """Prévia (até 160 caracteres) da fala do run mais recente: `input_message`, ou o
+    `message` inteiro num run não estruturado. `None` no backend Langfuse."""
+    contact_name: str | None = None
+    """Nome do contato pelo run mais recente (dependency ou bloco de contexto com chave
+    conhecida — a regra está em `observability/identity.py`). `None` sem nome ou no Langfuse."""
+    channel: str | None = None
+    """Canal pela metadata (`channel`/`canal`) ou dependency do run mais recente."""
 
 
 class SessionPage(BaseModel):
@@ -230,6 +290,12 @@ class RunQuery:
     statuses: tuple[RunStatus, ...] = ()
     """Só estes status (qualquer um deles) — ex.: `error` + `interrupted`, o "falharam" do panorama."""
     sort: RunSort = "recent"
+    check_failed: bool | None = None
+    """`True`: só runs com alguma checagem automática reprovada (qualquer severidade);
+    `False`: só os sem reprovação. Erro de avaliação não conta — só no trace store local."""
+    check: str | None = None
+    """Só runs em que a checagem com este nome reprovou (com `check_failed=False`: os que não) —
+    só no trace store local."""
     rag: RagFilter | None = None
     """Só runs que buscaram na base (`searched`), com alguma busca sem trecho nenhum
     (`empty`) ou com trecho marcado errado e ainda aberto (`flagged`) — só no trace store local."""
@@ -303,9 +369,18 @@ def _root_filters(query: RunQuery) -> list[dict[str, Any]]:
     if len(query.agent_types) == 1:
         filters.append({"type": "string", "column": "traceName", "operator": "=", "value": query.agent_types[0]})
     elif query.agent_types:
-        filters.append({"type": "stringOptions", "column": "traceName", "operator": "any of", "value": list(query.agent_types)})
+        filters.append(
+            {"type": "stringOptions", "column": "traceName", "operator": "any of", "value": list(query.agent_types)}
+        )
     if query.prompt_version is not None:
-        filters.append({"type": "string", "column": "version", "operator": "=", "value": f"{_VERSION_PREFIX}{query.prompt_version}"})
+        filters.append(
+            {
+                "type": "string",
+                "column": "version",
+                "operator": "=",
+                "value": f"{_VERSION_PREFIX}{query.prompt_version}",
+            }
+        )
     if query.status:
         filters.append({"type": "string", "column": "level", "operator": "=", "value": _LEVEL_BY_STATUS[query.status]})
     levels = [_LEVEL_BY_STATUS[status] for status in query.statuses]
@@ -354,7 +429,9 @@ class LangfuseTraceStore:
             raise TraceStoreError(f"Langfuse respondeu {response.status_code}: {response.text[:300]}")
         return response.json()
 
-    def _observations(self, filters: list[dict[str, Any]], *, fields: str, limit: int, cursor: str | None = None) -> dict[str, Any]:
+    def _observations(
+        self, filters: list[dict[str, Any]], *, fields: str, limit: int, cursor: str | None = None
+    ) -> dict[str, Any]:
         # `filter` tem precedência sobre os filtros por query param — tudo vai nele.
         return self._get(
             "/api/public/v2/observations",
@@ -389,9 +466,13 @@ class LangfuseTraceStore:
     def _scope_filters(self, tenant_id: str | None) -> list[dict[str, Any]]:
         filters: list[dict[str, Any]] = []
         if self._environment:
-            filters.append({"type": "stringOptions", "column": "environment", "operator": "any of", "value": [self._environment]})
+            filters.append(
+                {"type": "stringOptions", "column": "environment", "operator": "any of", "value": [self._environment]}
+            )
         if tenant_id:
-            filters.append({"type": "stringObject", "column": "metadata", "key": "tenant_id", "operator": "=", "value": tenant_id})
+            filters.append(
+                {"type": "stringObject", "column": "metadata", "key": "tenant_id", "operator": "=", "value": tenant_id}
+            )
         return filters
 
     # -- TraceStore --------------------------------------------------------
@@ -474,7 +555,9 @@ class LangfuseTraceStore:
 
         page = self._observations(filters, fields="basic,metadata,metrics", limit=_AGGREGATE_SCAN_LIMIT)
         data = page.get("data", [])
-        roots = [r for r in data if (r.get("metadata") or {}).get("run_id") and (not include_session or r.get("sessionId"))]
+        roots = [
+            r for r in data if (r.get("metadata") or {}).get("run_id") and (not include_session or r.get("sessionId"))
+        ]
         return roots, len(data)
 
     def _usage_by_trace(self, trace_ids: list[str]) -> dict[str, "_Usage"]:

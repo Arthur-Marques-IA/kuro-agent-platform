@@ -17,7 +17,11 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from agent_service.agents.dependency_fields import DependencyValidationError, validate_dependencies, validate_field_specs
+from agent_service.agents.dependency_fields import (
+    DependencyValidationError,
+    validate_dependencies,
+    validate_field_specs,
+)
 from agent_service.agents.response_model import build_response_model
 from agent_service.api import auth, routes
 from agent_service.api.agents_routes import (
@@ -62,7 +66,9 @@ def local_backend(monkeypatch):
 @pytest.fixture
 def r8():
     name = f"r8-{uuid4().hex[:6]}"
-    create_agent(AgentDefinitionIn(agent_type=name, name="R8", instructions=["Decida."], kind="analysis", response_schema=SCHEMA))
+    create_agent(
+        AgentDefinitionIn(agent_type=name, name="R8", instructions=["Decida."], kind="analysis", response_schema=SCHEMA)
+    )
     yield name
     delete_agent(name)
 
@@ -82,7 +88,8 @@ def fake_agent(monkeypatch, decide, *, hang: bool = False):
                     if hang:
                         await asyncio.Event().wait()
                     yield RunCompletedEvent(
-                        content=output_model(**decide(message)), metrics=RunMetrics(input_tokens=10, output_tokens=2, total_tokens=12)
+                        content=output_model(**decide(message)),
+                        metrics=RunMetrics(input_tokens=10, output_tokens=2, total_tokens=12),
                     )
 
                 return stream()
@@ -122,7 +129,9 @@ def test_enum_is_validated_on_registration_and_on_dependencies():
 def test_enum_in_array_items():
     from agent_service.field_schema import validate_fields
 
-    [field] = validate_fields([{"name": "tags", "type": "array", "items": {"type": "string", "enum": ["a", "b"]}}], path="x")
+    [field] = validate_fields(
+        [{"name": "tags", "type": "array", "items": {"type": "string", "enum": ["a", "b"]}}], path="x"
+    )
     assert field["items"]["enum"] == ["a", "b"]
     with pytest.raises(FieldSchemaError):
         validate_fields([{"name": "t", "type": "array", "items": {"type": "integer", "enum": ["a"]}}], path="x")
@@ -142,9 +151,16 @@ def test_model_params_are_validated_and_translated_per_provider():
     assert provider_kwargs("google", params) == {"temperature": 0.3, "max_output_tokens": 1024, "thinking_budget": 0}
     assert provider_kwargs("openai", {"max_tokens": 5}) == {"max_completion_tokens": 5}
     assert provider_kwargs("anthropic", {"max_tokens": 5}) == {"max_tokens": 5}
-    assert provider_kwargs("ollama", {"temperature": 0.1, "max_tokens": 5}) == {"options": {"temperature": 0.1, "num_predict": 5}}
+    assert provider_kwargs("ollama", {"temperature": 0.1, "max_tokens": 5}) == {
+        "options": {"temperature": 0.1, "num_predict": 5}
+    }
     assert validate_model_params({}, None) is None
-    for bad, provider in (({"temperature": 3}, None), ({"top_k": 1}, None), ({"thinking_budget": 0}, "openai"), ({"max_tokens": 1.5}, None)):
+    for bad, provider in (
+        ({"temperature": 3}, None),
+        ({"top_k": 1}, None),
+        ({"thinking_budget": 0}, "openai"),
+        ({"max_tokens": 1.5}, None),
+    ):
         with pytest.raises(ModelParamsError):
             validate_model_params(bad, provider)
 
@@ -228,7 +244,11 @@ def test_metadata_and_session_tie_the_decision_to_the_conversation(monkeypatch, 
     fake_agent(monkeypatch, lambda doc: {"acao": "responder"})
     conversa = f"conv-{uuid4().hex[:6]}"
     for _ in range(2):
-        asyncio.run(analyze(AnalyzeRequest(agent_type=r8, document="oi", session_id=conversa, metadata={"lead_id": 42, "vip": True})))
+        asyncio.run(
+            analyze(
+                AnalyzeRequest(agent_type=r8, document="oi", session_id=conversa, metadata={"lead_id": 42, "vip": True})
+            )
+        )
 
     runs = list_runs(agent_type=r8, meta=["lead_id=42", "vip=true"]).items
     assert len(runs) == 2 and runs[0].metadata == {"lead_id": "42", "vip": "true"}
@@ -247,7 +267,9 @@ def test_metadata_is_bounded():
 
 
 def test_shadow_reference_agreement_and_export(monkeypatch, r8):
-    fake_agent(monkeypatch, lambda doc: {"acao": "transferir" if "acordo" in doc else "responder", "departamento": None})
+    fake_agent(
+        monkeypatch, lambda doc: {"acao": "transferir" if "acordo" in doc else "responder", "departamento": None}
+    )
     legacy = {
         "quero um acordo": {"acao": "transferir", "departamento": None},
         "esqueci a senha": {"acao": "responder", "departamento": None},
@@ -319,10 +341,29 @@ def test_dry_run_validates_without_writing(r8):
 @pytest.fixture
 def api(monkeypatch, tmp_path):
     monkeypatch.setenv("KURO_HOME", str(tmp_path))
-    agents = {"r8": {"agent_type": "r8", "name": "R8", "instructions": ["Decida."], "tools": [], "kind": "analysis",
-                     "response_schema": SCHEMA, "is_seed": False, "prompt_version": 1, "model_params": None},
-              "seed": {"agent_type": "seed", "name": "S", "instructions": ["x"], "tools": [], "kind": "conversational",
-                       "response_schema": [], "is_seed": True, "prompt_version": 1}}
+    agents = {
+        "r8": {
+            "agent_type": "r8",
+            "name": "R8",
+            "instructions": ["Decida."],
+            "tools": [],
+            "kind": "analysis",
+            "response_schema": SCHEMA,
+            "is_seed": False,
+            "prompt_version": 1,
+            "model_params": None,
+        },
+        "seed": {
+            "agent_type": "seed",
+            "name": "S",
+            "instructions": ["x"],
+            "tools": [],
+            "kind": "conversational",
+            "response_schema": [],
+            "is_seed": True,
+            "prompt_version": 1,
+        },
+    }
     calls: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -337,7 +378,11 @@ def api(monkeypatch, tmp_path):
         return httpx.Response(404, json={"detail": "?"})
 
     transport = httpx.MockTransport(handler)
-    monkeypatch.setattr(cli_main, "Client", lambda url, timeout, api_key=None, **kw: Client(url, timeout, transport=transport, api_key=api_key, **kw))
+    monkeypatch.setattr(
+        cli_main,
+        "Client",
+        lambda url, timeout, api_key=None, **kw: Client(url, timeout, transport=transport, api_key=api_key, **kw),
+    )
     return calls
 
 
@@ -359,7 +404,11 @@ def test_export_then_apply_directory_is_a_noop_and_dry_run_sends_the_flag(api, t
     plan = runner.invoke(cli_main.app, ["--json", "agents", "apply", "-f", str(out), "--dry-run"])
 
     report = json.loads(plan.stdout)
-    assert [(i["agent_type"], i["action"], i["changed"]) for i in report["items"]][0] == ("r8", "update", ["instructions"])
+    assert [(i["agent_type"], i["action"], i["changed"]) for i in report["items"]][0] == (
+        "r8",
+        "update",
+        ["instructions"],
+    )
     assert report["items"][1]["action"] == "create"
     writes = [c for c in api if c.method in ("PUT", "POST")]
     assert writes and all(c.url.params.get("dry_run") == "true" for c in writes)

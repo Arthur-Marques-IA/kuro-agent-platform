@@ -43,6 +43,7 @@ from agent_service.agents.store import (
 )
 from agent_service.documents.collections import collection_exists
 from agent_service.models.params import ModelParamsError, validate_model_params
+from agent_service.observability.checks import CheckSpecError, validate_checks
 from agent_service.tools.api_tool import required_dependencies
 from agent_service.tools.registry import ToolBuildError, UnknownToolError, tool_exists
 from agent_service.tools.store import get_tool
@@ -125,6 +126,25 @@ for _model in (ResponseItemIn, ResponseFieldIn, ResponseItemOut, ResponseFieldOu
     _model.model_rebuild()
 
 
+class CheckWhenIn(BaseModel):
+    field: str
+    op: str
+    value: Any = None
+
+
+class CheckIn(BaseModel):
+    """Checagem determinística avaliada em toda execução real do agente
+    (`observability/checks.py`, `docs/observabilidade.md`). Campo e operador são
+    conferidos em `_normalize_checks`, que explica o que está errado em português."""
+
+    name: str
+    field: str = Field(description="Um fato do run: output, output_chars, tools.<nome>.called, result.<campo>...")
+    op: str = Field(description="eq ne in not_in lt lte gt gte exists not_exists contains matches")
+    value: Any = None
+    when: CheckWhenIn | None = Field(default=None, description="Só avalia quando esta condição vale para o run.")
+    severity: str = Field(default="fail", description="`warn` ou `fail`; não muda o status do run.")
+
+
 class AgentDefinitionIn(BaseModel):
     agent_type: str = Field(..., description="Slug estável, usado como agent_id no /chat")
     name: str
@@ -146,6 +166,13 @@ class AgentDefinitionIn(BaseModel):
     plain_text: bool = False
     """Responde em texto puro (sem markdown) — canais como WhatsApp."""
     num_history_runs: int = 10
+    history_tool_calls: int | None = Field(
+        default=None,
+        ge=0,
+        le=1000,
+        description="Quantas chamadas de tool dos turnos anteriores voltam ao modelo com o histórico (as mais "
+        "recentes); vazio = todas. 0 = o histórico traz só a conversa.",
+    )
     kind: AgentKind = "conversational"
     response_schema: list[ResponseFieldIn] = Field(
         default=[],
@@ -164,6 +191,11 @@ class AgentDefinitionIn(BaseModel):
     )
     timeout_seconds: int | None = Field(
         default=None, ge=1, le=600, description="Tempo limite de uma execução; vazio = RUN_TIMEOUT_SECONDS."
+    )
+    checks: list[CheckIn] = Field(
+        default=[],
+        description="Checagens determinísticas (sem modelo) avaliadas em toda execução real; o resultado "
+        "fica no run e filtra a fila de revisão. Campos e exemplos: docs/observabilidade.md.",
     )
 
     @field_validator("agent_type")
@@ -193,6 +225,8 @@ class AgentDefinitionUpdate(BaseModel):
     session_summary: bool | None = None
     plain_text: bool | None = None
     num_history_runs: int | None = None
+    history_tool_calls: int | None = Field(default=None, ge=0, le=1000)
+    """`null` volta a trazer todas as chamadas de tool do histórico."""
     kind: AgentKind | None = None
     response_schema: list[ResponseFieldIn] | None = None
     stages: list[dict[str, Any]] | None = None
@@ -200,6 +234,8 @@ class AgentDefinitionUpdate(BaseModel):
     """`{}` ou `null` volta ao padrão do provedor."""
     timeout_seconds: int | None = Field(default=None, ge=1, le=600)
     """`null` volta ao RUN_TIMEOUT_SECONDS do serviço."""
+    checks: list[CheckIn] | None = None
+    """`[]` tira todas as checagens; omitir não mexe."""
 
     @field_validator("dependency_fields")
     @classmethod
@@ -223,11 +259,13 @@ class AgentDefinitionOut(BaseModel):
     session_summary: bool = False
     plain_text: bool = False
     num_history_runs: int
+    history_tool_calls: int | None = None
     kind: AgentKind
     response_schema: list[ResponseFieldOut]
     stages: list[dict[str, Any]] = []
     model_params: dict[str, Any] | None = None
     timeout_seconds: int | None = None
+    checks: list[CheckIn] = []
     is_seed: bool
     prompt_version: int
     created_at: datetime
@@ -286,6 +324,13 @@ def _normalize_model_params(params: dict[str, Any] | None, provider: str | None)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def _normalize_checks(checks: list[CheckIn] | None) -> list[dict[str, Any]]:
+    try:
+        return validate_checks([c.model_dump(exclude_unset=True) for c in checks or []])
+    except CheckSpecError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def _normalize_response_schema(fields: list[ResponseFieldIn]) -> list[dict[str, Any]]:
     """Valida aqui, e não num `field_validator`: as regras dos tipos compostos
     (`fields` obrigatório em object, `items` em array, profundidade) rendem
@@ -310,6 +355,7 @@ _INERTES_EM_ANALYSIS = {
     "num_history_runs": "analysis é one-shot: não há histórico para reaproveitar",
     "memory_backend": "analysis não usa memória de longo prazo (nem a do Agno, nem o mem0)",
     "session_summary": "analysis não tem sessão para resumir",
+    "history_tool_calls": "analysis é one-shot: não há histórico de tools para limitar",
 }
 
 
@@ -319,7 +365,9 @@ _PADROES_ANTIGOS = {("memory_backend", "common")}
 → `apply`) não configurou nada."""
 
 
-def _validate_kind(kind: str, response_schema: list[dict[str, Any]], stages: list[dict[str, Any]] | None = None) -> None:
+def _validate_kind(
+    kind: str, response_schema: list[dict[str, Any]], stages: list[dict[str, Any]] | None = None
+) -> None:
     if kind == "analysis" and not response_schema:
         raise HTTPException(status_code=422, detail="kind='analysis' precisa de response_schema (ao menos 1 campo)")
     if kind != "analysis" and response_schema:
@@ -341,9 +389,7 @@ def _normalize_stages(stages: list[dict[str, Any]] | None) -> list[dict[str, Any
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def _validate_procedure_tools(
-    stages: list[dict[str, Any]], tools: list[str], declared_dependencies: set[str]
-) -> None:
+def _validate_procedure_tools(stages: list[dict[str, Any]], tools: list[str], declared_dependencies: set[str]) -> None:
     """O que só dá para conferir com as tools em mãos.
 
     - Cada etapa `action` aponta para uma tool que existe, está ativa e recebe o
@@ -368,10 +414,13 @@ def _validate_procedure_tools(
         if row is None:
             raise HTTPException(status_code=422, detail=f"Etapa {stage['id']!r}: tool desconhecida {stage['tool']!r}")
         if not row["enabled"]:
-            raise HTTPException(status_code=422, detail=f"Etapa {stage['id']!r}: a tool {stage['tool']!r} está desativada")
+            raise HTTPException(
+                status_code=422, detail=f"Etapa {stage['id']!r}: a tool {stage['tool']!r} está desativada"
+            )
         if row["kind"] == "builtin" and not stage.get("function"):
             raise HTTPException(
-                status_code=422, detail=f"Etapa {stage['id']!r}: tool builtin precisa de `function` (a função da toolkit)"
+                status_code=422,
+                detail=f"Etapa {stage['id']!r}: tool builtin precisa de `function` (a função da toolkit)",
             )
         if row["kind"] != "api":
             continue
@@ -482,6 +531,7 @@ def create_agent(body: AgentDefinitionIn, dry_run: bool = False) -> dict[str, An
     _validate_collection(body.knowledge_collection)
     _validate_inert_fields(body.kind, body)
     payload["model_params"] = _normalize_model_params(body.model_params, body.model_provider)
+    payload["checks"] = _normalize_checks(body.checks)
     if dry_run:
         now = datetime.now(timezone.utc)
         return {**payload, "is_seed": False, "prompt_version": 1, "created_at": now, "updated_at": now}
@@ -542,6 +592,8 @@ def update_agent(agent_type: str, body: AgentDefinitionUpdate, dry_run: bool = F
             {f["name"] for f in payload.get("dependency_fields", current["dependency_fields"] or [])},
         )
     _validate_inert_fields(payload.get("kind", current["kind"]), body)
+    if body.checks is not None:
+        payload["checks"] = _normalize_checks(body.checks)
     if "model_params" in payload or "model_provider" in payload:
         # Revalida contra o provedor final: thinking_budget só vale no google.
         payload["model_params"] = _normalize_model_params(
@@ -609,11 +661,13 @@ _PROMOTED_FIELDS = (
     "session_summary",
     "plain_text",
     "num_history_runs",
+    "history_tool_calls",
     "kind",
     "response_schema",
     "stages",
     "model_params",
     "timeout_seconds",
+    "checks",
 )
 
 
@@ -739,9 +793,7 @@ def _transcript(agent_type: str, session_id: str, run_id: str | None = None) -> 
     if run_id is not None:
         position = next((i for i, t in enumerate(turns) if t["run_id"] == run_id), None)
         if position is None:
-            raise HTTPException(
-                status_code=422, detail=f"O run {run_id!r} não é desta sessão com {agent_type!r}."
-            )
+            raise HTTPException(status_code=422, detail=f"O run {run_id!r} não é desta sessão com {agent_type!r}.")
         turns = turns[: position + 1]
     turns = turns[-_TRANSCRIPT_TURNS:]
     if turns:
@@ -765,9 +817,7 @@ def _transcript(agent_type: str, session_id: str, run_id: str | None = None) -> 
         messages = []
     lines = [f"{m.role}: {m.content}" for m in messages if m.content]
     if not lines:
-        raise HTTPException(
-            status_code=422, detail=f"Sessão {session_id!r} não tem histórico para {agent_type!r}."
-        )
+        raise HTTPException(status_code=422, detail=f"Sessão {session_id!r} não tem histórico para {agent_type!r}.")
     return "\n".join(lines)
 
 
@@ -800,15 +850,9 @@ def replace_feedback(agent_type: str, body: FeedbackRulesIn) -> dict[str, Any]:
     """Substitui as regras à mão, sem passar pelo modelo — é a saída quando um
     merge sai errado, e o que a UI usa para editar ou apagar uma regra só."""
     _feedback_target(agent_type)
-    regras = [
-        {"id": r.id or uuid.uuid4().hex[:8], "texto": r.texto.strip()}
-        for r in body.rules
-        if r.texto.strip()
-    ]
+    regras = [{"id": r.id or uuid.uuid4().hex[:8], "texto": r.texto.strip()} for r in body.rules if r.texto.strip()]
     if not regras:
-        raise HTTPException(
-            status_code=422, detail="Sem regras. Para zerar a nota use DELETE /agents/{tipo}/feedback."
-        )
+        raise HTTPException(status_code=422, detail="Sem regras. Para zerar a nota use DELETE /agents/{tipo}/feedback.")
     return save_feedback_note(agent_type, regras, origin="manual")
 
 
@@ -888,7 +932,12 @@ def get_procedure_funnel(agent_type: str, include_dry_run: bool = False) -> dict
     rows = procedure_funnel(agent_type, include_dry_run=include_dry_run)
     by_stage = {(r["stage"], r["status"]): r["sessions"] for r in rows}
     stages = [
-        {"id": stage["id"], "type": stage["type"], "goal": stage["goal"], "sessions": by_stage.get((stage["id"], "active"), 0)}
+        {
+            "id": stage["id"],
+            "type": stage["type"],
+            "goal": stage["goal"],
+            "sessions": by_stage.get((stage["id"], "active"), 0),
+        }
         for stage in definition.get("stages") or []
     ]
     known = {s["id"] for s in stages}

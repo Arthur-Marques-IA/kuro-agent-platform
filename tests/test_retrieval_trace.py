@@ -49,10 +49,12 @@ def trecho(texto: str, *, chunk: int, score: float, **meta) -> Document:
 
 
 def test_retriever_devolve_ao_modelo_o_formato_de_sempre_e_guarda_o_rastro():
-    base = BaseFalsa([
-        trecho("A garantia é de 12 meses.", chunk=3, score=0.91, source_url="https://ex.com/garantia"),
-        trecho("Troca em até 7 dias.", chunk=4, score=0.72),
-    ])
+    base = BaseFalsa(
+        [
+            trecho("A garantia é de 12 meses.", chunk=3, score=0.91, source_url="https://ex.com/garantia"),
+            trecho("Troca em até 7 dias.", chunk=4, score=0.72),
+        ]
+    )
     retriever = retrieval.make_retriever("manuais", base)
 
     class Ctx:
@@ -118,8 +120,15 @@ class AgenteQueBusca:
 def test_span_da_busca_traz_os_trechos_consultados():
     base = BaseFalsa([trecho("A garantia é de 12 meses.", chunk=3, score=0.91)])
     agent = AgenteQueBusca(retrieval.make_retriever("manuais", base), ["garantia", "garantia"])
-    run = RunContext(endpoint="chat", agent_type=f"agente-{uuid4().hex[:8]}", agent_name="t", prompt_version=1,
-                     user_id="u", session_id="s", message="qual a garantia?")
+    run = RunContext(
+        endpoint="chat",
+        agent_type=f"agente-{uuid4().hex[:8]}",
+        agent_name="t",
+        prompt_version=1,
+        user_id="u",
+        session_id="s",
+        message="qual a garantia?",
+    )
 
     async def consumir():
         async with aclosing(tracing.traced_run_events(agent, run)) as eventos:

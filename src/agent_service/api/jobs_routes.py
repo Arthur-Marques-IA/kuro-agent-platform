@@ -54,8 +54,10 @@ def list_jobs(
 ) -> dict[str, Any]:
     if status is not None and status not in store.STATUSES:
         raise HTTPException(status_code=422, detail=f"status inválido; use um de {', '.join(store.STATUSES)}")
-    return {"data": store.list_jobs(status=status, kind=kind, dedupe_key=dedupe_key, limit=limit),
-            "counts": store.counts()}
+    return {
+        "data": store.list_jobs(status=status, kind=kind, dedupe_key=dedupe_key, limit=limit),
+        "counts": store.counts(),
+    }
 
 
 @router.get("/{job_id}", response_model=JobOut)

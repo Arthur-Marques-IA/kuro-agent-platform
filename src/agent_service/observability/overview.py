@@ -30,7 +30,15 @@ from pydantic import BaseModel
 from sqlalchemy import and_, case, exists, func, not_, select
 
 from agent_service.db import get_db
-from agent_service.observability.run_store import FEEDBACK, run_metadata, run_scores, run_spans, runs
+from agent_service.observability.run_store import (
+    CHECK_PREFIX,
+    CHECK_SOURCE,
+    FEEDBACK,
+    run_metadata,
+    run_scores,
+    run_spans,
+    runs,
+)
 
 Granularity = Literal["hour", "day", "week"]
 DEFAULT_TIMEZONE = "America/Sao_Paulo"
@@ -47,6 +55,17 @@ class OverviewTotals(BaseModel):
     tool_failures: int = 0
     sessions: int = 0
     total_tokens: int = 0
+    input_tokens: int = 0
+    cache_read_tokens: int = 0
+    """Tokens do prompt lidos do cache (runs novos; os anteriores à 0019 contam 0)."""
+    cache_fraction: float | None = None
+    """`cache_read_tokens / input_tokens` dos runs do recorte, 0–1; `None` sem tokens de entrada.
+    No Claude `input_tokens` não inclui o cache, então a fração sai um pouco otimista."""
+    avg_prompt_chars: float | None = None
+    """Média do tamanho do prompt da primeira chamada, em caracteres, dos runs que foram medidos
+    (`runs.prompt_chars`); `None` se nenhum foi."""
+    avg_history_fraction: float | None = None
+    """Que fração desse prompt é histórico (conversa e tools antigas), 0–1, nos runs medidos."""
     cost_usd: float | None = None
     """Custo dos runs e, no panorama geral (sem `agent_type`), também o da coleta de sites."""
     ingestion_cost_usd: float | None = None
@@ -88,6 +107,19 @@ class VersionRow(BaseModel):
     last_seen: datetime
 
 
+class CheckRateRow(BaseModel):
+    """Uma checagem automática do agente no período (`observability/checks.py`)."""
+
+    name: str
+    evaluated: int
+    """Runs em que a checagem foi avaliada (o `when` valeu e a avaliação não deu erro)."""
+    failed: int
+    failure_rate: float
+    """`failed / evaluated`."""
+    errors: int = 0
+    """Avaliações que levantaram erro (padrão ou campo inválido): defeito da checagem, não do run."""
+
+
 class AgentRow(BaseModel):
     agent_type: str
     agent_name: str | None = None
@@ -98,6 +130,8 @@ class AgentRow(BaseModel):
     """Execuções por balde, alinhado com `Overview.buckets`."""
     versions: list[VersionRow]
     """As versões da configuração que rodaram no período, da mais nova para a mais antiga."""
+    checks: list[CheckRateRow] = []
+    """Taxa de reprovação de cada checagem do agente no período, a pior primeiro. Vazio sem checagens."""
 
 
 class ToolFailureRow(BaseModel):
@@ -212,10 +246,17 @@ def _totals(conn: Any, conditions: list[Any]) -> OverviewTotals:
             func.coalesce(func.sum(runs.c.tool_failures), 0).label("tool_failures"),
             func.count(func.distinct(runs.c.session_id)).label("sessions"),
             func.coalesce(func.sum(runs.c.total_tokens), 0).label("tokens"),
+            func.coalesce(func.sum(runs.c.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(runs.c.cache_read_tokens), 0).label("cache_read_tokens"),
+            func.avg(runs.c.prompt_chars).label("avg_prompt_chars"),
+            func.sum(runs.c.prompt_chars).label("sum_prompt_chars"),
+            func.sum(runs.c.history_chars).label("sum_history_chars"),
             func.sum(runs.c.cost_usd).label("cost"),
         ).where(*conditions)
     ).one()
-    latencies = [v for (v,) in conn.execute(select(runs.c.latency_ms).where(*conditions, runs.c.latency_ms.is_not(None)))]
+    latencies = [
+        v for (v,) in conn.execute(select(runs.c.latency_ms).where(*conditions, runs.c.latency_ms.is_not(None)))
+    ]
     up, down = _feedback(conn, conditions)
     return OverviewTotals(
         runs=row.runs,
@@ -227,6 +268,13 @@ def _totals(conn: Any, conditions: list[Any]) -> OverviewTotals:
         tool_failures=row.tool_failures,
         sessions=row.sessions,
         total_tokens=row.tokens,
+        input_tokens=row.input_tokens,
+        cache_read_tokens=row.cache_read_tokens,
+        cache_fraction=row.cache_read_tokens / row.input_tokens if row.input_tokens else None,
+        avg_prompt_chars=round(float(row.avg_prompt_chars), 1) if row.avg_prompt_chars is not None else None,
+        avg_history_fraction=(
+            float(row.sum_history_chars or 0) / float(row.sum_prompt_chars) if row.sum_prompt_chars else None
+        ),
         cost_usd=row.cost,
         p50_latency_ms=_percentile(latencies, 0.5),
         p95_latency_ms=_percentile(latencies, 0.95),
@@ -288,7 +336,9 @@ def build_overview(
     with engine.connect() as conn:
         if since is None:
             first = conn.execute(
-                select(func.min(runs.c.started_at)).where(*_conditions(datetime.min.replace(tzinfo=timezone.utc), until, agents, include_dry_run))
+                select(func.min(runs.c.started_at)).where(
+                    *_conditions(datetime.min.replace(tzinfo=timezone.utc), until, agents, include_dry_run)
+                )
             ).scalar_one()
             since = _as_utc(first) if first else until - timedelta(days=7)
         since = _as_utc(since)
@@ -340,7 +390,9 @@ def build_overview(
                 bucket.success += row.runs - (row.errors or 0) - (row.tfr or 0)
                 bucket.cost_usd += float(row.cost or 0)
                 bucket.total_tokens += int(row.tokens or 0)
-            agent = per_agent.setdefault(row.agent_type, {"name": row.agent_name, "trend": [0] * len(starts), "last": None})
+            agent = per_agent.setdefault(
+                row.agent_type, {"name": row.agent_name, "trend": [0] * len(starts), "last": None}
+            )
             if position is not None:
                 agent["trend"][position] += row.runs
             agent["name"] = agent["name"] or row.agent_name
@@ -380,6 +432,7 @@ def build_overview(
             bucket.ingestion_cost_usd = round(bucket.ingestion_cost_usd, 6)
 
         version_votes = _feedback(conn, conditions, group=[runs.c.agent_type, runs.c.agent_version])
+        check_rates = _check_rates(conn, conditions)
 
         agents: list[AgentRow] = []
         for agent_type_key, agent in per_agent.items():
@@ -415,6 +468,7 @@ def build_overview(
                     last_run_at=agent["last"],
                     trend=agent["trend"],
                     versions=versions,
+                    checks=check_rates.get(agent_type_key, []),
                 )
             )
         agents.sort(key=lambda a: a.totals.runs, reverse=True)
@@ -433,6 +487,35 @@ def build_overview(
         agents=agents,
         tool_failures=tool_failures,
     )
+
+
+def _check_rates(conn: Any, conditions: list[Any]) -> dict[str, list[CheckRateRow]]:
+    """Reprovação por checagem e por agente: uma linha por (agente, checagem, resultado)."""
+    counts: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: {"passed": 0, "failed": 0, "error": 0})
+    for agent_type, name, value, total in conn.execute(
+        select(runs.c.agent_type, run_scores.c.name, run_scores.c.value, func.count())
+        .select_from(run_scores.join(runs, runs.c.run_id == run_scores.c.run_id))
+        .where(run_scores.c.source == CHECK_SOURCE, *conditions)
+        .group_by(runs.c.agent_type, run_scores.c.name, run_scores.c.value)
+    ):
+        counts[(agent_type, name[len(CHECK_PREFIX) :])][
+            "passed" if value > 0 else "failed" if value == 0 else "error"
+        ] += total
+    rates: dict[str, list[CheckRateRow]] = defaultdict(list)
+    for (agent_type, name), c in counts.items():
+        evaluated = c["passed"] + c["failed"]
+        rates[agent_type].append(
+            CheckRateRow(
+                name=name,
+                evaluated=evaluated,
+                failed=c["failed"],
+                failure_rate=round(c["failed"] / evaluated, 4) if evaluated else 0.0,
+                errors=c["error"],
+            )
+        )
+    for rows in rates.values():
+        rows.sort(key=lambda r: (r.failure_rate, r.failed), reverse=True)
+    return rates
 
 
 def _tool_failures(conn: Any, conditions: list[Any]) -> list[ToolFailureRow]:
@@ -464,4 +547,3 @@ def _tool_failures(conn: Any, conditions: list[Any]) -> list[ToolFailureRow]:
         for (name, failure), e in grouped.items()
     ]
     return sorted(rows, key=lambda r: (r.count, r.last_at), reverse=True)
-

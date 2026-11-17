@@ -1,9 +1,11 @@
 "use client";
 
 import { FormEvent, useEffect, useId, useState } from "react";
-import { History, Pencil, SlidersHorizontal } from "lucide-react";
+import { History, Pencil, SlidersHorizontal, TriangleAlert } from "lucide-react";
+import { announce } from "@/lib/announce";
+import { collectionSearch, LANGUAGE_OPTIONS } from "@/lib/collection-search";
 import { errorMessage, requestJson } from "@/lib/http";
-import type { Collection, CollectionVersion, SearchMode } from "@/lib/types";
+import type { Collection, CollectionSearchConfig, CollectionVersion, SearchMode } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,7 +20,28 @@ import { SCORE_KIND_LABEL } from "@/components/knowledge/chunk-list";
 export function SearchSettings({ collection, onSaved }: { collection: Collection; onSaved: () => void }) {
   const [editing, setEditing] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
-  const { search } = collection;
+  const search = collectionSearch(collection);
+
+  if (!search) {
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2">
+            <SlidersHorizontal className="size-4 text-muted-foreground" /> Como a busca funciona
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="flex gap-2 text-[13px] text-muted-foreground" role="status">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+            <span>
+              O serviço não informou a configuração de busca desta coleção: ele parece ser mais antigo que o
+              console. Atualize as duas imagens juntas (versões no rodapé da barra lateral).
+            </span>
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -38,6 +61,7 @@ export function SearchSettings({ collection, onSaved }: { collection: Collection
           <SearchForm
             key={collection.config_hash ?? collection.name}
             collection={collection}
+            search={search}
             onDone={(saved) => {
               setEditing(false);
               if (saved) onSaved();
@@ -55,10 +79,27 @@ export function SearchSettings({ collection, onSaved }: { collection: Collection
               <dt className="text-muted-foreground">Trechos (k)</dt>
               <dd className="tabular-nums">{search.max_results}</dd>
               <dt className="text-muted-foreground">Idioma</dt>
-              <dd className="font-mono text-[12px]">{search.language}</dd>
+              <dd className="font-mono text-[12px]">
+                {search.language}
+                {search.language_legacy && (
+                  <Badge variant="outline" className="ml-2 font-sans" title="Nunca foi escolhido: veio de antes da coluna">
+                    legado
+                  </Badge>
+                )}
+              </dd>
               <dt className="text-muted-foreground">Score</dt>
               <dd title={SCORE_KIND_LABEL[search.score_kind].long}>{SCORE_KIND_LABEL[search.score_kind].short}</dd>
             </dl>
+            {search.language_legacy && (
+              <p className="flex gap-2 text-[13px] text-muted-foreground" role="status">
+                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+                <span>
+                  {collection.warnings?.[0] ??
+                    "O idioma desta coleção é o inglês de antes da coluna existir: no modo híbrido o full-text usaria o dicionário errado para texto em português."}{" "}
+                  Troque em Editar; não precisa reindexar.
+                </span>
+              </p>
+            )}
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
                 <Pencil /> Editar
@@ -75,11 +116,19 @@ export function SearchSettings({ collection, onSaved }: { collection: Collection
   );
 }
 
-function SearchForm({ collection, onDone }: { collection: Collection; onDone: (saved: boolean) => void }) {
+function SearchForm({
+  collection,
+  search,
+  onDone,
+}: {
+  collection: Collection;
+  search: CollectionSearchConfig;
+  onDone: (saved: boolean) => void;
+}) {
   const id = useId();
   const toast = useToast();
-  const { search } = collection;
   const [mode, setMode] = useState<SearchMode>(search.search_mode);
+  const [language, setLanguage] = useState(search.language);
   const [k, setK] = useState(String(search.max_results));
   const [weight, setWeight] = useState(String(search.vector_weight));
   const [saving, setSaving] = useState(false);
@@ -101,6 +150,8 @@ function SearchForm({ collection, onDone }: { collection: Collection; onDone: (s
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           search_mode: mode,
+          // Só quando mudou: mandar o legado "english" de volta o gravaria como escolha.
+          ...(language !== search.language ? { language } : {}),
           max_results: kNumber,
           ...(mode === "hybrid" ? { vector_weight: weightNumber } : {}),
         }),
@@ -113,6 +164,7 @@ function SearchForm({ collection, onDone }: { collection: Collection; onDone: (s
       onDone(true);
     } catch (err) {
       setError(errorMessage(err));
+      announce(`Não foi possível salvar a busca: ${errorMessage(err)}`, { assertive: true });
     } finally {
       setSaving(false);
     }
@@ -144,9 +196,20 @@ function SearchForm({ collection, onDone }: { collection: Collection; onDone: (s
           </Field>
         )}
       </div>
-      <p className="text-[12px] text-muted-foreground">
-        Idioma <span className="font-mono">{search.language}</span> e embedder são fixos: para trocar, crie outra coleção.
-      </p>
+      <Field
+        label="Idioma do texto"
+        htmlFor={`${id}-language`}
+        hint="Dicionário do full-text: muda quais trechos casam no modo híbrido, sem reindexar."
+      >
+        <Select id={`${id}-language`} value={language} onChange={(e) => setLanguage(e.target.value)}>
+          {[...LANGUAGE_OPTIONS, ...(LANGUAGE_OPTIONS.some((o) => o.value === search.language) ? [] : [{ value: search.language, label: search.language }])].map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <p className="text-[12px] text-muted-foreground">O embedder é fixo: para trocar, crie outra coleção.</p>
       {error && <p className="text-sm text-destructive">{error}</p>}
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={saving || Boolean(kError) || (mode === "hybrid" && Boolean(weightError))}>

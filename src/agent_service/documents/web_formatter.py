@@ -95,7 +95,7 @@ def fidelity(original: str, formatted: str) -> str | None:
         kept = sum(1 for g in out_grams if g in src_grams) / len(out_grams)
         if kept < MIN_ORDER:
             sample = next(" ".join(g) for g in out_grams if g not in src_grams)
-            return f"o formatador mudou a redação (ex.: \"{sample}\" não está na página)"
+            return f'o formatador mudou a redação (ex.: "{sample}" não está na página)'
     return None
 
 
@@ -148,7 +148,10 @@ async def format_page(markdown: str, *, title: str, url: str, model: Any | None)
     try:
         for part in segments(markdown):
             response = await agent.arun(f"Página: {title}\nURL: {url}\n\n<pagina>\n{part}\n</pagina>")
-            if getattr(response, "status", None) is not None and str(getattr(response.status, "value", response.status)) == "ERROR":
+            if (
+                getattr(response, "status", None) is not None
+                and str(getattr(response.status, "value", response.status)) == "ERROR"
+            ):
                 raise RuntimeError(str(response.content or "erro do modelo"))
             metrics = getattr(response, "metrics", None)
             input_tokens += getattr(metrics, "input_tokens", 0) or 0

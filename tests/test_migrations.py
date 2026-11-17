@@ -50,19 +50,37 @@ def test_database_from_before_alembic_gets_missing_columns_and_keeps_data(tmp_pa
             )
         )
         conn.execute(
-            sa.text("CREATE TABLE agent_feedback_notes (agent_type VARCHAR PRIMARY KEY, content TEXT NOT NULL, updated_at TIMESTAMP)")
+            sa.text(
+                "CREATE TABLE agent_feedback_notes (agent_type VARCHAR PRIMARY KEY, content TEXT NOT NULL, updated_at TIMESTAMP)"
+            )
         )
         conn.execute(
-            sa.text("INSERT INTO agent_feedback_notes VALUES ('antigo', '- confirme o CPF\n- seja breve', CURRENT_TIMESTAMP)")
+            sa.text(
+                "INSERT INTO agent_feedback_notes VALUES ('antigo', '- confirme o CPF\n- seja breve', CURRENT_TIMESTAMP)"
+            )
         )
 
     upgrade_database(engine)
 
-    assert {"kind", "response_schema", "model_credential_id", "knowledge_collection"} <= _columns(engine, "agent_definitions")
+    assert {"kind", "response_schema", "model_credential_id", "knowledge_collection"} <= _columns(
+        engine, "agent_definitions"
+    )
     with engine.connect() as conn:
-        row = conn.execute(sa.text("SELECT kind, prompt_version FROM agent_definitions WHERE agent_type = 'antigo'")).one()
+        row = conn.execute(
+            sa.text("SELECT kind, prompt_version FROM agent_definitions WHERE agent_type = 'antigo'")
+        ).one()
         assert tuple(row) == ("conversational", 3)
         # A nota em markdown virou regras, com a v1 no histórico.
-        versions = conn.execute(sa.text("SELECT version FROM agent_feedback_versions WHERE agent_type = 'antigo'")).all()
+        versions = conn.execute(
+            sa.text("SELECT version FROM agent_feedback_versions WHERE agent_type = 'antigo'")
+        ).all()
         assert [v[0] for v in versions] == [1]
     assert _head(engine) == HEAD
+
+
+def test_uma_cabeca_so():
+    """Duas branches criando a revisão seguinte ao mesmo tempo dão duas cabeças, e o
+    `upgrade head` do startup para. O teste das migrações em Postgres (`test_postgres.py`)
+    vai e volta por elas; este roda sempre."""
+    heads = ScriptDirectory.from_config(_config()).get_heads()
+    assert len(heads) == 1, f"mais de uma cabeça nas migrações: {heads}"

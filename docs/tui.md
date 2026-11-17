@@ -67,7 +67,9 @@ recentes, atualizadas sozinhas. Logo acima da tabela, um resumo do que está na 
 deram certo, quantas com erro, quantas com tool falhando, a latência p95, os tokens e o custo.
 Cada linha mostra o status (● ok, ● erro, ▲ tool quando a resposta saiu mas alguma tool
 falhou), quando (no fuso do terminal), agente, versão da configuração, tokens, tempo, custo e
-o começo da mensagem. As execuções em `dry_run` levam a marca *teste*, e as que acabaram de
+o começo da fala do contato. Com [entrada estruturada](integracao.md#entrada-estruturada), a
+coluna mostra só a fala (`input_message`), não o contexto e o histórico que o sistema chamador
+mandou junto; num run antigo, sem entrada estruturada, mostra o começo da mensagem inteira. As execuções em `dry_run` levam a marca *teste*, e as que acabaram de
 chegar, um ▸. Os filtros no topo:
 
 - **agente**: digite o `agent_type` e tecle Enter;
@@ -77,9 +79,33 @@ chegar, um ▸. Os filtros no topo:
 Sem nenhuma execução para mostrar, a aba diz por quê: filtro sem resultado, serviço sem
 execuções ainda ou o erro da consulta.
 
-Enter numa linha abre o **trace**: o resumo da execução, a mensagem e a resposta lado a lado,
-a árvore de spans (◆ chamadas ao modelo, ■ tools, com uma barra proporcional à duração e a
-entrada e a saída de cada uma) e as notas. Um span com erro já abre expandido. Esc volta.
+Enter numa linha abre o **trace**: o resumo da execução, a fala (ou a mensagem, num run antigo)
+e a resposta lado a lado, a árvore de spans (◆ chamadas ao modelo, ■ tools, com uma barra
+proporcional à duração e a prévia da entrada e da saída de cada uma) e as notas. Um span com
+erro já abre expandido. Esc volta.
+
+![Trace de uma execução: a fala, a resposta e a árvore de spans](telas/tui-trace.png)
+
+A caixa da mensagem tem altura máxima e rola sozinha (`tab` chega a ela): uma entrada de
+milhares de caracteres não empurra os spans para fora da tela. No trace:
+
+- **Enter num span** alterna entre a prévia (os primeiros 600 caracteres) e o conteúdo completo
+  da entrada e da saída, linha a linha, dentro da árvore. Espaço abre e fecha o span.
+- **`c`** abre o **contexto**: os blocos que o sistema chamador mandou em `context`, cada um com o
+  título, a chave, o começo do hash, a marca *volátil* (borda amarela) e o conteúdo inteiro. Num
+  run sem entrada estruturada, a tela diz que não há contexto estruturado (a entrada inteira está
+  na caixa da mensagem); num run estruturado sem `context`, diz isso.
+- **`s`** abre a **sessão** do run: a mesma linha do tempo de `kuro sessions show`, um turno por
+  bloco, com a conversa (atendente, enviado em seu nome, sistema), a fala, os blocos de contexto
+  que mudaram, uma linha por tool (✓ ou ✗, os argumentos e o resultado ou o erro) e a resposta.
+  O turno do run aberto fica destacado. Turnos antigos, sem entrada estruturada, mostram o começo
+  da entrada. Clicar num outro turno abre o trace dele. Um run sem `session_id` só avisa.
+- **`y`** copia o `run_id` (pelo OSC 52, que a maioria dos terminais aceita). O aviso traz o id
+  de qualquer jeito, para copiar à mão no terminal que não aceita.
+
+![A sessão do run, um turno por bloco, com as tools de cada um](telas/tui-sessao.png)
+
+![O contexto do run em blocos, o volátil com a borda amarela](telas/tui-contexto.png)
 
 **Panorama** (tecla `2`) responde "como foi o período?", com os mesmos números da página
 Logs do console (`/observability/overview`):
@@ -113,10 +139,14 @@ dentro do filtro de agente as letras são texto, não atalhos.
 | `1` / `2` | Vai direto ao Ao vivo / ao Panorama |
 | `tab` / `shift+tab` | Próximo bloco de dados / anterior |
 | `↑` `↓` ou `j` `k` | Move a seleção na tabela ou na árvore |
-| Enter | Abre o trace da execução selecionada |
-| Esc | Volta do trace; dentro do filtro, volta para a tabela |
+| Enter | Abre o trace da execução selecionada; no trace, alterna o span entre a prévia e o conteúdo completo |
+| Espaço | No trace, abre e fecha o span |
+| `c` | No trace, abre o contexto em blocos |
+| `s` | No trace, abre a sessão do run |
+| `y` | No trace, no contexto e na sessão, copia o `run_id` |
+| Esc | Volta do trace (e do contexto e da sessão); dentro do filtro, volta para a tabela |
 | `/` | Filtra por agente (digite o `agent_type` e tecle Enter) |
-| `s` | Status: todos → só sucesso → só erro (Ao vivo) |
+| `s` | Status: todos → só sucesso → só erro (Ao vivo; no trace, `s` é a sessão) |
 | `t` | Esconde ou mostra os testes (`dry_run`) |
 | `d` | Período: 24 h → 7 dias → 30 dias (Panorama) |
 | `r` | Atualiza agora |
@@ -135,4 +165,12 @@ O código fica em `src/agent_service/tui/app.py`, e o corvo (sprites e humores) 
 
 ```bash
 uv run pytest tests/test_tui.py
+```
+
+As capturas de `docs/telas/` saem de `docs/telas/gerar.py`: o painel roda contra uma loja de
+demonstração (com entradas longas de propósito), o Textual exporta cada tela em SVG e um Chrome
+ou Edge sem janela converte para PNG. Mudou a cara do painel? Gere de novo:
+
+```bash
+uv run --extra tui python docs/telas/gerar.py          # ou só uma: ... gerar.py trace
 ```

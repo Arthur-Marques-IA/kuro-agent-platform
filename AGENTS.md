@@ -72,6 +72,11 @@ kuro --json chat suporte -m "fecha o acordo" --dry-run   # teste: tools recebem 
 # `dry_run: true` no /chat e no /analyze (também `--dry-run` em analyze, eval e tools invoke):
 # as tools recebem o header e `dependencies.dry_run` (sem declarar em dependency_fields);
 # o run fica com metadata.dry_run=true. Quem implementa a tool decide o que simular.
+# Entrada estruturada (pela API): `events` [{role: contact|human_agent|agent_sent|system, content, at}]
+# e `context` [{key, title, content, volatile}] no /chat em vez de tudo em `message`; o run guarda
+# input_message/input_events/input_context (`runs show`). Procedural recusa (422). docs/integracao.md.
+# `context` é estado da sessão: ausente herda o último da session_id, lista substitui, [] limpa;
+# vai uma vez no prompt de sistema, fora do histórico. `history_tool_calls` (agente) limita as tools antigas.
 
 # Anexos: imagem, áudio, vídeo ou arquivo (PDF, DOCX, CSV, TXT...) direto ao modelo
 kuro --json chat suporte -m "o que tem nessa foto?" --attach foto.png       # -a, repetível
@@ -176,6 +181,9 @@ kuro --json runs list --sort cost --no-tests    # as mais caras primeiro (latenc
 # Fila de revisão: o que vale um humano olhar (complexidade 1–3 pelas tools de negócio distintas)
 kuro --json runs list -a r8 -c 3 --no-tests      # complexidade 3, sem os testes do Playground
 kuro --json runs list -a r8 --tool-failed        # o agente respondeu, mas alguma tool falhou
+kuro --json runs list -a r8 --check-failed --no-tests   # checagens automáticas do agente (`checks`) reprovadas
+kuro --json runs list -a r8 --check "resposta curta"      # só essa checagem
+kuro --json tools audit                                   # tools sem `side_effect` e os agentes que as usam
 kuro --json runs list -a r8 --side-effect --min-chars 20   # chamou tool com efeito colateral; sem "ok"/"oi"
 kuro --json runs list -a r8 --feedback down      # com 👎
 kuro --json runs list -a r8 --sample 20 --no-tests   # amostra aleatória (pega o erro que nenhum filtro aponta)
@@ -190,8 +198,8 @@ kuro --json runs export -a r8 -o casos.jsonl    # runs com referência viram dat
 # Conversas guardadas (a transcrição em si)
 # O user_id é o mesmo do chat: `cli` por padrão, ou KURO_USER_ID.
 kuro --json sessions list --agent suporte
-kuro --json sessions show <session_id>          # transcrição: cada mensagem, a resposta e os tokens
-kuro --json sessions show <session_id> -u <user_id>   # conversa de uma integração; no 404, diz de quem ela é
+kuro --json sessions show <session_id>          # linha do tempo: por turno events, message, context (changed), steps, output, usage
+kuro --json sessions show <session_id> --all-users   # sem filtrar por user_id (conversa de uma integração); pagina com --cursor; no 404, diz de quem ela é
 kuro --json sessions rename <session_id> "Cliente X"
 kuro --json sessions delete <session_id> --yes  # apaga a conversa (não tem volta); o registro em `kuro runs` continua
 
@@ -218,7 +226,8 @@ kuro --json collections retest manuais <content_id>          # a pergunta marcad
 kuro --json collections reindex manuais --yes                # recorta tudo pela regra de trechos atual (a dos sites)
 kuro --json runs chunk-dismiss <feedback_id> -m "não procedia"
 kuro --json collections search manuais "prazo de garantia"   # o mesmo que o agente enxerga (score, documento, origem)
-# Busca: --mode vector|hybrid, --k, --vector-weight e --language (fixo) no create; o resto muda com set.
+# Busca: --mode vector|hybrid, --k, --vector-weight e --language no create; tudo muda com set, inclusive language
+# (sem reindexar; `language=portuguese` resolve o aviso de idioma legado em collections antigas).
 # Cada mudança vira versão (`collections versions`); o run grava collection_version e o trace o score_kind.
 kuro --json collections set manuais search_mode=hybrid vector_weight=0.7 max_results=8
 kuro --json collections versions manuais
@@ -304,5 +313,6 @@ arquivo. A versão no ar sai de `pyproject.toml` e aparece em `GET /health` (`ve
 Este arquivo é só a receita rápida da CLI. Conceitos em `docs/conceitos.md`, comandos em
 `docs/cli.md`, o servidor MCP em `docs/mcp.md`, o painel `kuro dash` (só para humanos, precisa
 de TTY) em `docs/tui.md`, integração em `docs/integracao.md`, configuração e segurança em
-`docs/operacao.md`, testes e estrutura do código em `docs/desenvolvimento.md`. O índice está
+`docs/operacao.md`, atualizar uma instalação em operação em `docs/migracao.md`, testes e
+estrutura do código em `docs/desenvolvimento.md`. O índice está
 no `README.md`. Links relativos entre documentos são conferidos por `tests/test_docs_links.py`.

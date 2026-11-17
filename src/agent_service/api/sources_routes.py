@@ -23,8 +23,15 @@ Refresh = Literal["never", "daily", "weekly", "monthly"]
 
 
 class SourceOptions(BaseModel):
-    max_pages: int | None = Field(default=None, ge=1, le=5000, description="Teto de páginas (padrão 50; o serviço limita em WEB_SOURCE_MAX_PAGES).")
-    max_depth: int | None = Field(default=None, ge=0, le=10, description="Saltos de link a partir da URL, no modo crawl (padrão 3).")
+    max_pages: int | None = Field(
+        default=None,
+        ge=1,
+        le=5000,
+        description="Teto de páginas (padrão 50; o serviço limita em WEB_SOURCE_MAX_PAGES).",
+    )
+    max_depth: int | None = Field(
+        default=None, ge=0, le=10, description="Saltos de link a partir da URL, no modo crawl (padrão 3)."
+    )
     include: list[str] | None = Field(default=None, description="Globs de caminho que entram, ex. `/docs/*`.")
     exclude: list[str] | None = Field(default=None, description="Globs de caminho que ficam de fora, ex. `/blog/*`.")
     format: bool | None = Field(default=None, description="Passar cada página pelo agente formatador (padrão true).")
@@ -155,7 +162,12 @@ async def create_source(collection_name: str, body: SourceIn) -> dict[str, Any]:
             f"POST /collections/{collection_name}/sources/{existing['id']}/sync",
         )
     source = store.create_source(
-        collection=collection_name, url=body.url, mode=body.mode, options=options, refresh=body.refresh, label=body.label
+        collection=collection_name,
+        url=body.url,
+        mode=body.mode,
+        options=options,
+        refresh=body.refresh,
+        label=body.label,
     )
     web_sync.start_sync(source["id"])
     return store.get_source(source["id"]) or source

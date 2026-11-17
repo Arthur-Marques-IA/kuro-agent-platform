@@ -1,8 +1,9 @@
 """Configurações centrais do microserviço, carregadas de variáveis de ambiente."""
 
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,7 +17,6 @@ class Settings(BaseSettings):
 
     # Banco de dados (memória comum, sessões, tracing, knowledge)
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/agent_service"
-
 
     # Provedor de modelo padrão
     default_model_provider: str = "google"
@@ -34,6 +34,19 @@ class Settings(BaseSettings):
     """Chave que só executa: `/chat`, `/chat/stream`, `/analyze` e scores. É a que
     vai para os outros módulos da plataforma — se vazar, não lê conversa alheia
     nem troca prompt. Também aceita lista (`nova,antiga`)."""
+    allow_open: bool = False
+    """`ALLOW_OPEN=1` deixa o serviço subir **sem** chave nenhuma (aberto a quem alcança a
+    porta). Sem ela e sem chave, a subida falha (`api/auth.py`, `check_startup_auth`). Só
+    para a máquina de quem desenvolve: o `docker-compose.yml` liga por padrão, porque publica
+    a porta só no loopback. Com chave configurada, não faz diferença."""
+
+    @field_validator("allow_open", mode="before")
+    @classmethod
+    def _allow_open_vazio(cls, value: object) -> object:
+        # `ALLOW_OPEN=` (vazio, como o compose repassa uma variável não definida) é "não":
+        # sem isto o pydantic recusa a string vazia e a subida morre com um erro de validação
+        # em vez da mensagem que diz o que definir.
+        return False if isinstance(value, str) and not value.strip() else value
 
     cors_origins: str | None = None
     """Sites (no navegador) que podem chamar a API, separados por vírgula. Vazio = a lista
@@ -69,6 +82,45 @@ class Settings(BaseSettings):
     `timeout_seconds` do run, que só começa quando ele ganha a vaga. 0 desliga a
     fila (503 imediato, o comportamento antigo). Mantenha abaixo do timeout de
     quem chama."""
+    trace_write_queue_max: int = 1000
+    """Gravações de trace (`runs`/`run_spans`) esperando o banco, por processo. Fila
+    cheia: a gravação é descartada e contada (`trace_writes.dropped` no `/health`) —
+    nunca atrasa nem derruba a resposta."""
+    trace_write_shutdown_seconds: float = 5.0
+    """No encerramento, quanto esperar as gravações de trace pendentes. Fique bem
+    abaixo do prazo do `docker stop` (10 s antes do SIGKILL)."""
+    run_retention_days: int = 0
+    """Prazo do trace store local (`runs` e dependentes), em dias. Vazio ou 0 = sem
+    prazo (o padrão). Ligado, um job recorrente da fila de jobs apaga ou anonimiza
+    (`run_retention_mode`) os runs mais antigos — ver `observability/retention.py`."""
+    run_retention_mode: Literal["delete", "anonymize"] = "delete"
+    """`delete` remove o run e o que depende dele; `anonymize` mantém a linha (tokens,
+    custo, status, datas, agente, versão) e apaga o conteúdo da conversa."""
+    trace_redact_keys: str = ""
+    """Chaves mascaradas na gravação do trace, separadas por vírgula (`cpf,telefone`):
+    em `dependencies`, argumentos e resultados JSON das tools e `metadata`, o valor
+    vira `[redigido]`. Comparação exata, sem diferenciar maiúsculas; não varre texto
+    livre. O modelo e as tools continuam recebendo o valor real."""
+
+    @field_validator("run_retention_days", "run_retention_mode", mode="before")
+    @classmethod
+    def _empty_retention(cls, value: object, info: Any) -> object:
+        # `RUN_RETENTION_DAYS=` (vazio) no .env é "desligado", não erro de validação na subida.
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return 0 if info.field_name == "run_retention_days" else "delete"
+        return value.strip() if isinstance(value, str) else value
+
+    rate_limit_per_minute: int = 0
+    """Chamadas por minuto por chave de API (ou por IP, com o serviço aberto) no
+    `/chat`, `/chat/stream` e `/analyze`; acima disso, 429 com `Retry-After`. Vazio ou
+    0 desliga (o padrão). Contado em memória, por processo (`api/rate_limit.py`)."""
+
+    @field_validator("rate_limit_per_minute", mode="before")
+    @classmethod
+    def _vazio_desliga(cls, value: object) -> object:
+        # `RATE_LIMIT_PER_MINUTE=` no .env chega como "" e não vira int sozinho.
+        return 0 if value is None or (isinstance(value, str) and not value.strip()) else value
+
     idempotency_ttl_hours: int = 24
     """Por quanto tempo um `Idempotency-Key` de `/chat`/`/analyze` devolve a resposta
     guardada (`api/idempotency.py`). Passou disso, a mesma chave roda de novo."""
@@ -169,7 +221,8 @@ class Settings(BaseSettings):
     NÃO são uma sandbox forte contra um autor mal-intencionado — só ligue se
     quem tem a chave de escopo `admin` já for confiável, porque é ela que
     permite criar uma tool Python (`api/auth.py`). Sem `ADMIN_API_KEY`
-    configurada, isso é qualquer um que alcance a porta."""
+    configurada (só sobe assim com `ALLOW_OPEN=1`), isso é qualquer um que
+    alcance a porta."""
 
 
 @lru_cache

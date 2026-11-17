@@ -114,8 +114,14 @@ def reserve(endpoint: str, agent_type: str, key: str, body_hash: str) -> Reserva
             with get_db().db_engine.begin() as conn:
                 conn.execute(
                     insert(idempotency_keys).values(
-                        id=row_id, endpoint=endpoint, agent_type=agent_type, key=key, request_hash=body_hash,
-                        status="in_progress", created_at=now, updated_at=now,
+                        id=row_id,
+                        endpoint=endpoint,
+                        agent_type=agent_type,
+                        key=key,
+                        request_hash=body_hash,
+                        status="in_progress",
+                        created_at=now,
+                        updated_at=now,
                     )
                 )
             return Reservation(id=row_id)

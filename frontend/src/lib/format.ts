@@ -86,11 +86,56 @@ export function groupByRecency<T>(
   return groups.filter((group) => group.items.length > 0);
 }
 
-export function initials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return "?";
-  const letters = words.length === 1 ? words[0].slice(0, 2) : words[0][0] + words[1][0];
-  return letters.toUpperCase();
+/**
+ * Data relativa que cabe num rodapé de cartão: "há 5 min", "há 3 dias", "há 2 meses".
+ * Diferente de `formatRelativeTime`, nunca vira data por extenso ("07 de out. de 2026").
+ */
+export function formatRelativeShort(value: string | number | Date, now = Date.now()): string {
+  const seconds = Math.round((now - toDate(value).getTime()) / 1000);
+  if (!Number.isFinite(seconds)) return "—";
+  if (seconds < 45) return "agora";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `há ${minutes} min`;
+  const hours = Math.round(seconds / 3600);
+  if (hours < 24) return `há ${hours} h`;
+  const days = Math.round(seconds / 86400);
+  if (days === 1) return "ontem";
+  if (days < 7) return `há ${days} dias`;
+  if (days < 30) return `há ${Math.round(days / 7)} sem.`;
+  if (days < 365) {
+    const months = Math.max(1, Math.round(days / 30));
+    return months === 1 ? "há 1 mês" : `há ${months} meses`;
+  }
+  const years = Math.round(days / 365);
+  return years === 1 ? "há 1 ano" : `há ${years} anos`;
+}
+
+const ALNUM = /[\p{L}\p{N}]/gu;
+
+/** As palavras de `value` só com letras e números; palavra sem nenhum dos dois ("—", "·") some. */
+function alnumWords(value: string): string[] {
+  return value
+    .split(/[\s_-]+/)
+    .map((word) => (word.match(ALNUM) ?? []).join(""))
+    .filter(Boolean);
+}
+
+/**
+ * Duas letras para o avatar. Separadores ("R6 — Agente") não contam como palavra; um código
+ * com número no começo ("R6", "R8") vale sozinho, para os agentes de uma família não virarem
+ * todos "RA". Quando o nome não dá duas letras, o slug (`fallback`) desempata.
+ */
+export function initials(name: string, fallback?: string): string {
+  const words = alnumWords(name);
+  const first = words[0] ?? "";
+  if (/\p{N}/u.test(first) && first.length >= 2) return first.slice(0, 2).toUpperCase();
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  if (first.length >= 2) return first.slice(0, 2).toUpperCase();
+  if (fallback && fallback !== name) {
+    const fromSlug = initials(fallback);
+    if (fromSlug !== "?") return fromSlug;
+  }
+  return first ? first.toUpperCase() : "?";
 }
 
 export function slugify(value: string): string {

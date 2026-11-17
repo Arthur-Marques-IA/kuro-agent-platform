@@ -142,7 +142,7 @@ export function VersionHistory({
               ))
             : selected.instructions.map((line, i) => (
                 <div key={i} className="grid grid-cols-[2.25rem_minmax(0,1fr)] px-2">
-                  <span className="select-none text-center text-muted-foreground/60">{i + 1}</span>
+                  <span className="select-none text-center text-muted-foreground">{i + 1}</span>
                   <span className="whitespace-pre-wrap break-words pr-3">{line}</span>
                 </div>
               ))}

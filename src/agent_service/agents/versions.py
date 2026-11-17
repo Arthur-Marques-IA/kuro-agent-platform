@@ -28,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from agent_service.agents.store import get_feedback_note
 from agent_service.config import get_settings
 from agent_service.db import get_db
+from agent_service.tools.crypto import decrypt_for_hash
 from agent_service.tools.store import get_tool
 
 metadata = MetaData()
@@ -79,6 +80,10 @@ def effective_config(definition: dict[str, Any]) -> dict[str, Any]:
         config["session_summary"] = True
     if definition.get("plain_text"):
         config["plain_text"] = True
+    if definition.get("history_tool_calls") is not None:  # 0 vale: nenhuma tool antiga
+        config["history_tool_calls"] = definition["history_tool_calls"]
+    if definition.get("checks"):  # só quando há: agente sem checagem mantém a versão que já tinha
+        config["checks"] = definition["checks"]
     if config["kind"] == "procedural":
         # Só aqui: com `stages` em todo agente, os que já existiam ganhariam versão nova.
         config["stages"] = definition.get("stages") or []
@@ -97,7 +102,14 @@ def effective_config(definition: dict[str, Any]) -> dict[str, Any]:
                 "tool_name": name,
                 "kind": row["kind"],
                 "enabled": row["enabled"],
-                "config_hash": _digest({"config": row["config"], "description": row.get("description")})[:12],
+                # Do texto plano: o cifrado muda a cada gravação (Fernet tem IV aleatório), e
+                # cifrar um segredo que não mudou não pode virar versão nova do agente.
+                "config_hash": _digest(
+                    {
+                        "config": decrypt_for_hash(row["config"]) if row["kind"] == "api" else row["config"],
+                        "description": row.get("description"),
+                    }
+                )[:12],
             }
         )
     config["tools"] = tools
@@ -133,7 +145,9 @@ def ensure_version(agent_type: str, config: dict[str, Any]) -> tuple[int, str]:
                     or 0
                 ) + 1
                 conn.execute(
-                    insert(agent_versions).values(agent_type=agent_type, version=version, config_hash=digest, config=config)
+                    insert(agent_versions).values(
+                        agent_type=agent_type, version=version, config_hash=digest, config=config
+                    )
                 )
                 return version, digest
         except IntegrityError:

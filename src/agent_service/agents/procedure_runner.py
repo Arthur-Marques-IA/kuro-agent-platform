@@ -215,7 +215,9 @@ def _stage_id(stages: list[dict[str, Any]], state: dict[str, Any]) -> str | None
     return stages[index]["id"] if index is not None else None
 
 
-async def _save(row: dict[str, Any], state: dict[str, Any], stages: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+async def _save(
+    row: dict[str, Any], state: dict[str, Any], stages: list[dict[str, Any]], **extra: Any
+) -> dict[str, Any]:
     try:
         return await run_in_threadpool(
             procedure_store.save_procedure, row, state=state, stage=_stage_id(stages, state), **extra
@@ -338,9 +340,7 @@ async def run_procedural_turn(agent: Agent, run: RunContext) -> AsyncIterator[tu
             raise
         except Exception as exc:  # noqa: BLE001 - falha do provedor: o run fica registrado como erro
             message = exc.args[0] if isinstance(exc, ProcedureModelError) else f"A extração falhou no modelo: {exc}"
-            await run_in_threadpool(
-                lambda: record_run_without_model(run, None, status="error", status_message=message)
-            )
+            await run_in_threadpool(lambda: record_run_without_model(run, None, status="error", status_message=message))
             raise ProcedureModelError(message) from exc
         spans.extend(extraction_spans)
         state, _ = procedural.apply_extraction(stages, state, extracted)
@@ -366,7 +366,10 @@ async def run_procedural_turn(agent: Agent, run: RunContext) -> AsyncIterator[tu
                 stages,
                 state,
                 stage["id"],
-                {"ok": False, "error": "a ação foi interrompida — confira no sistema de destino antes de confirmar de novo"},
+                {
+                    "ok": False,
+                    "error": "a ação foi interrompida — confira no sistema de destino antes de confirmar de novo",
+                },
             )
             row = await _save(row, state, stages)
             action_error = state["actions"][stage["id"]]["error"]

@@ -7,6 +7,7 @@ import {
   Bot,
   Cpu,
   FileUp,
+  Hash,
   Library,
   MessageSquare,
   Moon,
@@ -17,8 +18,11 @@ import {
   Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { detectId, filterEntries, idLookup, type IdTarget } from "@/lib/command-search";
+import { requestJson } from "@/lib/http";
 import { sessionTitle } from "@/lib/sessions";
 import { useTheme } from "@/lib/theme";
+import type { Collection, RunPage, ToolSummary } from "@/lib/types";
 import { Dialog } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/primitives";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
@@ -36,11 +40,61 @@ interface PaletteItem {
   action?: "toggle-theme";
 }
 
-function normalize(text: string) {
-  return text
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
+const ID_GROUP = "Ir para o id";
+const TOOLS_GROUP = "Tools";
+const COLLECTIONS_GROUP = "Bases de conhecimento";
+const SESSIONS_GROUP = "Conversas deste navegador";
+
+const FILTER_OPTIONS = {
+  // São muitas: só aparecem quando a pessoa digita algo.
+  searchOnlyGroups: [TOOLS_GROUP, COLLECTIONS_GROUP],
+  limitPerGroup: { [TOOLS_GROUP]: 6, [COLLECTIONS_GROUP]: 6 },
+  // Sem busca: ações, navegação e só as conversas mais recentes.
+  emptyQueryLimit: { [SESSIONS_GROUP]: 5 },
+};
+
+type Lookup = { id: string; found: Record<IdTarget, boolean> } | null;
+
+/**
+ * Tools e collections frescas ao abrir a paleta (este componente só monta com ela aberta).
+ * O layout já trouxe uma lista, que vale até a resposta chegar — e continua valendo se a
+ * chamada falhar, sem aviso: a busca não é lugar de erro de rede.
+ */
+function useFreshList<T>(url: string, seed: T[]): T[] {
+  const [fresh, setFresh] = useState<T[] | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    requestJson<T[]>(url, { signal: controller.signal })
+      .then((data) => {
+        if (Array.isArray(data)) setFresh(data);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [url]);
+  return fresh ?? seed;
+}
+
+/**
+ * Confere, sem travar nada, se o id colado existe: a busca das execuções casa o `run_id`
+ * inteiro e o `session_id`. Enter navega na hora; a resposta só muda a dica.
+ */
+function useIdLookup(id: string | null, enabled: boolean): Lookup {
+  const [lookup, setLookup] = useState<Lookup>(null);
+  useEffect(() => {
+    if (!id || !enabled) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams({ search: id, limit: "5" });
+      requestJson<RunPage>(`/api/observability/runs?${params}`, { signal: controller.signal })
+        .then((page) => setLookup({ id, found: idLookup(id, page?.items ?? []) }))
+        .catch(() => {});
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [id, enabled]);
+  return lookup && lookup.id === id ? lookup : null;
 }
 
 export function CommandPalette() {
@@ -60,11 +114,15 @@ export function CommandPalette() {
 
 function PaletteContent({ onClose }: { onClose: () => void }) {
   const router = useRouter();
-  const { agents, sessions, getAgent, observability } = useWorkspace();
+  const { agents, sessions, getAgent, observability, availableTools, collections: seedCollections } = useWorkspace();
+  const tools = useFreshList<ToolSummary>("/api/tools", availableTools);
+  const collections = useFreshList<Collection>("/api/collections", seedCollections);
   const [, setTheme] = useTheme();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const detected = useMemo(() => detectId(query), [query]);
+  const lookup = useIdLookup(detected?.id ?? null, observability.enabled);
 
   const items = useMemo<PaletteItem[]>(
     () => [
@@ -75,7 +133,7 @@ function PaletteContent({ onClose }: { onClose: () => void }) {
       { id: "nav-chat", group: "Navegar", label: "Playground", icon: MessageSquare, href: "/chat" },
       { id: "nav-agents", group: "Navegar", label: "Agentes", icon: Bot, href: "/agents" },
       { id: "nav-tools", group: "Navegar", label: "Tools", icon: Wrench, href: "/tools", keywords: "api python builtin função" },
-      { id: "nav-models", group: "Navegar", label: "Chaves de API", icon: Cpu, href: "/models", keywords: "provedores openai anthropic google gemini ollama chave api key llm credencial" },
+      { id: "nav-models", group: "Navegar", label: "Credenciais de modelos", icon: Cpu, href: "/models", keywords: "chaves de api provedores openai anthropic google gemini ollama chave api key llm credencial" },
       { id: "nav-knowledge", group: "Navegar", label: "Base de conhecimento", icon: Library, href: "/knowledge", keywords: "collections documentos rag" },
       ...(observability.enabled
         ? [
@@ -93,7 +151,7 @@ function PaletteContent({ onClose }: { onClose: () => void }) {
               label: "Logs: sessões",
               icon: Activity,
               href: "/logs/sessions",
-              keywords: "conversas transcrição usuário",
+              keywords: "conversas transcrição usuário todas as sessões",
             },
             {
               id: "nav-logs-runs",
@@ -124,33 +182,78 @@ function PaletteContent({ onClose }: { onClose: () => void }) {
           keywords: "editar prompt versões integração",
         },
       ]),
+      ...tools.map((tool) => ({
+        id: `tool-${tool.tool_name}`,
+        group: TOOLS_GROUP,
+        label: tool.label || tool.tool_name,
+        hint: tool.tool_name,
+        icon: Wrench,
+        href: `/tools?q=${encodeURIComponent(tool.tool_name)}`,
+        keywords: `${tool.kind} ${tool.description ?? ""}`,
+      })),
+      ...collections.map((collection) => ({
+        id: `collection-${collection.name}`,
+        group: COLLECTIONS_GROUP,
+        label: collection.label || collection.name,
+        hint: collection.name,
+        icon: Library,
+        href: `/knowledge?collection=${encodeURIComponent(collection.name)}`,
+        keywords: "collection documentos rag",
+      })),
       ...sessions.map((session) => ({
         id: `session-${session.session_id}`,
-        group: "Conversas",
+        group: SESSIONS_GROUP,
         label: sessionTitle(session),
         hint: getAgent(session.agent_id)?.name ?? session.agent_id ?? undefined,
         icon: MessageSquare,
         href: `/chat/${encodeURIComponent(session.session_id)}`,
+        // Colar o id de uma conversa daqui também a encontra.
+        keywords: session.session_id,
       })),
     ],
-    [agents, sessions, getAgent, observability]
+    [agents, sessions, getAgent, observability, tools, collections]
   );
 
-  const filtered = useMemo(() => {
-    const q = normalize(query.trim());
-    if (!q) {
-      // Sem busca: ações, navegação e só as conversas mais recentes.
-      let recentSessions = 0;
-      return items.filter((item) => item.group !== "Conversas" || recentSessions++ < 5);
-    }
-    return items.filter((item) =>
-      normalize(`${item.label} ${item.hint ?? ""} ${item.keywords ?? ""} ${item.group}`).includes(q)
+  const idItems = useMemo<PaletteItem[]>(() => {
+    if (!detected) return [];
+    const { id, targets } = detected;
+    const hint = (target: IdTarget) =>
+      lookup ? (lookup.found[target] ? "encontrada nos Logs" : "não encontrada nos Logs") : undefined;
+    // Se a conferência achou só a sessão, ela vem primeiro.
+    const ordered = lookup && lookup.found.session && !lookup.found.run ? [...targets].reverse() : targets;
+    return ordered.map((target) =>
+      target === "run"
+        ? {
+            id: `id-run-${id}`,
+            group: ID_GROUP,
+            label: `Abrir execução ${id}`,
+            hint: hint("run"),
+            icon: Hash,
+            href: `/runs/${encodeURIComponent(id)}`,
+          }
+        : {
+            id: `id-session-${id}`,
+            group: ID_GROUP,
+            label: `Abrir sessão ${id}`,
+            hint: hint("session"),
+            icon: Hash,
+            href: `/logs/sessions/${encodeURIComponent(id)}`,
+          }
     );
-  }, [items, query]);
+  }, [detected, lookup]);
+
+  // O id colado vem primeiro, fora do filtro; depois o resto, filtrado e ordenado.
+  const filtered = useMemo(
+    () => [...idItems, ...filterEntries(items, query, FILTER_OPTIONS)],
+    [idItems, items, query]
+  );
+
+  // A lista muda sob o cursor quando as tools/collections ou a dica do id chegam.
+  const safeIndex = Math.min(activeIndex, Math.max(filtered.length - 1, 0));
 
   useEffect(() => {
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex]);
+  }, [safeIndex]);
 
   function run(item: PaletteItem | undefined) {
     if (!item) return;
@@ -167,13 +270,13 @@ function PaletteContent({ onClose }: { onClose: () => void }) {
   function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActiveIndex((i) => Math.min(i + 1, filtered.length - 1));
+      setActiveIndex(Math.min(safeIndex + 1, filtered.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActiveIndex((i) => Math.max(i - 1, 0));
+      setActiveIndex(Math.max(safeIndex - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      run(filtered[activeIndex]);
+      run(filtered[safeIndex]);
     }
   }
 
@@ -189,7 +292,7 @@ function PaletteContent({ onClose }: { onClose: () => void }) {
             setActiveIndex(0);
           }}
           onKeyDown={handleKeyDown}
-          placeholder="Buscar agentes, conversas e ações…"
+          placeholder="Buscar agentes, tools, bases e conversas, ou colar um id…"
           aria-label="Buscar comandos"
           role="combobox"
           aria-expanded="true"
@@ -210,7 +313,7 @@ function PaletteContent({ onClose }: { onClose: () => void }) {
         )}
         {filtered.map((item, index) => {
           const showGroup = index === 0 || filtered[index - 1].group !== item.group;
-          const active = index === activeIndex;
+          const active = index === safeIndex;
           return (
             <div key={item.id}>
               {showGroup && (

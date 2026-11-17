@@ -20,7 +20,14 @@ from agent_service.observability import run_store
 
 
 def _trecho(chunk_id: str, content_id: str, document: str, rank: int = 1) -> dict:
-    return {"rank": rank, "score": 0.9, "document": document, "content_id": content_id, "chunk_id": chunk_id, "content": "..."}
+    return {
+        "rank": rank,
+        "score": 0.9,
+        "document": document,
+        "content_id": content_id,
+        "chunk_id": chunk_id,
+        "content": "...",
+    }
 
 
 def _run_com_busca(collection: str, query: str, trechos: list[dict], agent_type: str = "suporte") -> str:
@@ -55,9 +62,14 @@ def test_marca_copia_pergunta_e_documento_da_span_e_substitui_a_anterior():
     col = f"col-{uuid4().hex[:6]}"
     run_id = _run_com_busca(col, "prazo de garantia", [_trecho("c1", "doc-a", "Manual")])
 
-    primeira = create_chunk_feedback(ChunkFeedbackIn(run_id=run_id, chunk_id="c1", label="irrelevant", created_by="ana"))
+    primeira = create_chunk_feedback(
+        ChunkFeedbackIn(run_id=run_id, chunk_id="c1", label="irrelevant", created_by="ana")
+    )
     assert (primeira.query, primeira.collection, primeira.content_id, primeira.document) == (
-        "prazo de garantia", col, "doc-a", "Manual"
+        "prazo de garantia",
+        col,
+        "doc-a",
+        "Manual",
     )
     assert primeira.span_id == f"{run_id}:0" and primeira.agent_type == "suporte"
 

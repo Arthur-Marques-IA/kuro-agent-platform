@@ -51,7 +51,14 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_chunk_feedback_content_status", table_name="chunk_feedback")
-    for column in ("resolution_note", "resolved_at", "resolved_by", "resolved_in_revision", "status", "document_revision"):
+    for column in (
+        "resolution_note",
+        "resolved_at",
+        "resolved_by",
+        "resolved_in_revision",
+        "status",
+        "document_revision",
+    ):
         op.drop_column("chunk_feedback", column)
     op.drop_index("ix_document_revisions_collection", table_name="document_revisions")
     op.drop_table("document_revisions")

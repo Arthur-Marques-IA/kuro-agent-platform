@@ -12,6 +12,10 @@ export interface OutputNode {
   label: string;
   kind: "object" | "array" | "value";
   value?: unknown;
+  /** Valores permitidos da folha (`enum` do campo ou do item do array), quando o schema declara. */
+  enum?: (string | number)[];
+  /** Se o valor está entre os permitidos; só existe quando há `enum`. */
+  enumMatch?: boolean;
   children?: OutputNode[];
 }
 
@@ -37,13 +41,17 @@ function ordered(value: Record<string, unknown>, fields: SchemaField[] | null | 
 function node(key: string, path: string, value: unknown, field: SchemaField | undefined, fields?: SchemaField[] | null): OutputNode {
   const label = field?.label || key;
   if (Array.isArray(value)) {
-    const itemFields = field?.items?.fields ?? fields;
+    const items = field?.items;
+    const itemFields = items?.fields ?? fields;
+    // Item escalar: o `enum` dele vale para cada elemento, então desce como um campo sem nome.
+    const itemField: SchemaField | undefined =
+      items && items.type !== "object" ? { name: "", type: items.type, enum: items.enum } : undefined;
     return {
       path,
       key,
       label,
       kind: "array",
-      children: value.map((item, i) => node(`[${i}]`, `${path}[${i}]`, item, undefined, itemFields)),
+      children: value.map((item, i) => node(`[${i}]`, `${path}[${i}]`, item, itemField, itemFields)),
     };
   }
   if (value !== null && typeof value === "object") {
@@ -59,7 +67,11 @@ function node(key: string, path: string, value: unknown, field: SchemaField | un
       ),
     };
   }
-  return { path, key, label, kind: "value", value };
+  const allowed = field?.enum?.length ? field.enum : undefined;
+  if (!allowed) return { path, key, label, kind: "value", value };
+  // Comparado como texto: o enum de um campo numérico pode vir como número ou como string.
+  const enumMatch = value !== null && value !== undefined && allowed.some((v) => String(v) === String(value));
+  return { path, key, label, kind: "value", value, enum: allowed, enumMatch };
 }
 
 /** Os campos de primeiro nível, cada um com a sua subárvore. */

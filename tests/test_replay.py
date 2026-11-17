@@ -219,3 +219,40 @@ def test_cli_show_diz_de_quem_e_a_conversa(fake, cli):
 def test_cli_show_sugere_o_id_parecido(fake, cli):
     result = cli.invoke(cli_main.app, ["--json", "sessions", "show", "a1b2c3d4-r6"])
     assert ORIGINAL in json.loads(result.stderr)["error"]
+
+
+def test_turno_so_com_message_reenvia_a_message():
+    assert replay_mod.turn_input({"message": "oi", "events": None, "context": None}) == {"message": "oi"}
+
+
+def test_turno_estruturado_reenvia_events_e_context():
+    turn = {
+        "message": "# Mensagem nova do contato\npode ser à vista",
+        "input_message": None,
+        "events": [
+            {"role": "agent_sent", "content": "À vista fica R$ 100,00.", "at": "2026-11-16T21:00:00Z", "kind": None,
+             "attachments": [], "speech": False, "echo": True},
+            {"role": "human_agent", "content": "Aqui é a Ana.", "at": None, "kind": None, "attachments": [], "speech": False},
+            {"role": "contact", "content": "pode ser à vista", "at": "2026-11-16T21:02:00Z", "kind": None,
+             "attachments": [], "speech": True},
+        ],
+        "context": [{"key": "divida", "title": "Dívida", "content": "R$ 100,00", "volatile": False, "hash": "abc"}],
+    }
+    body = replay_mod.turn_input(turn)
+    # O eco da resposta original fica de fora; `speech`, `echo` e `hash` são do servidor.
+    assert body["events"] == [
+        {"role": "human_agent", "content": "Aqui é a Ana."},
+        {"role": "contact", "content": "pode ser à vista", "at": "2026-11-16T21:02:00Z"},
+    ]
+    assert body["context"] == [{"key": "divida", "title": "Dívida", "content": "R$ 100,00", "volatile": False}]
+    assert "message" not in body
+
+
+def test_turno_estruturado_sem_fala_do_contato_manda_a_message():
+    turn = {"message": "Reavalie.", "input_message": "Reavalie.", "context": [],
+            "events": [{"role": "system", "content": "Reavaliação automática.", "speech": False}]}
+    body = replay_mod.turn_input(turn)
+    assert body["message"] == "Reavalie." and body["events"] == [{"role": "system", "content": "Reavaliação automática."}]
+    assert body["context"] == []
+    semfala = replay_mod.turn_input({"message": "texto do turno", "input_message": None, "events": [], "context": []})
+    assert semfala == {"context": [], "message": "texto do turno"}

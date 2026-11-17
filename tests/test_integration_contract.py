@@ -15,8 +15,14 @@ TOOL_CONFIG = {
     "method": "GET",
     "url": "https://exemplo.test/clientes/{cpf}",
     "parameters": [
-        {"name": "cpf", "type": "string", "location": "path", "required": True,
-         "source": "dependency", "dependency": "cpf"},
+        {
+            "name": "cpf",
+            "type": "string",
+            "location": "path",
+            "required": True,
+            "source": "dependency",
+            "dependency": "cpf",
+        },
     ],
 }
 
@@ -155,8 +161,12 @@ def test_analista_tem_resposta_com_result_e_sem_stream():
             kind="analysis",
             response_schema=[
                 {"name": "acao", "type": "string", "required": True, "enum": ["aprovar", "negar"]},
-                {"name": "parcelas", "type": "array", "required": False,
-                 "items": {"type": "object", "fields": [{"name": "valor", "type": "number", "required": True}]}},
+                {
+                    "name": "parcelas",
+                    "type": "array",
+                    "required": False,
+                    "items": {"type": "object", "fields": [{"name": "valor", "type": "number", "required": True}]},
+                },
             ],
         )
     )
@@ -179,19 +189,33 @@ def test_openapi_runtime_so_tem_rotas_de_runtime_e_os_schemas_delas():
     spec = {
         "openapi": "3.1.0",
         "paths": {
-            "/chat": {"post": {"requestBody": {"content": {"application/json": {
-                "schema": {"$ref": "#/components/schemas/ChatRequest"}}}}}},
+            "/chat": {
+                "post": {
+                    "requestBody": {
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ChatRequest"}}}
+                    }
+                }
+            },
             "/agents/{agent_type}/procedures/{session_id}": {"get": {}},
             "/agents/{agent_type}/procedures": {"get": {}},
-            "/agents": {"post": {"requestBody": {"content": {"application/json": {
-                "schema": {"$ref": "#/components/schemas/AgentIn"}}}}}},
+            "/agents": {
+                "post": {
+                    "requestBody": {
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AgentIn"}}}
+                    }
+                }
+            },
             "/health": {"get": {}},
         },
-        "components": {"schemas": {
-            "ChatRequest": {"properties": {"attachments": {"items": {"$ref": "#/components/schemas/AttachmentIn"}}}},
-            "AttachmentIn": {"properties": {}},
-            "AgentIn": {"properties": {}},
-        }},
+        "components": {
+            "schemas": {
+                "ChatRequest": {
+                    "properties": {"attachments": {"items": {"$ref": "#/components/schemas/AttachmentIn"}}}
+                },
+                "AttachmentIn": {"properties": {}},
+                "AgentIn": {"properties": {}},
+            }
+        },
     }
 
     filtrado = runtime_openapi(spec)
@@ -275,8 +299,11 @@ def analista():
             dependency_fields=[{"name": "canal", "type": "string", "required": True, "enum": ["whatsapp", "email"]}],
             response_schema=[
                 {"name": "acao", "type": "string", "required": True, "enum": ["responder", "escalar"]},
-                {"name": "parcelas", "type": "array", "items": {"type": "object", "fields": [
-                    {"name": "valor", "type": "number", "required": True}]}},
+                {
+                    "name": "parcelas",
+                    "type": "array",
+                    "items": {"type": "object", "fields": [{"name": "valor", "type": "number", "required": True}]},
+                },
             ],
         )
     )
@@ -295,7 +322,11 @@ def test_openapi_do_agente_abre_com_a_runtime_e_o_contrato_nao(agente, monkeypat
 
 
 def test_openapi_do_conversacional_tem_agent_type_fixo_e_dependencies_tipadas(agente, monkeypatch):
-    doc = _app_de_runtime(monkeypatch).get(f"/agents/{agente}/openapi.json", headers={"Authorization": "Bearer rt"}).json()
+    doc = (
+        _app_de_runtime(monkeypatch)
+        .get(f"/agents/{agente}/openapi.json", headers={"Authorization": "Bearer rt"})
+        .json()
+    )
 
     assert set(doc["paths"]) == {"/chat", "/chat/stream", "/observability/scores", "/observability/references"}
     assert doc["servers"] == [{"url": "https://kuro.exemplo.com"}]
@@ -317,7 +348,11 @@ def test_openapi_do_conversacional_tem_agent_type_fixo_e_dependencies_tipadas(ag
 
 
 def test_openapi_do_analista_tipa_o_result(analista, monkeypatch):
-    doc = _app_de_runtime(monkeypatch).get(f"/agents/{analista}/openapi.json", headers={"Authorization": "Bearer rt"}).json()
+    doc = (
+        _app_de_runtime(monkeypatch)
+        .get(f"/agents/{analista}/openapi.json", headers={"Authorization": "Bearer rt"})
+        .json()
+    )
 
     assert set(doc["paths"]) == {"/analyze", "/observability/scores", "/observability/references"}
     pedido = doc["components"]["schemas"]["AuditorIntAnalyzeRequest"]

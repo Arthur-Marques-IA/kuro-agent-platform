@@ -14,9 +14,46 @@ from agent_service.cli.common import EXIT_USAGE, call, console, emit, fail, fail
 app = typer.Typer(help="Execuções: listar, acompanhar ao vivo, ver trace, resumir, registrar score.")
 
 
+PART_LABELS = {
+    "instructions": "instruções",
+    "session_context": "contexto da sessão",
+    "memories": "memórias",
+    "session_summary": "resumo da sessão",
+    "history": "histórico",
+    "history_tools": "tools do histórico",
+    "turn": "mensagem do turno",
+    "dependencies": "dependencies",
+    "other": "outras",
+}
+
+
+def _cache_note(run: dict[str, Any]) -> str:
+    """` · 84% do cache` quando o run leu do cache de prompt."""
+    read, total = run.get("cache_read_tokens") or 0, run.get("input_tokens") or 0
+    if not read:
+        return ""
+    return f" · {read} do cache ({min(read / total, 1):.0%})" if total else f" · {read} do cache"
+
+
+def _composition_lines(composition: dict[str, Any] | None) -> list[str]:
+    """O prompt da primeira chamada, parte a parte (caracteres exatos; tokens são estimativa)."""
+    if not composition or not composition.get("chars"):
+        return []
+    total = composition["chars"]
+    parts = composition.get("parts") or {}
+    shown = [f"{PART_LABELS.get(name, name)} {chars} ({chars / total:.0%})" for name, chars in parts.items() if chars]
+    lines = [f"[dim]prompt: {total} caracteres (~{composition.get('tokens_estimate', 0)} tokens, estimativa)[/]"]
+    lines.append("[dim]  " + " · ".join(shown) + "[/]")
+    if composition.get("attachments"):
+        lines.append(f"[dim]  anexos: {composition['attachments']}[/]")
+    return lines
+
+
 def _runs_table(rows: list[dict[str, Any]], *, header: bool = True) -> Table:
     table = Table(show_edge=False, header_style="bold", show_header=header)
-    for column in ("início", "run_id", "agente", "status", "tokens", "latência"):
+    show_checks = any(r.get("checks") for r in rows)
+    columns = ("início", "run_id", "agente", "status", "tokens", "latência", *(("checagens",) if show_checks else ()))
+    for column in columns:
         table.add_column(column, no_wrap=True)
     for r in rows:
         status = "[green]ok[/]" if r["status"] == "success" else f"[red]{r['status']}[/]"
@@ -26,10 +63,22 @@ def _runs_table(rows: list[dict[str, Any]], *, header: bool = True) -> Table:
             r["run_id"],
             r["agent_type"],
             status,
-            str(r["total_tokens"]),
+            str(r["total_tokens"]) + _cache_note(r).replace(" do cache", "c").replace(" · ", " "),
             latency,
+            *((_check_marks(r.get("checks") or []),) if show_checks else ()),
         )
     return table
+
+
+def _check_marks(checks: list[dict[str, Any]]) -> str:
+    """Resumo das checagens de um run para a listagem: só o que não passou."""
+    marks = []
+    for c in checks:
+        if c["status"] == "failed":
+            marks.append(f"[red]✗ {c['name']}[/]" if c.get("severity") == "fail" else f"[yellow]✗ {c['name']}[/]")
+        elif c["status"] == "error":
+            marks.append(f"[dim]? {c['name']}[/]")
+    return " ".join(marks)
 
 
 def _render_runs(page: dict[str, Any]) -> None:
@@ -40,13 +89,38 @@ def _render_runs(page: dict[str, Any]) -> None:
 
 def _render_trace(trace: dict[str, Any]) -> None:
     run = trace["run"]
-    console.print(f"[bold]{run['agent_type']}[/] [dim]run {run['run_id']} · {run['status']} · {run['total_tokens']} tokens[/]")
-    console.print(f"[cyan]mensagem:[/] {run.get('message') or '—'}", highlight=False)
+    console.print(
+        f"[bold]{run['agent_type']}[/] [dim]run {run['run_id']} · {run['status']} · {run['total_tokens']} tokens{_cache_note(run)}[/]"
+    )
+    for line in _composition_lines(trace.get("prompt_composition")):
+        console.print(line, highlight=False)
+    if run.get("input_message") is not None:
+        # Entrada estruturada: a fala, os eventos e os blocos em vez do texto montado.
+        for block in trace.get("input_context") or []:
+            volatil = " [dim](volátil)[/]" if block.get("volatile") else ""
+            console.print(
+                f"[blue]{block['title']}[/]{volatil} [dim]{block['key']} · {block['hash'][:12]}[/]", highlight=False
+            )
+        events = trace.get("input_events") or []
+        for event in events:
+            quando = f" [dim]{event['at']}[/]" if event.get("at") else ""
+            if event.get("speech"):
+                console.print(f"[cyan]fala:[/]{quando} {run['input_message'] or '—'}", highlight=False)
+            else:
+                console.print(f"[dim]{event['role']}[/]{quando}: {event.get('content') or '—'}", highlight=False)
+        if not any(event.get("speech") for event in events):
+            console.print(f"[cyan]fala:[/] {run['input_message'] or '—'}", highlight=False)
+    else:
+        console.print(f"[cyan]mensagem:[/] {run.get('message') or '—'}", highlight=False)
     console.print(f"[magenta]resposta:[/] {run.get('output') or '—'}", highlight=False)
     if run.get("agent_version"):
         console.print(f"[dim]agente v{run['agent_version']} ({run.get('config_hash')})[/]", highlight=False)
     if run.get("knowledge_collection"):
-        versao = f" v{run['collection_version']} ({run.get('collection_config_hash')})" if run.get("collection_version") else ""
+        versao = (
+            f" v{run['collection_version']} ({run.get('collection_config_hash')})"
+            if run.get("collection_version")
+            else ""
+        )
         console.print(f"[dim]base {run['knowledge_collection']}{versao}[/]", highlight=False)
 
     spans = trace["spans"]
@@ -57,8 +131,21 @@ def _render_trace(trace: dict[str, Any]) -> None:
         parent = nodes.get(span.get("parent_id")) if span.get("parent_id") in ids else root
         latency = f" {span['latency_ms']:.0f}ms" if span.get("latency_ms") else ""
         level = f" [red]{span['level']}[/]" if span["level"] not in ("DEFAULT", "DEBUG") else ""
-        nodes[span["id"]] = (parent or root).add(f"{span['type'].lower()} [bold]{span['name']}[/][dim]{latency}[/]{level}")
+        nodes[span["id"]] = (parent or root).add(
+            f"{span['type'].lower()} [bold]{span['name']}[/][dim]{latency}[/]{level}"
+        )
     console.print(root)
+    for c in run.get("checks") or []:
+        color = {"passed": "green", "failed": "red" if c.get("severity") == "fail" else "yellow", "error": "dim"}[
+            c["status"]
+        ]
+        if c["status"] == "error":
+            detail = f"erro de avaliação: {c.get('error')}"
+        else:
+            detail = f"{c['field']} {c['op']} {c.get('expected')!r}; veio {c.get('actual')!r}"
+        console.print(
+            f"[{color}]checagem {c['name']}: {c['status']}[/] [dim]({c.get('severity')}; {detail})[/]", highlight=False
+        )
     for score in trace.get("scores") or []:
         console.print(f"score {score['name']} = {score['value']} [dim]{score.get('comment') or ''}[/]")
 
@@ -66,8 +153,28 @@ def _render_trace(trace: dict[str, Any]) -> None:
 @app.callback(invoke_without_command=True)
 def runs(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:  # defaults explícitos: chamar direto não resolve os typer.Option
-        list_runs(ctx, agent=None, status=None, session_id=None, user_id=None, limit=20, cursor=None, meta=[], version=None,
-                  collection=None, collection_version=None)
+        list_runs(
+            ctx,
+            agent=None,
+            status=None,
+            session_id=None,
+            user_id=None,
+            limit=20,
+            cursor=None,
+            meta=[],
+            version=None,
+            collection=None,
+            collection_version=None,
+            complexity=[],
+            tool_failed=False,
+            side_effect=False,
+            min_chars=None,
+            feedback=None,
+            no_tests=False,
+            sample=None,
+            check_failed=False,
+            check=None,
+        )
 
 
 @app.command("list")
@@ -79,19 +186,32 @@ def list_runs(
     user_id: str | None = typer.Option(None, "--user-id"),
     limit: int = typer.Option(20, "--limit", "-n", min=1, max=100),
     cursor: str | None = typer.Option(None, "--cursor"),
-    meta: list[str] = typer.Option([], "--meta", "-m", help="Filtro por metadata chave=valor (repetível), ex.: conversation_id=123."),
-    version: int | None = typer.Option(None, "--version", help="Só runs desta versão da configuração (agent_version)."),
-    collection: str | None = typer.Option(None, "--collection", help="Só runs de agentes que consultavam esta collection."),
-    collection_version: int | None = typer.Option(
-        None, "--collection-version", min=1, help="Só runs com esta versão da busca da collection (kuro collections versions)."
+    meta: list[str] = typer.Option(
+        [], "--meta", "-m", help="Filtro por metadata chave=valor (repetível), ex.: conversation_id=123."
     ),
-    complexity: list[int] = typer.Option([], "--complexity", "-c", min=1, max=3, help="Só este nível de complexidade (repetível): 1, 2 ou 3."),
+    version: int | None = typer.Option(None, "--version", help="Só runs desta versão da configuração (agent_version)."),
+    collection: str | None = typer.Option(
+        None, "--collection", help="Só runs de agentes que consultavam esta collection."
+    ),
+    collection_version: int | None = typer.Option(
+        None,
+        "--collection-version",
+        min=1,
+        help="Só runs com esta versão da busca da collection (kuro collections versions).",
+    ),
+    complexity: list[int] = typer.Option(
+        [], "--complexity", "-c", min=1, max=3, help="Só este nível de complexidade (repetível): 1, 2 ou 3."
+    ),
     tool_failed: bool = typer.Option(False, "--tool-failed", help="Só runs com alguma tool falhando."),
     side_effect: bool = typer.Option(False, "--side-effect", help="Só runs que chamaram tool com efeito colateral."),
     min_chars: int | None = typer.Option(None, "--min-chars", min=1, help="Esconde mensagens mais curtas que isto."),
     feedback: str | None = typer.Option(None, "--feedback", help="up | down | none"),
     no_tests: bool = typer.Option(False, "--no-tests", help="Tira os testes do Playground (dry_run)."),
     sample: int | None = typer.Option(None, "--sample", min=1, max=100, help="Amostra aleatória deste tamanho."),
+    check_failed: bool = typer.Option(
+        False, "--check-failed", help="Só runs com alguma checagem automática do agente reprovada."
+    ),
+    check: str | None = typer.Option(None, "--check", help="Só runs em que esta checagem (pelo nome) reprovou."),
     since: str | None = typer.Option(None, "--since", help="Desde quando, em ISO 8601: 2026-11-04 ou 2026-11-04T17:30:00-03:00."),
     until: str | None = typer.Option(None, "--until", help="Até quando, em ISO 8601."),
     search: str | None = typer.Option(
@@ -103,9 +223,9 @@ def list_runs(
     ),
 ) -> None:
     """Execuções mais recentes. Os filtros de revisão montam a fila do que vale olhar,
-    ex.: `kuro runs list -a r8 -c 3 --no-tests` ou `kuro runs list -a r8 --sample 20 --no-tests`.
-    Para achar uma execução: `--since/--until` (o horário de um print) e `--search` (um pedaço
-    do id da conversa)."""
+    ex.: `kuro runs list -a r8 -c 3 --no-tests`, `kuro runs list -a r8 --sample 20 --no-tests`
+    ou `kuro runs list -a r8 --check-failed --no-tests`. Para achar uma execução:
+    `--since/--until` (o horário de um print) e `--search` (um pedaço do id da conversa)."""
     st = state(ctx)
     page = call(
         st,
@@ -127,6 +247,8 @@ def list_runs(
         feedback=feedback,
         include_dry_run=False if no_tests else None,
         sample=sample,
+        check_failed=True if check_failed else None,
+        check=check,
         since=since,
         until=until,
         search=search,
@@ -277,7 +399,11 @@ def score(
     """Registra uma avaliação para um run."""
     st = state(ctx)
     body = {"run_id": run_id, "name": name, "value": value, "comment": comment}
-    emit(st, call(st, st.client.score, body), lambda s: console.print(f"[green]✓[/] {s['name']}={s['value']} em {s['run_id']}"))
+    emit(
+        st,
+        call(st, st.client.score, body),
+        lambda s: console.print(f"[green]✓[/] {s['name']}={s['value']} em {s['run_id']}"),
+    )
 
 
 # -- feedback por trecho recuperado (RAG) ---------------------------------------------
@@ -289,9 +415,13 @@ _CHUNK_LABELS = ("relevant", "irrelevant", "wrong")
 def chunk_feedback(
     ctx: typer.Context,
     run_id: str,
-    chunk_id: str = typer.Argument(..., help="`chunk_id` do trecho (em `kuro runs show <run_id> --json`, metadata.references)."),
+    chunk_id: str = typer.Argument(
+        ..., help="`chunk_id` do trecho (em `kuro runs show <run_id> --json`, metadata.references)."
+    ),
     label: str = typer.Argument(..., help="relevant | irrelevant | wrong (conteúdo errado/desatualizado)."),
-    span_id: str | None = typer.Option(None, "--span", help="A span da busca; sem isto, a primeira busca do run com o trecho."),
+    span_id: str | None = typer.Option(
+        None, "--span", help="A span da busca; sem isto, a primeira busca do run com o trecho."
+    ),
     comment: str | None = typer.Option(None, "--comment"),
     created_by: str = typer.Option("cli", "--by", envvar="KURO_USER_ID", help="Quem marcou."),
 ) -> None:
@@ -300,7 +430,14 @@ def chunk_feedback(
     st = state(ctx)
     if label not in _CHUNK_LABELS:
         fail(st, f"rótulo inválido: {label!r} (use {', '.join(_CHUNK_LABELS)})", EXIT_USAGE)
-    body = {"run_id": run_id, "chunk_id": chunk_id, "label": label, "span_id": span_id, "comment": comment, "created_by": created_by}
+    body = {
+        "run_id": run_id,
+        "chunk_id": chunk_id,
+        "label": label,
+        "span_id": span_id,
+        "comment": comment,
+        "created_by": created_by,
+    }
     emit(
         st,
         call(st, st.client.chunk_feedback, body),
@@ -398,7 +535,9 @@ def _render_flagged(rows: list[dict[str, Any]]) -> None:
     if not rows:
         console.print("[dim]nenhum documento marcado[/]")
     for r in rows:
-        console.print(f"[bold]{r['count']}×[/] {r.get('document') or r.get('content_id')} [dim]({r.get('collection') or '—'})[/]")
+        console.print(
+            f"[bold]{r['count']}×[/] {r.get('document') or r.get('content_id')} [dim]({r.get('collection') or '—'})[/]"
+        )
         console.print(f"   [dim]runs: {', '.join(r['run_ids'][:5])}[/]", highlight=False)
 
 
@@ -435,7 +574,11 @@ def chunk_export(
                 fh.write(lines)
         except OSError as exc:
             fail(st, f"não consegui gravar {output}: {exc}", EXIT_USAGE)
-        emit(st, {"output": output, "cases": len(cases)}, lambda r: console.print(f"[green]✓[/] {r['cases']} perguntas em {r['output']}"))
+        emit(
+            st,
+            {"output": output, "cases": len(cases)},
+            lambda r: console.print(f"[green]✓[/] {r['cases']} perguntas em {r['output']}"),
+        )
         return
     import sys
 
@@ -456,7 +599,11 @@ def reference(
     próprio sistema integrado (`POST /observability/references`)."""
     st = state(ctx)
     body = {"run_id": run_id, "reference": read_json_file(st, file), "source": source}
-    emit(st, call(st, st.client.save_reference, body), lambda r: console.print(f"[green]✓[/] referência gravada em {r['run_id']}"))
+    emit(
+        st,
+        call(st, st.client.save_reference, body),
+        lambda r: console.print(f"[green]✓[/] referência gravada em {r['run_id']}"),
+    )
 
 
 def _render_agreement(r: dict[str, Any]) -> None:
@@ -515,9 +662,12 @@ def export(
                 fh.write(lines)
         except OSError as exc:
             fail(st, f"não consegui gravar {output}: {exc}", EXIT_USAGE)
-        emit(st, {"output": output, "cases": len(cases)}, lambda r: console.print(f"[green]✓[/] {r['cases']} casos em {r['output']}"))
+        emit(
+            st,
+            {"output": output, "cases": len(cases)},
+            lambda r: console.print(f"[green]✓[/] {r['cases']} casos em {r['output']}"),
+        )
         return
     import sys
 
     sys.stdout.write(lines)
-

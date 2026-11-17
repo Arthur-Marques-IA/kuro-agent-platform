@@ -11,6 +11,10 @@ como `registry.py` constrói o objeto real do Agno a partir de `config`:
   namespace restrito (`tools/python_tool.py`; `config = {"code", "entrypoint"}`).
 
 Mesmo estilo de `agents/store.py`; o schema é do Alembic (`agent_service/migrations`).
+
+Os segredos de uma tool `api` (`auth.token/value/password` e headers de
+credencial) são gravados cifrados (`tools/crypto.py`) e lidos como estão: quem
+decifra é a chamada da tool, na hora de montar a requisição.
 """
 
 from typing import Any
@@ -31,6 +35,7 @@ from sqlalchemy import (
 from sqlalchemy import Table as SATable
 
 from agent_service.db import get_db
+from agent_service.tools.crypto import encrypt_config
 
 metadata = MetaData()
 
@@ -101,7 +106,7 @@ def create_tool(
                 kind=kind,
                 label=label,
                 description=description,
-                config=config,
+                config=encrypt_config(config, tool_name=tool_name) if kind == "api" else config,
                 enabled=enabled,
                 is_seed=is_seed,
                 side_effect=side_effect,
@@ -139,7 +144,7 @@ def update_tool(
     if description is not None:
         values["description"] = description
     if config is not None:
-        values["config"] = config
+        values["config"] = encrypt_config(config, tool_name=tool_name) if current["kind"] == "api" else config
     if enabled is not None:
         values["enabled"] = enabled
     if side_effect is not _UNSET:

@@ -69,7 +69,9 @@ def root(
     url: str = typer.Option(
         DEFAULT_URL, "--url", envvar=["KURO_API_URL", "AGENT_SERVICE_URL"], help="URL do agent-service."
     ),
-    json_mode: bool = typer.Option(False, "--json", envvar="KURO_JSON", help="Saída JSON (stdout) e erros JSON (stderr)."),
+    json_mode: bool = typer.Option(
+        False, "--json", envvar="KURO_JSON", help="Saída JSON (stdout) e erros JSON (stderr)."
+    ),
     no_input: bool = typer.Option(
         False, "--no-input", envvar="KURO_NO_INPUT", help="Nunca pergunta nada (falha se faltar argumento)."
     ),
@@ -161,7 +163,9 @@ def mcp_config(
         help="Endereço do serviço como a máquina de quem opera o enxerga (ex.: https://kuro.empresa.com).",
     ),
     show_key: bool = typer.Option(False, "--show-key", help="Mostra a chave inteira (senão ela sai mascarada)."),
-    source: str = typer.Option(MCP_SOURCE, "--source", envvar="KURO_MCP_SOURCE", help="De onde o uvx instala o kuro-mcp."),
+    source: str = typer.Option(
+        MCP_SOURCE, "--source", envvar="KURO_MCP_SOURCE", help="De onde o uvx instala o kuro-mcp."
+    ),
 ) -> None:
     """Como conectar o servidor MCP do Kuro a este serviço, pronto para copiar. Rode no servidor:
     `docker compose exec agent-service kuro mcp-config --show-key`.
@@ -209,16 +213,22 @@ def mcp_config(
                 f"@'\n{pem}\n'@ | Set-Content -Encoding ascii \"$HOME\\.kuro\\{ca_file}\""
             ),
         }
-        claude_cmd = f'claude mcp add kuro -s user --env KURO_API_URL={url} --env KURO_CA_BUNDLE="$HOME/.kuro/{ca_file}"{tail}'
-        claude_ps = f'claude mcp add kuro -s user --env KURO_API_URL={url} --env KURO_CA_BUNDLE="$HOME\\.kuro\\{ca_file}"{tail}'
+        claude_cmd = (
+            f'claude mcp add kuro -s user --env KURO_API_URL={url} --env KURO_CA_BUNDLE="$HOME/.kuro/{ca_file}"{tail}'
+        )
+        claude_ps = (
+            f'claude mcp add kuro -s user --env KURO_API_URL={url} --env KURO_CA_BUNDLE="$HOME\\.kuro\\{ca_file}"{tail}'
+        )
         env["KURO_CA_BUNDLE"] = "${KURO_CA_BUNDLE}"
     else:
         claude_cmd = claude_ps = f"claude mcp add kuro -s user --env KURO_API_URL={url}{tail}"
 
     # Pelo SSH: o host público, quando se sabe qual é; o usuário do SSH, não (o do container não é).
-    host = url.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0] if url_source in ("domain", "ip", "explicit") else ""
+    host = (
+        url.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0] if url_source in ("domain", "ip", "explicit") else ""
+    )
     script_url = connect_script_url(source)
-    target = f'usuario@{host or "servidor"}'
+    target = f"usuario@{host or 'servidor'}"
     ssh_cmd = f"uv run {script_url} {target}" if script_url else f'uvx --from "{package}" kuro connect {target}'
     # Por URL só com certificado público: o Claude Code (Node) não confia na CA própria do
     # profile `ip`, e HTTP puro levaria a chave em texto claro.
@@ -289,7 +299,9 @@ def mcp_config(
             f"\n[bold]Ou um .mcp.json[/] no projeto (a chave fica fora do arquivo; defina KURO_API_KEY{extra} no ambiente):"
         )
         console.print_json(json.dumps(r["mcp_json"]))
-        console.print("\n[dim]Confira no Claude Code com /mcp, e peça \"use a tool health do kuro\". Guia: docs/mcp.md[/]")
+        console.print(
+            '\n[dim]Confira no Claude Code com /mcp, e peça "use a tool health do kuro". Guia: docs/mcp.md[/]'
+        )
 
     emit(st, report, render)
 
@@ -336,7 +348,11 @@ def health(ctx: typer.Context) -> None:
             ok = cifra == "enabled"
             console.print(
                 f"{'[green]●[/]' if ok else '[yellow]●[/]'} cadastro de chaves de modelo "
-                + ("ligado" if ok else f"[yellow]{cifra}[/] (gere com `python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"`)")
+                + (
+                    "ligado"
+                    if ok
+                    else f'[yellow]{cifra}[/] (gere com `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`)'
+                )
             )
         obs = r["observability"]
         recording = obs.get("enabled")
@@ -351,7 +367,9 @@ def health(ctx: typer.Context) -> None:
         if isinstance(r["credentials"], list):
             ready = sorted({c["provider"] for c in r["credentials"] if c["enabled"] and c["configured"]})
             hint = "" if ready else " (google ainda usa GOOGLE_API_KEY do .env, se houver)"
-            console.print(f"{'[green]●[/]' if ready else '[yellow]●[/]'} provedores com credencial ativa: {', '.join(ready) or 'nenhum'}{hint}")
+            console.print(
+                f"{'[green]●[/]' if ready else '[yellow]●[/]'} provedores com credencial ativa: {', '.join(ready) or 'nenhum'}{hint}"
+            )
 
     emit(st, report, render)
 
@@ -372,7 +390,9 @@ def dash(
     try:
         from agent_service.tui.app import KuroDash, prefer_truecolor
     except ImportError:
-        fail(st, "kuro dash precisa do extra tui: `uv sync --extra tui` (ou `uv run --extra tui kuro dash`)", EXIT_USAGE)
+        fail(
+            st, "kuro dash precisa do extra tui: `uv sync --extra tui` (ou `uv run --extra tui kuro dash`)", EXIT_USAGE
+        )
     prefer_truecolor()  # antes de criar o app: é na criação que o Rich escolhe a paleta
     KuroDash(st.client, interval=interval, agent=agent).run()
 
@@ -390,12 +410,16 @@ def providers(ctx: typer.Context) -> None:
 def provider_models(
     ctx: typer.Context,
     provider: str = typer.Argument(..., help="google | openai | anthropic | ollama"),
-    credential_id: str | None = typer.Option(None, "--credential", help="Credencial a usar; sem isto, a padrão do provedor."),
+    credential_id: str | None = typer.Option(
+        None, "--credential", help="Credencial a usar; sem isto, a padrão do provedor."
+    ),
     refresh: bool = typer.Option(False, "--refresh", help="Ignora o cache de 15 min e pergunta de novo ao provedor."),
 ) -> None:
     """Modelos que o provedor oferece agora, lidos da API dele — o que vale em `model_id`."""
     st = state(ctx)
-    result = call(st, st.client.provider_models, provider, credential_id=credential_id, refresh="true" if refresh else None)
+    result = call(
+        st, st.client.provider_models, provider, credential_id=credential_id, refresh="true" if refresh else None
+    )
 
     def render(r: dict[str, Any]) -> None:
         for m in r["models"]:
@@ -450,8 +474,13 @@ def list_credentials(
             test = {True: "[green]ok[/]", False: "[red]falhou[/]"}.get(c["last_test_ok"], "—")
             key = c["key_hint"] or ("sim" if c["configured"] else "[red]sem chave[/]")
             table.add_row(
-                f"[cyan]{c['id']}[/]", c["provider"], c["label"], "sim" if c["enabled"] else "não",
-                key, test, ", ".join(c["agents_using"]) or "—",
+                f"[cyan]{c['id']}[/]",
+                c["provider"],
+                c["label"],
+                "sim" if c["enabled"] else "não",
+                key,
+                test,
+                ", ".join(c["agents_using"]) or "—",
             )
         console.print(table)
 
@@ -484,8 +513,7 @@ def _read_api_key(st: State, *, from_env: str | None, from_stdin: bool, prompt: 
         if not value.strip():
             fail(
                 st,
-                "sem chave: use --api-key-env NOME_DA_VARIAVEL ou envie por stdin "
-                "(a chave não pode ir como argumento)",
+                "sem chave: use --api-key-env NOME_DA_VARIAVEL ou envie por stdin (a chave não pode ir como argumento)",
                 EXIT_USAGE,
             )
         return value.strip()
@@ -506,9 +534,7 @@ def add_credential(
 ) -> None:
     """Cadastra uma chave de modelo. A chave é lida por prompt oculto, stdin ou variável de ambiente."""
     st = state(ctx)
-    api_key = _read_api_key(
-        st, from_env=api_key_env, from_stdin=api_key_stdin, prompt=f"Chave de API de {provider}"
-    )
+    api_key = _read_api_key(st, from_env=api_key_env, from_stdin=api_key_stdin, prompt=f"Chave de API de {provider}")
     created = call(
         st,
         st.client.create_credential,
@@ -541,9 +567,7 @@ def edit_credential(
     if enable or disable:
         body["enabled"] = enable
     if rotate_key or api_key_env:
-        body["api_key"] = _read_api_key(
-            st, from_env=api_key_env, from_stdin=False, prompt="Chave de API nova"
-        )
+        body["api_key"] = _read_api_key(st, from_env=api_key_env, from_stdin=False, prompt="Chave de API nova")
     if not body:
         fail(st, "nada a alterar: use --label, --base-url, --enable/--disable ou --rotate-key", EXIT_USAGE)
 
@@ -642,7 +666,9 @@ GLOBAL_FLAGS = ("--json", "--no-input")
 def hoist_global_flags(argv: list[str]) -> list[str]:
     """Aceita `--json`/`--no-input` em qualquer posição (`kuro agents list --json`),
     não só antes do comando — é o primeiro erro que uma IA comete. Para antes de `--`."""
-    head, sep, tail = (argv[: argv.index("--")], ["--"], argv[argv.index("--") + 1 :]) if "--" in argv else (argv, [], [])
+    head, sep, tail = (
+        (argv[: argv.index("--")], ["--"], argv[argv.index("--") + 1 :]) if "--" in argv else (argv, [], [])
+    )
     flags = [a for a in head if a in GLOBAL_FLAGS]
     return flags + [a for a in head if a not in GLOBAL_FLAGS] + sep + tail
 

@@ -5,6 +5,7 @@ import { requestJson } from "@/lib/http";
 import type { AgentDefinition } from "@/lib/types";
 import { useToast } from "@/components/ui/toast";
 import { AgentForm, type AgentFormPayload } from "@/components/agents/agent-form";
+import { useReserveMascotSpace } from "@/components/brand/kuro-mascot";
 import { PageBody, PageHeader } from "@/components/workspace/page-header";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
 
@@ -12,6 +13,8 @@ export function AgentCreate() {
   const router = useRouter();
   const toast = useToast();
   const { availableTools } = useWorkspace();
+  // A barra de criar fica fixa no rodapé, no canto do Kuro.
+  useReserveMascotSpace();
 
   async function handleCreate(payload: AgentFormPayload) {
     const created = await requestJson<AgentDefinition>("/api/agents", {

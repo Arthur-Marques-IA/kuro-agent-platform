@@ -36,8 +36,7 @@ _INSTRUCTIONS = [
     "Você recebe: (1) as regras atuais, cada uma com um id, (2) um trecho de uma "
     "conversa recente do agente, e (3) um feedback textual de um humano sobre o "
     "que não gostou nessa conversa.",
-    "Responda com a lista de operações sobre essas regras — uma por regra que muda, "
-    "mais as regras novas:",
+    "Responda com a lista de operações sobre essas regras — uma por regra que muda, mais as regras novas:",
     "- `edit` (com o `id`) quando o feedback refina uma regra que já existe. "
     "Prefira `edit` a `add`: regra parecida com outra é duplicata.",
     "- `remove` (com o `id`) quando o feedback contradiz uma regra existente.",
@@ -98,9 +97,7 @@ def _prompt(rules: list[dict[str, Any]], transcript: str, feedback: str) -> str:
 
 def _normalizar(texto: str) -> str:
     """Só para comparar: sem acento, sem pontuação, sem caixa."""
-    sem_acento = "".join(
-        c for c in unicodedata.normalize("NFD", texto.lower()) if unicodedata.category(c) != "Mn"
-    )
+    sem_acento = "".join(c for c in unicodedata.normalize("NFD", texto.lower()) if unicodedata.category(c) != "Mn")
     return re.sub(r"[^a-z0-9 ]+", " ", sem_acento).strip()
 
 

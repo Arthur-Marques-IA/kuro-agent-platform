@@ -174,7 +174,7 @@ function NewCollectionForm({ onClose, onCreated }: { onClose: () => void; onCrea
               <option value="hybrid">Híbrida (vetor + texto)</option>
             </Select>
           </Field>
-          <Field label="Idioma do texto" htmlFor={`${id}-language`} hint="Dicionário do full-text. Não muda depois.">
+          <Field label="Idioma do texto" htmlFor={`${id}-language`} hint="Dicionário do full-text. Dá para trocar depois, sem reindexar.">
             <Select id={`${id}-language`} value={language} onChange={(e) => setLanguage(e.target.value)}>
               <option value="portuguese">Português</option>
               <option value="english">Inglês</option>
@@ -194,7 +194,12 @@ function NewCollectionForm({ onClose, onCreated }: { onClose: () => void; onCrea
           />
         </Field>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {/* role="alert": num diálogo modal, a região viva de fora pode ser ignorada pelo leitor de tela. */}
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
       </DialogBody>
 
       <DialogFooter>

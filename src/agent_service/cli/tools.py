@@ -29,14 +29,30 @@ app = typer.Typer(help="Tools: listar, ver, criar/editar (apply), invocar, remov
 EDITABLE_FIELDS = ("label", "description", "config", "enabled", "side_effect")
 
 
+def _efeito(t: dict[str, Any]) -> str:
+    """Efeito colateral para a tabela: o valor, ou "não classificada" com a sugestão pelo método HTTP."""
+    if t.get("side_effect") is not None:
+        return "sim" if t["side_effect"] else "não"
+    suggested = t.get("side_effect_suggested")
+    hint = f" [dim](sugestão: {'sim' if suggested else 'não'})[/]" if suggested is not None else ""
+    return f"[yellow]não classificada[/]{hint}"
+
+
+def _print_warnings(t: dict[str, Any]) -> None:
+    for warning in t.get("warnings") or []:
+        console.print(f"[yellow]![/] {warning}", highlight=False)
+
+
 def _render_list(tools: list[dict[str, Any]]) -> None:
     table = Table(show_edge=False, header_style="bold")
     for column in ("tool_name", "kind", "label", "ativa", "efeito colateral"):
         table.add_column(column)
     for t in tools:
         seed = " [dim](seed)[/]" if t["is_seed"] else ""
-        efeito = {True: "sim", False: "não"}.get(t.get("side_effect"), "[yellow]não classificada[/]")
-        table.add_row(f"[cyan]{t['tool_name']}[/]{seed}", t["kind"], t["label"], "sim" if t["enabled"] else "[red]não[/]", efeito)
+        efeito = _efeito(t)
+        table.add_row(
+            f"[cyan]{t['tool_name']}[/]{seed}", t["kind"], t["label"], "sim" if t["enabled"] else "[red]não[/]", efeito
+        )
     console.print(table)
 
 
@@ -91,7 +107,10 @@ def get_tool(
     if as_editable:
         # Os segredos saem mascarados; devolvê-los assim no `apply` preserva o
         # valor guardado (a API restaura quando o campo volta como a máscara).
-        emit(st, {"tool_name": detail["tool_name"], "kind": detail["kind"], **{k: detail.get(k) for k in EDITABLE_FIELDS}})
+        emit(
+            st,
+            {"tool_name": detail["tool_name"], "kind": detail["kind"], **{k: detail.get(k) for k in EDITABLE_FIELDS}},
+        )
     else:
         emit(st, detail, _render_tool)
 
@@ -129,7 +148,11 @@ def apply_tool(
         if not body.get("kind"):
             fail(st, "tool nova precisa do campo kind (builtin, api ou python)", EXIT_USAGE)
         result, action = call(st, st.client.create_tool, body), "criada"
-    emit(st, result, lambda t: console.print(f"[green]✓[/] tool {t['tool_name']} {action} ({t['kind']})"))
+    emit(
+        st,
+        result,
+        lambda t: (console.print(f"[green]✓[/] tool {t['tool_name']} {action} ({t['kind']})"), _print_warnings(t)),
+    )
 
 
 @app.command("set")
@@ -147,7 +170,66 @@ def set_fields(
     if unknown:
         fail(st, f"campos não editáveis: {', '.join(unknown)} (use: {', '.join(EDITABLE_FIELDS)})", EXIT_USAGE)
     result = call(st, st.client.update_tool, tool_name, changes)
-    emit(st, result, lambda t: console.print(f"[green]✓[/] tool {t['tool_name']} atualizada"))
+    emit(
+        st,
+        result,
+        lambda t: (console.print(f"[green]✓[/] tool {t['tool_name']} atualizada"), _print_warnings(t)),
+    )
+
+
+def unclassified_report(tools: list[dict[str, Any]], agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """As tools sem `side_effect` e os agentes que as usam, as mais usadas primeiro."""
+    rows = [
+        {
+            "tool_name": t["tool_name"],
+            "kind": t["kind"],
+            "enabled": t["enabled"],
+            "side_effect_suggested": t.get("side_effect_suggested"),
+            "agents": sorted(a["agent_type"] for a in agents if t["tool_name"] in (a.get("tools") or [])),
+        }
+        for t in tools
+        if t.get("side_effect") is None
+    ]
+    return sorted(rows, key=lambda r: (-len(r["agents"]), r["tool_name"]))
+
+
+def _render_audit(report: dict[str, Any]) -> None:
+    rows = report["unclassified"]
+    if not rows:
+        console.print("[green]✓[/] todas as tools estão classificadas quanto a efeito colateral")
+        return
+    table = Table(show_edge=False, header_style="bold")
+    for column in ("tool_name", "kind", "sugestão", "usada por"):
+        table.add_column(column)
+    for r in rows:
+        suggested = r["side_effect_suggested"]
+        table.add_row(
+            f"[cyan]{r['tool_name']}[/]",
+            r["kind"],
+            "—" if suggested is None else ("sim (muda algo)" if suggested else "não (só lê)"),
+            ", ".join(r["agents"]) or "[dim]nenhum agente[/]",
+        )
+    console.print(table)
+    console.print("[dim]classifique com: kuro tools set <tool> side_effect=true|false[/]")
+
+
+@app.command("audit")
+def audit(
+    ctx: typer.Context,
+    strict: bool = typer.Option(False, "--strict", help="Sai com 1 se alguma tool estiver sem classificação."),
+) -> None:
+    """Lista as tools sem classificação de efeito colateral e os agentes que as usam.
+
+    `null` em `side_effect` não é erro, mas tem consequência: a fila de revisão (`--side-effect`)
+    e o selo da sessão tratam a tool como sem efeito, e um agente procedural a aceita em `tools`.
+    A sugestão vem do método HTTP (só tools `api`) e nunca é gravada sozinha."""
+    st = state(ctx)
+    tools = call(st, st.client.list_tools)
+    agents = call(st, st.client.list_agents)
+    rows = unclassified_report(tools, agents)
+    emit(st, {"unclassified": rows, "total_tools": len(tools)}, _render_audit)
+    if strict and rows:
+        raise typer.Exit(EXIT_FAILED)
 
 
 @app.command("delete")
@@ -174,7 +256,9 @@ def catalog(ctx: typer.Context) -> None:
     emit(
         st,
         call(st, st.client.tool_catalog),
-        lambda entries: [console.print(f"[cyan]{e['builtin_id']}[/] — {e['label']}: {e['description']}") for e in entries],
+        lambda entries: [
+            console.print(f"[cyan]{e['builtin_id']}[/] — {e['label']}: {e['description']}") for e in entries
+        ],
     )
 
 
@@ -182,7 +266,9 @@ def catalog(ctx: typer.Context) -> None:
 def invoke(
     ctx: typer.Context,
     tool_name: str,
-    arg: list[str] = typer.Option([], "--arg", "-a", help="Argumento nome=valor (repetível; valor em JSON quando possível)."),
+    arg: list[str] = typer.Option(
+        [], "--arg", "-a", help="Argumento nome=valor (repetível; valor em JSON quando possível)."
+    ),
     args_json: str | None = typer.Option(None, "--args-json", help="Argumentos como objeto JSON."),
     dep: list[str] = typer.Option(
         [],
@@ -202,7 +288,10 @@ def invoke(
     injetado pelo servidor a partir de `dependencies`. Use `-d` para testá-lo
     sem montar um agente."""
     st = state(ctx)
-    arguments = {**(parse_json_object(st, args_json, "--args-json") if args_json else {}), **parse_pairs(st, arg, "--arg")}
+    arguments = {
+        **(parse_json_object(st, args_json, "--args-json") if args_json else {}),
+        **parse_pairs(st, arg, "--arg"),
+    }
     _invoke(st, tool_name, arguments, function, parse_pairs(st, dep, "--dep"), dry_run=dry_run)
 
 
@@ -228,7 +317,9 @@ def _invoke(
 def browse(st: State) -> None:
     while True:
         rows = call(st, st.client.list_tools)
-        choices = [questionary.Choice(f"{t['tool_name']}  —  {t['label']} ({t['kind']})", value=t["tool_name"]) for t in rows]
+        choices = [
+            questionary.Choice(f"{t['tool_name']}  —  {t['label']} ({t['kind']})", value=t["tool_name"]) for t in rows
+        ]
         choices.append(questionary.Choice("← sair", value=BACK))
         tool_name = questionary.select("Tool:", choices=choices).ask()
         if tool_name in (None, BACK):

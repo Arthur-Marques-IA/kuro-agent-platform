@@ -95,9 +95,7 @@ def _type_ok(field_type: str, value: Any) -> bool:
     return isinstance(value, str)  # "string"
 
 
-def validate_dependencies(
-    specs: list[dict[str, Any]] | None, dependencies: dict[str, Any] | None
-) -> dict[str, Any]:
+def validate_dependencies(specs: list[dict[str, Any]] | None, dependencies: dict[str, Any] | None) -> dict[str, Any]:
     """Confere obrigatoriedade + tipo dos campos declarados num `dependencies` de
     chamada, aplica os defaults ausentes e devolve o dict pronto pro `RunContext`."""
     result = dict(dependencies or {})

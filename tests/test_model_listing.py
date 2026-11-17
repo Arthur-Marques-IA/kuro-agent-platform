@@ -23,8 +23,13 @@ def test_openai_keeps_only_chat_models_newest_first(monkeypatch):
             return [
                 SimpleNamespace(id=i, created=c)
                 for i, c in [
-                    ("gpt-4.1-mini", 1), ("gpt-5", 3), ("text-embedding-3-small", 2),
-                    ("gpt-4o-realtime-preview", 4), ("o4-mini", 2), ("whisper-1", 5), ("gpt-image-1", 6),
+                    ("gpt-4.1-mini", 1),
+                    ("gpt-5", 3),
+                    ("text-embedding-3-small", 2),
+                    ("gpt-4o-realtime-preview", 4),
+                    ("o4-mini", 2),
+                    ("whisper-1", 5),
+                    ("gpt-image-1", 6),
                 ]
             ]
 
@@ -40,11 +45,17 @@ def test_google_keeps_gemini_that_generate_content(monkeypatch):
     class Models:
         def list(self, config):
             def m(name, actions=("generateContent",)):
-                return SimpleNamespace(name=f"models/{name}", display_name=name.title(), supported_actions=list(actions))
+                return SimpleNamespace(
+                    name=f"models/{name}", display_name=name.title(), supported_actions=list(actions)
+                )
 
             return [
-                m("gemini-3.5-flash"), m("gemini-2.5-flash"), m("gemini-embedding-001", ("embedContent",)),
-                m("gemini-3.5-transcribe"), m("gemini-2.5-flash-preview-tts"), m("imagen-4.0-generate"),
+                m("gemini-3.5-flash"),
+                m("gemini-2.5-flash"),
+                m("gemini-embedding-001", ("embedContent",)),
+                m("gemini-3.5-transcribe"),
+                m("gemini-2.5-flash-preview-tts"),
+                m("imagen-4.0-generate"),
             ]
 
     import google.genai

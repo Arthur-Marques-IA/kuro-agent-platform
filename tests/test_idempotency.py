@@ -52,16 +52,24 @@ class AgenteContado:
 
 def _usar(monkeypatch, agente) -> None:
     def resolve(request, endpoint):
-        run = RunContext(endpoint=endpoint, agent_type=request.agent_type, agent_name="t", prompt_version=1,
-                         user_id=request.user_id, session_id=request.session_id, message=request.message)
+        run = RunContext(
+            endpoint=endpoint,
+            agent_type=request.agent_type,
+            agent_name="t",
+            prompt_version=1,
+            user_id=request.user_id,
+            session_id=request.session_id,
+            message=request.message,
+        )
         return agente, run
 
     monkeypatch.setattr(routes, "_resolve", resolve)
 
 
 def _pedido(**extra) -> ChatRequest:
-    return ChatRequest(agent_type=f"agente-{uuid4().hex[:8]}", user_id="u", session_id="s", message="abre o chamado",
-                       **extra)
+    return ChatRequest(
+        agent_type=f"agente-{uuid4().hex[:8]}", user_id="u", session_id="s", message="abre o chamado", **extra
+    )
 
 
 def test_repetir_com_a_mesma_chave_devolve_a_resposta_guardada(monkeypatch):
@@ -145,11 +153,21 @@ def test_a_chave_do_servidor_vence_a_das_dependencies(monkeypatch):
 
     from tests.test_tool_param_sources import RedeFalsa
 
-    config = validate_api_config({
-        "method": "POST", "url": "https://x.test/chamados",
-        "parameters": [{"name": "Idempotency-Key", "type": "string", "location": "header",
-                        "source": "dependency", "dependency": "idempotency_key"}],
-    })
+    config = validate_api_config(
+        {
+            "method": "POST",
+            "url": "https://x.test/chamados",
+            "parameters": [
+                {
+                    "name": "Idempotency-Key",
+                    "type": "string",
+                    "location": "header",
+                    "source": "dependency",
+                    "dependency": "idempotency_key",
+                }
+            ],
+        }
+    )
     fn = build_api_function(tool_name="chamado", description=None, config=config)
 
     async def chamar():
@@ -167,8 +185,15 @@ def test_chave_fica_no_metadata_do_run(monkeypatch):
     runs: list[RunContext] = []
 
     def resolve(request, endpoint):
-        run = RunContext(endpoint=endpoint, agent_type=request.agent_type, agent_name="t", prompt_version=1,
-                         user_id="u", session_id="s", message="m")
+        run = RunContext(
+            endpoint=endpoint,
+            agent_type=request.agent_type,
+            agent_name="t",
+            prompt_version=1,
+            user_id="u",
+            session_id="s",
+            message="m",
+        )
         runs.append(run)
         return agente, run
 
@@ -196,10 +221,18 @@ def test_reserva_abandonada_por_um_processo_que_morreu_e_retomada():
     velha = datetime.now(timezone.utc) - idempotency.stale_after() - timedelta(seconds=1)
     agent_type, chave = f"agente-{uuid4().hex[:8]}", "abandonada"
     with get_db().db_engine.begin() as conn:
-        conn.execute(insert(idempotency.idempotency_keys).values(
-            id=uuid4().hex, endpoint="chat", agent_type=agent_type, key=chave, request_hash="h",
-            status="in_progress", created_at=velha, updated_at=velha,
-        ))
+        conn.execute(
+            insert(idempotency.idempotency_keys).values(
+                id=uuid4().hex,
+                endpoint="chat",
+                agent_type=agent_type,
+                key=chave,
+                request_hash="h",
+                status="in_progress",
+                created_at=velha,
+                updated_at=velha,
+            )
+        )
     reserva = idempotency.reserve("chat", agent_type, chave, "h")
     assert reserva.id is not None and reserva.replay is None
 

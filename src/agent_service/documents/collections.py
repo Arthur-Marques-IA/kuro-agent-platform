@@ -17,6 +17,7 @@ resolvida por nome, como no resto do módulo. A ingestão por URL continua lá.
 """
 
 import asyncio
+import hashlib
 import logging
 from functools import lru_cache
 from pathlib import Path
@@ -31,18 +32,12 @@ from sqlalchemy import select
 
 from agent_service.config import get_settings
 from agent_service.db import get_db
-from agent_service.documents.embedder import (
-    EmbedderNotConfiguredError,
-    UnknownEmbedderProviderError,
-    build_embedder,
-)
+from agent_service.documents.embedder import EmbedderError, build_embedder
 from agent_service.documents.search import SearchConfig, build_reranker
 from agent_service.documents.store import SEED_COLLECTION, get_collection_row, list_collection_names
 
 
 logger = logging.getLogger(__name__)
-
-EmbedderError = (EmbedderNotConfiguredError, UnknownEmbedderProviderError)
 
 
 def collection_exists(name: str) -> bool:
@@ -160,7 +155,7 @@ async def add_text(
     # enquanto os vetores ficam em `knowledge_<coleção>`. Sem o nome da coleção
     # no hash, o mesmo texto em duas coleções vira uma linha só — e um
     # `skip_if_exists` de outra coleção poderia pular a indexação.
-    content.content_hash = knowledge._build_content_hash(content)
+    content.content_hash = _content_hash(knowledge, content, text.encode("utf-8"))
     content.id = generate_id(f"{collection_name}:{content.content_hash}")
     _chunked(content, [(None, text)])
     await _load_first_revision(knowledge, collection_name, content, text=text)
@@ -200,11 +195,22 @@ async def add_file(
     )
     # Mesmo id determinístico do `add_text`, pela mesma razão: a tabela de
     # conteúdo é uma só para todas as coleções.
-    content.content_hash = knowledge._build_content_hash(content)
+    content.content_hash = _content_hash(knowledge, content, content_bytes)
     content.id = generate_id(f"{collection_name}:{content.content_hash}")
     text = await _chunk_file(content, content_bytes, filename)
     await _load_first_revision(knowledge, collection_name, content, text=text, filename=filename)
     return content.id
+
+
+def _content_hash(knowledge: Knowledge, content: Content, payload: bytes) -> str:
+    """O hash do Agno com o CONTEÚDO dentro. Para `FileData` com `type` ou `filename`
+    o Agno usa só nome, metadata e tipo/nome do arquivo — o texto fica de fora. Aí
+    uma correção pelo `replace_document` parecia "igual à revisão atual" e era
+    descartada calada (`changed: false`), e dois textos avulsos de mesmo nome caíam
+    no mesmo id."""
+    return hashlib.sha256(
+        knowledge._build_content_hash(content).encode("utf-8") + b":" + hashlib.sha256(payload).digest()
+    ).hexdigest()
 
 
 def _chunked(content: Content, pages: list[tuple[int | None, str]]) -> str:
@@ -232,7 +238,12 @@ async def _chunk_file(content: Content, body: bytes, filename: str) -> str | Non
 
 
 async def _load_first_revision(
-    knowledge: Knowledge, collection_name: str, content: Content, *, text: str | None = None, filename: str | None = None
+    knowledge: Knowledge,
+    collection_name: str,
+    content: Content,
+    *,
+    text: str | None = None,
+    filename: str | None = None,
 ) -> None:
     """Indexa um documento novo como revisão 1 (ou a seguinte, se ele já foi
     removido e volta agora).
@@ -258,9 +269,7 @@ async def _load_first_revision(
     )
 
 
-async def list_documents(
-    collection_name: str, *, limit: int = 50, page: int = 1
-) -> tuple[list[dict[str, Any]], int]:
+async def list_documents(collection_name: str, *, limit: int = 50, page: int = 1) -> tuple[list[dict[str, Any]], int]:
     """Documentos indexados nesta coleção.
 
     A tabela de conteúdo (`agno_knowledge`) é uma só para todas as coleções — o
@@ -340,9 +349,7 @@ async def replace_document(
     if existing is None or not await _belongs(knowledge, content_id):
         raise DocumentNotFoundError(content_id)
     if sources_store.source_of_content(content_id) is not None:
-        raise DocumentConflictError(
-            "este documento é uma página de site: corrija na fonte e rode o sync da collection"
-        )
+        raise DocumentConflictError("este documento é uma página de site: corrija na fonte e rode o sync da collection")
 
     user_metadata = {
         k: v for k, v in (existing.metadata or {}).items() if not k.startswith("_") and k != revisions.FIELD
@@ -350,7 +357,9 @@ async def replace_document(
     if text is not None:
         file_data = FileData(content=text.encode("utf-8"), type="manual")
     else:
-        file_data = FileData(content=content_bytes, type=content_type or None, filename=filename, size=len(content_bytes))
+        file_data = FileData(
+            content=content_bytes, type=content_type or None, filename=filename, size=len(content_bytes)
+        )
     content = Content(
         id=content_id,
         name=name or existing.name,
@@ -360,7 +369,7 @@ async def replace_document(
     )
     if resolves is None:
         resolves = [f["id"] for f in chunk_feedback.list_feedback(content_id=content_id, status="open")]
-    content_hash = knowledge._build_content_hash(content)
+    content_hash = _content_hash(knowledge, content, file_data.content)
     current = revisions.current(collection_name, content_id)
     last = revisions.latest(content_id) or {}
     if last.get("content_hash") == content_hash:
@@ -469,7 +478,13 @@ async def rechunk_document(collection_name: str, content_id: str, *, created_by:
         note="recortado com a regra de trechos atual",
         created_by=created_by,
     )
-    return {"content_id": content_id, "status": "rechunked", "revision": number, "chunks_before": before, "chunks_after": after}
+    return {
+        "content_id": content_id,
+        "status": "rechunked",
+        "revision": number,
+        "chunks_before": before,
+        "chunks_after": after,
+    }
 
 
 async def reindex_collection(collection_name: str, *, created_by: str | None = None) -> list[dict[str, Any]]:
@@ -503,7 +518,10 @@ async def _belongs(knowledge: Knowledge, content_id: str) -> bool:
 
         def found() -> bool:
             with session() as sess:
-                return sess.execute(select(table.c.id).where(table.c.content_id == content_id).limit(1)).first() is not None
+                return (
+                    sess.execute(select(table.c.id).where(table.c.content_id == content_id).limit(1)).first()
+                    is not None
+                )
 
         try:
             if await asyncio.to_thread(found):

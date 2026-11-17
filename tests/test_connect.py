@@ -52,10 +52,14 @@ class Fake:
             if cmd[-1].endswith("python -c 'import mcp.server'"):
                 return R(0, "", "") if self.has_kuro_mcp else R(1, "", "ModuleNotFoundError: No module named 'mcp'")
             if cmd[-1].startswith("sh -c"):
-                return R(0, "", "") if self.wrapper_ok else R(1, "", "mkdir: cannot create directory: Read-only file system")
+                return (
+                    R(0, "", "")
+                    if self.wrapper_ok
+                    else R(1, "", "mkdir: cannot create directory: Read-only file system")
+                )
         if cmd[0] == "ssh-keygen":
             if self.key_locked:
-                return R(255, "", f"Load key \"{cmd[-1]}\": incorrect passphrase supplied to decrypt private key")
+                return R(255, "", f'Load key "{cmd[-1]}": incorrect passphrase supplied to decrypt private key')
             return R(0, "ssh-ed25519 AAAA... eu@notebook\n", "")
         if cmd[:2] == ["ssh-add", "-l"]:
             return R(self.agent_code, "", "")
@@ -171,12 +175,12 @@ def test_comando_registrado_tem_keepalive_antes_do_destino(fake):
     destino = command.index("root@69.62.89.141")
     opcoes = [command[i + 1] for i in range(destino) if command[i] == "-o"]
     assert {"ServerAliveInterval=15", "ServerAliveCountMax=3", "ConnectTimeout=15"} <= set(opcoes)
-    assert command[destino + 1:] == [*WRAPPER, CONTAINER]
+    assert command[destino + 1 :] == [*WRAPPER, CONTAINER]
 
 
 def test_comando_registrado_nao_tem_nada_que_o_cmd_do_windows_interprete(fake):
     command = json.loads(_run("deploy@kuro", "-p", "2222", "-i", "~/.ssh/kuro").stdout)["command"]
-    assert ["-p", "2222"] == command[command.index("-p"): command.index("-p") + 2]
+    assert ["-p", "2222"] == command[command.index("-p") : command.index("-p") + 2]
     assert not any(ch in arg for arg in command for ch in "&|<>^$`\"'%")
 
 
@@ -317,14 +321,18 @@ def _desktop(fake):
 
 def test_claude_desktop_ganha_o_servidor_sem_perder_os_outros(fake):
     config = _desktop(fake)
-    config.write_text(json.dumps({"mcpServers": {"outro": {"command": "npx"}}, "globalShortcut": "Ctrl+K"}), encoding="utf-8")
+    config.write_text(
+        json.dumps({"mcpServers": {"outro": {"command": "npx"}}, "globalShortcut": "Ctrl+K"}), encoding="utf-8"
+    )
     out = json.loads(_run("root@vps").stdout)
     assert out["registered"] == ["claude-code", "claude-desktop"]
     data = json.loads(config.read_text(encoding="utf-8"))
     assert data["mcpServers"]["outro"] == {"command": "npx"} and data["globalShortcut"] == "Ctrl+K"
     assert data["mcpServers"]["kuro"] == {"command": "ssh", "args": out["command"][1:]}
     # O original fica guardado, e o Claude Desktop precisa ser reaberto.
-    assert json.loads(config.with_name(config.name + ".bak").read_text(encoding="utf-8"))["mcpServers"] == {"outro": {"command": "npx"}}
+    assert json.loads(config.with_name(config.name + ".bak").read_text(encoding="utf-8"))["mcpServers"] == {
+        "outro": {"command": "npx"}
+    }
     assert "abra de novo" in out["activate"]["claude-desktop"]
 
 
@@ -425,7 +433,9 @@ def test_no_terminal_pergunta_uma_vez_onde_registrar(fake):
     ui = AskingUi(False)
     with pytest.raises(core.StepFailed, match="nada registrado"):
         core.connect(core.Options("root@vps"), ui)
-    assert ui.questions == ["Registrar o servidor MCP 'kuro' em Claude Code, VS Code? (troca o 'kuro' que já existe em Claude Code)"]
+    assert ui.questions == [
+        "Registrar o servidor MCP 'kuro' em Claude Code, VS Code? (troca o 'kuro' que já existe em Claude Code)"
+    ]
     assert not fake.claude("add")
 
     ui = AskingUi(True)

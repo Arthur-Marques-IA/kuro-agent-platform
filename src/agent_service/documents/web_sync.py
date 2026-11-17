@@ -91,7 +91,9 @@ def formatter_model(options: dict[str, Any]) -> Any | None:
 
     settings = get_settings()
     provider = options.get("formatter_provider") or settings.aux_model_provider or settings.default_model_provider
-    model_id = options.get("formatter_model_id") or (settings.aux_model_id if not options.get("formatter_provider") else None)
+    model_id = options.get("formatter_model_id") or (
+        settings.aux_model_id if not options.get("formatter_provider") else None
+    )
     return get_model(provider=provider, model_id=model_id, credential_id=options.get("formatter_credential_id"))
 
 
@@ -207,7 +209,9 @@ def read_file(body: bytes, ext: str, filename: str) -> list[tuple[int | None, st
     stream = io.BytesIO(body)
     stream.name = filename
     if ext == ".pdf":
-        reader = PDFReader(chunk=False, split_on_pages=True, page_start_numbering_format="", page_end_numbering_format="")
+        reader = PDFReader(
+            chunk=False, split_on_pages=True, page_start_numbering_format="", page_end_numbering_format=""
+        )
         return [(n, doc.content) for n, doc in enumerate(reader.read(stream, name=filename), 1)]
     if ext == ".pptx":
         text = "\n\n".join(doc.content for doc in PPTXReader(chunk=False).read(stream, name=filename))
@@ -271,9 +275,19 @@ class _Run:
         self.model = model
         self.include_files = bool(self.options.get("include_files", False))
         self.previous = {p["url"]: p for p in store.list_pages(source["id"])}
-        self.counts = {"discovered": 0, "done": 0, "indexed": 0, "unchanged": 0, "removed": 0, "failed": 0, "skipped": 0,
-                       "format_input_tokens": 0, "format_output_tokens": 0, "format_fallbacks": 0,
-                       "format_cost_usd": None}
+        self.counts = {
+            "discovered": 0,
+            "done": 0,
+            "indexed": 0,
+            "unchanged": 0,
+            "removed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "format_input_tokens": 0,
+            "format_output_tokens": 0,
+            "format_fallbacks": 0,
+            "format_cost_usd": None,
+        }
         self.visited: set[str] = set()
         self.kept: set[str] = set()
         self.responded = 0
@@ -304,7 +318,9 @@ class _Run:
             if ext is None:
                 return await self.fetcher.get(url)
             fetched = await self.fetcher.get(
-                url, accept=web.FILE_TYPES[ext][0] + web.GENERIC_FILE_TYPES, what="arquivo",
+                url,
+                accept=web.FILE_TYPES[ext][0] + web.GENERIC_FILE_TYPES,
+                what="arquivo",
                 max_bytes=get_settings().web_source_max_file_mb * 1024 * 1024,
             )
             web.check_file(fetched, ext)
@@ -338,14 +354,14 @@ class _Run:
         is_text = fetched.content_type.startswith(web.TEXT_TYPES)
         # Os links relativos da página valem a partir da URL que respondeu (com a barra
         # final, depois dos redirects) — não da forma normalizada usada como chave.
-        extracted = (
-            web.extract_text_document(fetched.text, url) if is_text else web.extract(fetched.text, fetched.url)
-        )
+        extracted = web.extract_text_document(fetched.text, url) if is_text else web.extract(fetched.text, fetched.url)
         extracted.url = url
         self.kept.add(url)
         if len(extracted.markdown) < MIN_PAGE_CHARS:
             self.counts["skipped"] += 1
-            store.upsert_page(sid, url, status="skipped", error="página sem conteúdo de texto", title=extracted.title, fetched_at=now)
+            store.upsert_page(
+                sid, url, status="skipped", error="página sem conteúdo de texto", title=extracted.title, fetched_at=now
+            )
             return extracted.links
 
         digest = hashlib.sha256(
@@ -382,12 +398,22 @@ class _Run:
         except Exception as exc:
             logger.warning("Falha ao indexar %s", url, exc_info=True)
             self.counts["failed"] += 1
-            store.upsert_page(sid, url, status="failed", error=f"indexação: {type(exc).__name__}: {exc}"[:500], fetched_at=now)
+            store.upsert_page(
+                sid, url, status="failed", error=f"indexação: {type(exc).__name__}: {exc}"[:500], fetched_at=now
+            )
             return extracted.links
         self.counts["indexed"] += 1
         store.upsert_page(
-            sid, url, status="indexed", content_id=content_id, title=extracted.title, content_hash=digest,
-            chunks=chunks, formatted=formatted.how, error=formatted.reason, fetched_at=now,
+            sid,
+            url,
+            status="indexed",
+            content_id=content_id,
+            title=extracted.title,
+            content_hash=digest,
+            chunks=chunks,
+            formatted=formatted.how,
+            error=formatted.reason,
+            fetched_at=now,
         )
         return extracted.links
 
@@ -411,15 +437,27 @@ class _Run:
             pages = await asyncio.to_thread(read_file, fetched.body, ext, title)
         except Exception as exc:
             self.counts["failed"] += 1
-            store.upsert_page(sid, url, status="failed", error=f"leitura: {type(exc).__name__}: {exc}"[:500],
-                              title=title, fetched_at=now)
+            store.upsert_page(
+                sid,
+                url,
+                status="failed",
+                error=f"leitura: {type(exc).__name__}: {exc}"[:500],
+                title=title,
+                fetched_at=now,
+            )
             return
         pages = [(n, text.strip()) for n, text in pages if text.strip()]
         if sum(len(text) for _, text in pages) < MIN_PAGE_CHARS:
             # PDF escaneado (só imagem) ou protegido por senha.
             self.counts["skipped"] += 1
-            store.upsert_page(sid, url, status="skipped", error="arquivo sem texto extraível (escaneado ou protegido?)",
-                              title=title, fetched_at=now)
+            store.upsert_page(
+                sid,
+                url,
+                status="skipped",
+                error="arquivo sem texto extraível (escaneado ou protegido?)",
+                title=title,
+                fetched_at=now,
+            )
             return
         try:
             content_id, chunks = await ingest_page(
@@ -443,19 +481,33 @@ class _Run:
         except Exception as exc:
             logger.warning("Falha ao indexar %s", url, exc_info=True)
             self.counts["failed"] += 1
-            store.upsert_page(sid, url, status="failed", error=f"indexação: {type(exc).__name__}: {exc}"[:500], fetched_at=now)
+            store.upsert_page(
+                sid, url, status="failed", error=f"indexação: {type(exc).__name__}: {exc}"[:500], fetched_at=now
+            )
             return
         self.counts["indexed"] += 1
         store.upsert_page(
-            sid, url, status="indexed", content_id=content_id, title=title, content_hash=digest,
-            chunks=chunks, formatted="none", error=None, fetched_at=now,
+            sid,
+            url,
+            status="indexed",
+            content_id=content_id,
+            title=title,
+            content_hash=digest,
+            chunks=chunks,
+            formatted="none",
+            error=None,
+            fetched_at=now,
         )
 
     async def run(self) -> None:
         mode, start = self.source["mode"], web.normalize_url(self.source["url"])
         limit = min(int(self.options.get("max_pages") or 50), get_settings().web_source_max_pages)
-        scope = web.Scope(start, include=list(self.options.get("include") or []),
-                          exclude=list(self.options.get("exclude") or []), same_path=mode == "crawl")
+        scope = web.Scope(
+            start,
+            include=list(self.options.get("include") or []),
+            exclude=list(self.options.get("exclude") or []),
+            same_path=mode == "crawl",
+        )
         if mode == "page":
             batch = [start]
         elif mode == "sitemap":
@@ -632,7 +684,9 @@ def schedule(source: dict[str, Any]) -> None:
     jobs.cancel_dedupe(key, only_queued=True)
     if source.get("next_sync_at") and get_settings().web_source_scheduler:
         try:
-            jobs.enqueue(JOB_KIND, {"source_id": source["id"]}, dedupe_key=key, run_after=_aware(source["next_sync_at"]))
+            jobs.enqueue(
+                JOB_KIND, {"source_id": source["id"]}, dedupe_key=key, run_after=_aware(source["next_sync_at"])
+            )
         except jobs.JobConflictError:
             pass
 
@@ -654,9 +708,11 @@ def _gave_up(job: dict[str, Any]) -> None:
         return
     now = datetime.now(timezone.utc)
     source = store.update_source(
-        source["id"], status="failed",
+        source["id"],
+        status="failed",
         status_message=f"Sincronização interrompida: {job.get('last_error') or 'falhou'}"[:500],
-        last_synced_at=now, next_sync_at=store.next_sync(source["refresh"], now),
+        last_synced_at=now,
+        next_sync_at=store.next_sync(source["refresh"], now),
     )
     schedule(source)
 

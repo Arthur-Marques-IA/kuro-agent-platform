@@ -12,7 +12,9 @@ from agent_service.observability.tracing import _tool_output
 
 
 def _agent(memory_backend: str, **kw):
-    return build_agent(agent_id=f"a-{uuid4().hex[:6]}", name="A", instructions=["oi"], memory_backend=memory_backend, **kw)
+    return build_agent(
+        agent_id=f"a-{uuid4().hex[:6]}", name="A", instructions=["oi"], memory_backend=memory_backend, **kw
+    )
 
 
 def test_memory_off_adds_no_tool_no_prompt_block_no_manager():
@@ -58,10 +60,17 @@ def test_only_the_latest_memories_go_to_the_prompt(monkeypatch):
 def test_summary_runs_once_per_history_window_and_carries_the_previous_summary(monkeypatch):
     manager = managers.IncrementalSummaryManager(model=None, every=3)
     calls = []
-    monkeypatch.setattr(managers.SessionSummaryManager, "create_session_summary", lambda self, session, run_metrics=None: calls.append(len(session.runs)))
+    monkeypatch.setattr(
+        managers.SessionSummaryManager,
+        "create_session_summary",
+        lambda self, session, run_metrics=None: calls.append(len(session.runs)),
+    )
 
     def session(n):
-        return SimpleNamespace(runs=[SimpleNamespace(parent_run_id=None) for _ in range(n)], summary=SimpleNamespace(summary="Lead Arthur, quer curso técnico."))
+        return SimpleNamespace(
+            runs=[SimpleNamespace(parent_run_id=None) for _ in range(n)],
+            summary=SimpleNamespace(summary="Lead Arthur, quer curso técnico."),
+        )
 
     for n in range(1, 10):
         manager.create_session_summary(session(n))
@@ -106,10 +115,16 @@ def test_gemini3_drops_sampling_and_thinking_budget():
         {"temperature": 0.3, "top_p": 0.9, "max_tokens": 512, "thinking_budget": 0, "reasoning": "high"}, "google"
     )
     assert provider_kwargs("google", params, "gemini-3.5-flash") == {"max_output_tokens": 512, "thinking_level": "high"}
-    assert provider_kwargs("google", params, "gemini-flash-latest") == {"max_output_tokens": 512, "thinking_level": "high"}
+    assert provider_kwargs("google", params, "gemini-flash-latest") == {
+        "max_output_tokens": 512,
+        "thinking_level": "high",
+    }
     # Gemini 2.x segue aceitando os três
     assert provider_kwargs("google", params, "gemini-2.5-flash") == {
-        "temperature": 0.3, "top_p": 0.9, "max_output_tokens": 512, "thinking_budget": 0,
+        "temperature": 0.3,
+        "top_p": 0.9,
+        "max_output_tokens": 512,
+        "thinking_budget": 0,
     }
 
 

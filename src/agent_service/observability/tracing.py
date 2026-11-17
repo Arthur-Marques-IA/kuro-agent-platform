@@ -33,11 +33,14 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.run.agent import RunEvent, RunOutputEvent
+from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from pydantic import BaseModel
 
+from agent_service.agents import session_context
+from agent_service.agents.system_context import set_system_context, set_system_dependencies
 from agent_service.config import get_settings
 from agent_service.documents import retrieval
+from agent_service.observability import prompt_composition
 from agent_service.tools import failures
 from agent_service.tools.context import set_dependencies, set_dry_run
 
@@ -120,6 +123,17 @@ class RunContext:
     """A definição do agente que vai rodar — a rota decide por ela o caminho
     (um agente procedural não é um run só do modelo)."""
 
+    input_message: str | None = None
+    """Entrada estruturada (`agents/structured_input.py`): a fala pura. `message` é o
+    texto do turno que o modelo lê (eventos e fala, sem o contexto). As três ficam
+    `None` numa chamada só com `message` numa sessão sem contexto."""
+    input_events: list[dict[str, Any]] | None = field(default=None, compare=False, repr=False)
+    input_context: list[dict[str, Any]] | None = field(default=None, compare=False, repr=False)
+    """O contexto vigente do turno, enviado ou herdado da sessão (`agents/session_context.py`)."""
+    system_context: str | None = field(default=None, compare=False, repr=False)
+    """`input_context` renderizado para o prompt de sistema (`structured_input.render_context`);
+    vai ao modelo pelo `ContextVar` de `agents/system_context.py`, nunca pela mensagem."""
+
     extra_spans: tuple[Any, ...] = ()
     """Spans que aconteceram fora do run do Agno e fazem parte da mesma execução
     (a extração e a ação de um agente procedural), gravados junto no run."""
@@ -174,12 +188,22 @@ def configure_tracing() -> None:
         )
         return
 
+    from agent_service.observability import redaction
+
+    # `TRACE_REDACT_KEYS`: o mesmo mascaramento do trace store local, no que sai para o
+    # Langfuse — pela API do SDK (`mask`) e pelos spans do instrumentor (`mask_otel_spans`).
+    masking = (
+        {"mask": redaction.langfuse_mask, "mask_otel_spans": redaction.langfuse_mask_otel_spans}
+        if redaction.redact_keys()
+        else {}
+    )
     _client = Langfuse(
         public_key=settings.langfuse_public_key,
         secret_key=settings.langfuse_secret_key,
         base_url=settings.langfuse_base_url,
         environment=settings.langfuse_environment,
         timeout=settings.langfuse_timeout_seconds,
+        **masking,
     )
     # O Langfuse registra o TracerProvider global; o instrumentor do Agno publica nele.
     AgnoInstrumentor().instrument(tracer_provider=otel_trace.get_tracer_provider())
@@ -224,6 +248,15 @@ def _agent_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOutputEvent
     # as tools com parâmetros `source="dependency"` (ver tools/context.py).
     set_dependencies(run.dependencies)
     set_dry_run(run.dry_run)
+    # O contexto vigente vai no prompt de sistema (ver `agents/system_context.py`). Setado
+    # a cada run, mesmo vazio: o de um run anterior na mesma task não sobra para este.
+    set_system_context(run.system_context)
+    # As dependencies também vão ao prompt de sistema, uma vez por chamada, e não na mensagem
+    # do usuário (que o Agno grava e reenvia como histórico). Só o analista, que é one-shot e
+    # sem histórico, segue como o Agno faz: no fim da mensagem, e o prompt de sistema fica
+    # igual entre as chamadas (cache do provedor).
+    one_shot = (run.definition or {}).get("kind") == "analysis"
+    set_system_dependencies(None if one_shot else run.dependencies)
     failures.start_run()
     retrieval.start_run()
     return agent.arun(
@@ -234,11 +267,14 @@ def _agent_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOutputEvent
         stream=True,
         stream_events=True,
         dependencies=run.dependencies,
-        add_dependencies_to_context=True if run.dependencies else None,
+        add_dependencies_to_context=True if (one_shot and run.dependencies) else None,
         images=list(run.images) or None,
         audio=list(run.audio) or None,
         videos=list(run.videos) or None,
         files=list(run.files) or None,
+        # No fim do stream o Agno entrega o `RunOutput`, de onde sai a composição do prompt
+        # (`prompt_composition.py`); `_recorded_events` o consome e não o repassa.
+        yield_run_output=True,
     )
 
 
@@ -250,14 +286,21 @@ def _ms(seconds: float | None) -> float | None:
     return round(seconds * 1000, 1) if seconds else None
 
 
-def _model_spans(metrics: Any, started_at: datetime) -> list[Any]:
-    """Uma span por modelo chamado, das métricas agregadas do Agno (`RunMetrics.details`)."""
+def _model_spans(metrics: Any, started_at: datetime, call_spans: list[Any] | None = None) -> list[Any]:
+    """Spans de modelo das métricas agregadas do Agno (`RunMetrics.details`): uma por modelo
+    chamado. Com `call_spans` (uma por chamada, de `ModelCalls`) que fecham com o agregado do
+    modelo principal, elas entram no lugar dele; o agregado dos demais (memória, resumo...)
+    continua, porque o Agno não expõe essas chamadas uma a uma."""
     from agent_service.observability.run_store import SpanRecord
 
     from agent_service.models.pricing import estimate_cost
 
-    spans = []
-    for model_type, entries in (getattr(metrics, "details", None) or {}).items():
+    details = getattr(metrics, "details", None) or {}
+    per_call = bool(call_spans) and ModelCalls.matches(call_spans or [], details.get("model"))
+    spans: list[Any] = list(call_spans or []) if per_call else []
+    for model_type, entries in details.items():
+        if per_call and model_type == "model":
+            continue
         for entry in entries or []:
             provider = getattr(entry, "provider", "") or "model"
             cost = getattr(entry, "cost", None)
@@ -268,6 +311,8 @@ def _model_spans(metrics: Any, started_at: datetime) -> list[Any]:
                     input_tokens=getattr(entry, "input_tokens", 0) or 0,
                     output_tokens=getattr(entry, "output_tokens", 0) or 0,
                     reasoning_tokens=getattr(entry, "reasoning_tokens", 0) or 0,
+                    cache_read_tokens=getattr(entry, "cache_read_tokens", 0) or 0,
+                    cache_write_tokens=getattr(entry, "cache_write_tokens", 0) or 0,
                 )
             spans.append(
                 SpanRecord(
@@ -286,14 +331,96 @@ def _model_spans(metrics: Any, started_at: datetime) -> list[Any]:
     return spans
 
 
+class ModelCalls:
+    """Uma span `GENERATION` por chamada ao modelo principal do run.
+
+    A fonte são os eventos `ModelRequestStarted`/`ModelRequestCompleted` do stream do Agno:
+    o de término traz os tokens da chamada (entrada, saída, raciocínio, cache). O `created_at`
+    do evento é em segundos, sem precisão para latência, então o início e o fim são o instante
+    em que cada evento passa por aqui (a latência inclui o tempo de quem consome o stream
+    entre eventos, desprezível fora de um consumidor travado)."""
+
+    def __init__(self) -> None:
+        self.spans: list[Any] = []
+        self._started: tuple[datetime, float] | None = None
+
+    def started(self) -> None:
+        self._started = (datetime.now(timezone.utc), time.monotonic())
+
+    def completed(self, event: Any) -> None:
+        from agent_service.models.pricing import estimate_cost
+        from agent_service.observability.run_store import SpanRecord
+
+        ended = datetime.now(timezone.utc)
+        started, began = self._started or (ended, time.monotonic())
+        self._started = None
+        provider = getattr(event, "model_provider", None) or "model"
+        model = getattr(event, "model", None) or None
+        input_tokens = getattr(event, "input_tokens", None) or 0
+        output_tokens = getattr(event, "output_tokens", None) or 0
+        reasoning = getattr(event, "reasoning_tokens", None) or 0
+        cache_read = getattr(event, "cache_read_tokens", None) or 0
+        cache_write = getattr(event, "cache_write_tokens", None) or 0
+        metadata: dict[str, Any] = {"call": len(self.spans) + 1}
+        metadata.update(
+            {
+                name: value
+                for name, value in (
+                    ("cache_read_tokens", cache_read),
+                    ("cache_write_tokens", cache_write),
+                    ("reasoning_tokens", reasoning),
+                )
+                if value
+            }
+        )
+        if ttft := _ms(getattr(event, "time_to_first_token", None)):
+            metadata["time_to_first_token_ms"] = ttft
+        self.spans.append(
+            SpanRecord(
+                type="GENERATION",
+                name=f"{provider}.model",
+                started_at=started,
+                ended_at=ended,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=getattr(event, "total_tokens", None) or input_tokens + output_tokens,
+                cost_usd=estimate_cost(
+                    provider=provider,
+                    model_id=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    reasoning_tokens=reasoning,
+                    cache_read_tokens=cache_read,
+                    cache_write_tokens=cache_write,
+                ),
+                latency_ms=round((time.monotonic() - began) * 1000, 1),
+                metadata=metadata,
+            )
+        )
+
+    @staticmethod
+    def matches(call_spans: list[Any], entries: Any) -> bool:
+        """As chamadas fecham com o agregado do Agno para o modelo principal? Só então elas o
+        substituem: tokens de entrada e saída iguais, e nenhum custo informado pelo Agno (que
+        não dá para repartir por chamada)."""
+        entries = list(entries or [])
+        if not entries or any(getattr(e, "cost", None) is not None for e in entries):
+            return False
+        entry_in = sum(getattr(e, "input_tokens", 0) or 0 for e in entries)
+        entry_out = sum(getattr(e, "output_tokens", 0) or 0 for e in entries)
+        return (
+            sum(s.input_tokens for s in call_spans) == entry_in
+            and sum(s.output_tokens for s in call_spans) == entry_out
+        )
+
+
 def _cache_metadata(entry: Any) -> dict[str, int]:
     """Tokens servidos do cache de prompt (implícito no Gemini e no OpenAI; o do
     Claude com `model_params.prompt_cache`). É o jeito de ver se o prefixo — as
     instructions e as tools — está mesmo sendo reaproveitado entre chamadas."""
     return {
-        name: value
-        for name in ("cache_read_tokens", "cache_write_tokens")
-        if (value := getattr(entry, name, 0) or 0)
+        name: value for name in ("cache_read_tokens", "cache_write_tokens") if (value := getattr(entry, name, 0) or 0)
     }
 
 
@@ -365,6 +492,8 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
         user_id=run.user_id,
         session_id=run.session_id,
         message=run.message,
+        **_structured_input(run),
+        checks=_agent_checks(run),
         started_at=datetime.now(timezone.utc),
         metadata=dict(run.metadata),
         input={
@@ -373,9 +502,14 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
             **({"attachments": list(run.attachments) or run.attachment_counts} if run.attachment_counts else {}),
         },
     )
+    if run.input_context is not None and run.endpoint.startswith("chat"):
+        # Antes de o run ir para a fila de gravação: o turno seguinte da sessão já herda
+        # este contexto, mesmo que a gravação ainda não tenha chegado ao banco.
+        session_context.remember_context(run.session_id, run.input_context, record.started_at)
     chunks: list[str] = []
     final_content: str | None = None
     completed_content: Any = None
+    calls = ModelCalls()
     events = _agent_events(agent, run)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + run.timeout_seconds if run.timeout_seconds else None
@@ -395,8 +529,18 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
                 message = f"Tempo limite de {run.timeout_seconds:g}s excedido."
                 record.status, record.status_message = "error", message
                 raise RunTimeoutError(message) from None
+            if isinstance(event, RunOutput):
+                # O fim do stream: só para medir o prompt. Quem consome não o espera.
+                record.prompt_composition = prompt_composition.measure(
+                    event.messages, system_context=run.system_context, attachments=sum(run.attachment_counts.values())
+                )
+                continue
             if event.event == RunEvent.run_content.value and isinstance(event.content, str):
                 chunks.append(event.content)
+            elif event.event == RunEvent.model_request_started.value:
+                calls.started()
+            elif event.event == RunEvent.model_request_completed.value:
+                calls.completed(event)
             elif event.event == RunEvent.run_completed.value:
                 completed_content = event.content
                 if isinstance(event.content, str):
@@ -408,10 +552,15 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
                     record.input_tokens = metrics.input_tokens or 0
                     record.output_tokens = metrics.output_tokens or 0
                     record.total_tokens = metrics.total_tokens or 0
-                    record.spans.extend(_model_spans(metrics, record.started_at))
+                    record.cache_read_tokens = metrics.cache_read_tokens or 0
+                    record.cache_write_tokens = metrics.cache_write_tokens or 0
+                    record.spans.extend(_model_spans(metrics, record.started_at, calls.spans))
+                    record.spans.sort(key=lambda span: span.started_at)  # gerações e tools na ordem real
                     # Custo do Agno quando ele informa; senão, a soma estimada por modelo.
                     span_costs = [s.cost_usd for s in record.spans if s.type == "GENERATION" and s.cost_usd is not None]
-                    record.cost_usd = metrics.cost if metrics.cost is not None else (sum(span_costs) if span_costs else None)
+                    record.cost_usd = (
+                        metrics.cost if metrics.cost is not None else (sum(span_costs) if span_costs else None)
+                    )
             elif event.event == RunEvent.run_error.value:
                 record.status = "error"
                 record.status_message = event.content or RUN_FAILED
@@ -451,7 +600,23 @@ async def _recorded_events(agent: Agent, run: RunContext) -> AsyncIterator[RunOu
         _add_extra_spans(record, run.extra_spans)
         _set_collection_version(record, run)
         record.ended_at = datetime.now(timezone.utc)
+        if record.status == "success" and record.output and run.endpoint.startswith("chat"):
+            session_context.remember_reply(run.session_id, record.output, record.started_at)
         run_store.record_run(record)
+
+
+def _structured_input(run: RunContext) -> dict[str, Any]:
+    """As colunas da entrada estruturada do run (`None` nas três no legado)."""
+    return {
+        "input_message": run.input_message,
+        "input_events": run.input_events,
+        "input_context": run.input_context,
+    }
+
+
+def _agent_checks(run: RunContext) -> list[dict[str, Any]]:
+    """As checagens do agente que rodou (`observability/checks.py`), avaliadas ao gravar o run."""
+    return list((run.definition or {}).get("checks") or [])
 
 
 def _set_collection_version(record: Any, run: RunContext) -> None:
@@ -513,6 +678,8 @@ def record_run_without_model(
         user_id=run.user_id,
         session_id=run.session_id,
         message=run.message,
+        **_structured_input(run),
+        checks=_agent_checks(run),
         started_at=min((s.started_at for s in run.extra_spans), default=started),
         metadata=dict(run.metadata),
         input={"message": run.message, "dependencies": run.dependencies},
@@ -590,7 +757,9 @@ async def _produce(client: "Langfuse", agent: Agent, run: RunContext, queue: asy
                 input={
                     "message": run.message,
                     "dependencies": run.dependencies,
-                    **({"attachments": list(run.attachments) or run.attachment_counts} if run.attachment_counts else {}),
+                    **(
+                        {"attachments": list(run.attachments) or run.attachment_counts} if run.attachment_counts else {}
+                    ),
                 },
             ) as root,
         ):

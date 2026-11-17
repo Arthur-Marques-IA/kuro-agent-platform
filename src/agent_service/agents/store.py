@@ -70,6 +70,9 @@ agent_definitions = Table(
     # Resposta em texto puro: desliga o "Use markdown" que o Agno põe no prompt (WhatsApp).
     Column("plain_text", Boolean, nullable=False, default=False),
     Column("num_history_runs", Integer, nullable=False, default=10),
+    # Quantas chamadas de tool dos turnos anteriores voltam no histórico (as mais
+    # recentes, `max_tool_calls_from_history` do Agno); None = todas.
+    Column("history_tool_calls", Integer, nullable=True),
     # "conversational" (padrão, com histórico/memória) ou "analysis" (one-shot,
     # devolve `response_schema` validado em vez de texto — ver `agents/response_model.py`).
     Column("kind", String, nullable=False, default="conversational"),
@@ -84,6 +87,9 @@ agent_definitions = Table(
     Column("model_params", JSON, nullable=True),
     # Tempo limite de uma execução; None = RUN_TIMEOUT_SECONDS do serviço.
     Column("timeout_seconds", Integer, nullable=True),
+    # Checagens determinísticas avaliadas em toda execução real (`observability/checks.py`);
+    # None/[] = nenhuma.
+    Column("checks", JSON, nullable=True),
     Column("is_seed", Boolean, nullable=False, default=False),
     Column("prompt_version", Integer, nullable=False, default=1),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
@@ -149,7 +155,10 @@ agent_feedback_versions = Table(
 
 
 def _row_to_dict(row: Any) -> dict[str, Any]:
-    return dict(row._mapping)
+    data = dict(row._mapping)
+    if "checks" in data:
+        data["checks"] = data["checks"] or []  # NULL (agente anterior à 0019) = nenhuma checagem
+    return data
 
 
 def list_definitions() -> list[dict[str, Any]]:
@@ -160,9 +169,7 @@ def list_definitions() -> list[dict[str, Any]]:
 
 def get_definition(agent_type: str) -> dict[str, Any] | None:
     with get_db().db_engine.connect() as conn:
-        row = conn.execute(
-            select(agent_definitions).where(agent_definitions.c.agent_type == agent_type)
-        ).first()
+        row = conn.execute(select(agent_definitions).where(agent_definitions.c.agent_type == agent_type)).first()
         return _row_to_dict(row) if row else None
 
 
@@ -181,11 +188,13 @@ def create_definition(
     session_summary: bool = False,
     plain_text: bool = False,
     num_history_runs: int = 10,
+    history_tool_calls: int | None = None,
     kind: str = "conversational",
     response_schema: list[dict[str, Any]] | None = None,
     stages: list[dict[str, Any]] | None = None,
     model_params: dict[str, Any] | None = None,
     timeout_seconds: int | None = None,
+    checks: list[dict[str, Any]] | None = None,
     is_seed: bool = False,
 ) -> dict[str, Any]:
     engine = get_db().db_engine
@@ -205,20 +214,18 @@ def create_definition(
                 session_summary=session_summary,
                 plain_text=plain_text,
                 num_history_runs=num_history_runs,
+                history_tool_calls=history_tool_calls,
                 kind=kind,
                 response_schema=response_schema or [],
                 stages=stages or [],
                 model_params=model_params or None,
                 timeout_seconds=timeout_seconds,
+                checks=checks or None,
                 is_seed=is_seed,
                 prompt_version=1,
             )
         )
-        conn.execute(
-            insert(agent_prompt_versions).values(
-                agent_type=agent_type, version=1, instructions=instructions
-            )
-        )
+        conn.execute(insert(agent_prompt_versions).values(agent_type=agent_type, version=1, instructions=instructions))
     definition = get_definition(agent_type)
     assert definition is not None
     return definition
@@ -251,11 +258,13 @@ def update_definition(
     session_summary: bool | None = None,
     plain_text: bool | None = None,
     num_history_runs: int | None = None,
+    history_tool_calls: int | None = _UNSET,
     kind: str | None = None,
     response_schema: list[dict[str, Any]] | None = None,
     stages: list[dict[str, Any]] | None = None,
     model_params: dict[str, Any] | None = _UNSET,
     timeout_seconds: int | None = _UNSET,
+    checks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     current = get_definition(agent_type)
     if current is None:
@@ -284,6 +293,8 @@ def update_definition(
         values["plain_text"] = plain_text
     if num_history_runs is not None:
         values["num_history_runs"] = num_history_runs
+    if history_tool_calls is not _UNSET:
+        values["history_tool_calls"] = history_tool_calls
     if kind is not None:
         values["kind"] = kind
     if response_schema is not None:
@@ -294,6 +305,8 @@ def update_definition(
         values["model_params"] = model_params or None
     if timeout_seconds is not _UNSET:
         values["timeout_seconds"] = timeout_seconds
+    if checks is not None:
+        values["checks"] = checks or None
 
     prompt_changed = instructions is not None and instructions != current["instructions"]
     if prompt_changed:
@@ -303,11 +316,7 @@ def update_definition(
     engine = get_db().db_engine
     with engine.begin() as conn:
         if values:
-            conn.execute(
-                update(agent_definitions)
-                .where(agent_definitions.c.agent_type == agent_type)
-                .values(**values)
-            )
+            conn.execute(update(agent_definitions).where(agent_definitions.c.agent_type == agent_type).values(**values))
         if prompt_changed:
             conn.execute(
                 insert(agent_prompt_versions).values(
@@ -343,9 +352,7 @@ def list_prompt_versions(agent_type: str) -> list[dict[str, Any]]:
 
 def get_feedback_note(agent_type: str) -> dict[str, Any] | None:
     with get_db().db_engine.connect() as conn:
-        row = conn.execute(
-            select(agent_feedback_notes).where(agent_feedback_notes.c.agent_type == agent_type)
-        ).first()
+        row = conn.execute(select(agent_feedback_notes).where(agent_feedback_notes.c.agent_type == agent_type)).first()
     if row is None:
         return None
     note = _row_to_dict(row)

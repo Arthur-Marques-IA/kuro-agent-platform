@@ -15,7 +15,9 @@ const nextConfig: NextConfig = {
   // absoluta ("/api/...") no client não é — o Next não reescreve isso. Os
   // client components que chamam a API do próprio BFF (sidebar, chat) usam
   // esta env pra montar a URL certa (ver frontend/src/lib/http.ts).
-  env: { NEXT_PUBLIC_BASE_PATH: basePath },
+  // NEXT_PUBLIC_BUILD_SHA: hash do commit do build (ARG do Dockerfile), mostrado no rodapé da
+  // sidebar ao lado da versão do serviço. Fora da imagem fica "dev".
+  env: { NEXT_PUBLIC_BASE_PATH: basePath, NEXT_PUBLIC_BUILD_SHA: process.env.NEXT_PUBLIC_BUILD_SHA || "dev" },
   // Rotas antigas (abas separadas) → áreas equivalentes do console unificado.
   async redirects() {
     return [

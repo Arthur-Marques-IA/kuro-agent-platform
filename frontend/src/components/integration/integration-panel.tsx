@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { requestJson } from "@/lib/http";
 import { Skeleton } from "@/components/ui/primitives";
 import type { IntegrationContract } from "@/lib/types";
+import type { ChatEventPayload, ContextBlockPayload } from "@/lib/chat-request";
 
 /**
  * Exemplo de chamada ao contrato estável, montado a partir de
@@ -33,12 +34,22 @@ export function IntegrationPanel({
   userId = "user-123",
   sessionId = "session-abc",
   dependencies,
+  context,
+  contextInherited = false,
+  events,
   showReference = false,
 }: {
   agentType: string;
   userId?: string;
   sessionId?: string;
   dependencies?: Record<string, unknown> | null;
+  /** O `context` que a próxima mensagem do Playground manda (`contextToSend`): `undefined`
+   * fica fora do exemplo (o servidor herda o da sessão), `[]` limpa. */
+  context?: ContextBlockPayload[];
+  /** A conversa já mandou o contexto e ele não mudou: o exemplo vai sem `context`, com aviso. */
+  contextInherited?: boolean;
+  /** Eventos (`human_agent`) que vão junto da fala; vazio fica fora do exemplo. */
+  events?: ChatEventPayload[];
   showReference?: boolean;
 }) {
   const hasRealDependencies = Boolean(dependencies && Object.keys(dependencies).length > 0);
@@ -77,8 +88,13 @@ export function IntegrationPanel({
     }
     if (hasRealDependencies) body.dependencies = dependencies;
     if (!includeDependencies) delete body.dependencies;
+    // Entrada estruturada só quando a tela usa: chamada sem ela continua igual à de sempre.
+    if (contract.kind !== "analysis" && contract.kind !== "procedural") {
+      if (events?.length) body.events = events;
+      if (context !== undefined) body.context = context;
+    }
     return body;
-  }, [contract, dependencies, hasRealDependencies, includeDependencies, sessionId, userId]);
+  }, [contract, context, dependencies, events, hasRealDependencies, includeDependencies, sessionId, userId]);
 
   const temDependencies = (contract?.dependencies.length ?? 0) > 0 || hasRealDependencies;
   const requiresAuth = contract?.curl.includes("Authorization") ?? false;
@@ -153,6 +169,13 @@ export function IntegrationPanel({
           </p>
         )}
         <CodeBlock code={code} title={`POST ${endpoint} · ${languageLabel}`} />
+        {contextInherited && (
+          <p className="text-xs text-muted-foreground">
+            Sem <code className="font-mono">context</code>: os blocos não mudaram desde a última mensagem, e o
+            servidor usa o contexto que já tem desta sessão. Mande a lista inteira quando ela mudar, ou{" "}
+            <code className="font-mono">[]</code> para limpar.
+          </p>
+        )}
       </div>
 
       {contract.warnings.length > 0 && (

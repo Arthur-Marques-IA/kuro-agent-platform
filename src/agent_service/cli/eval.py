@@ -21,9 +21,14 @@ Regras de política (`--rules regras.json`) valem para **toda** saída, com ou s
       "field": "identidade_confirmada", "op": "eq", "value": true},
      {"name": "teto", "field": "acordo.valor_acordo", "op": "lte", "value": {"$dep": "teto"}}]
 
-`op`: eq, ne, in, not_in, lt, lte, gt, gte, exists, not_exists. `{"$dep": "a.b"}`
-lê o valor das `dependencies` do caso. Um caso passa quando todos os campos
+`op`: eq, ne, in, not_in, lt, lte, gt, gte, exists, not_exists, contains, matches (regex,
+com as mesmas travas das checagens). `{"$dep": "a.b"}` lê o valor das `dependencies` do caso. Um caso passa quando todos os campos
 comparados batem e nenhuma regra é violada.
+
+`--agent-checks` soma às regras as checagens do próprio agente (`checks`, as que valem
+em toda execução real). O `/analyze` só devolve a saída, então só entram as checagens que
+leem `result.<campo>`, `output`, `output_chars`, `status` e `dependencies.<campo>`; as que
+leem tools, latência, tokens ou metadata ficam fora (listadas em `skipped_checks`).
 
 Saída: código 0 se a taxa de casos aprovados atinge `--min-pass` e nenhuma regra
 foi violada; 1 caso contrário. Com `--compare outro-agente`, os dois rodam o
@@ -75,6 +80,21 @@ def check_rules_spec(rules: Any) -> list[dict[str, Any]]:
     return rules
 
 
+EVALUABLE_ROOTS = ("result", "output", "output_chars", "status", "dependencies")
+"""Os fatos de uma checagem que o eval consegue montar a partir da resposta do `/analyze`."""
+
+
+def split_agent_checks(checks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Separa as checagens do agente em as que o eval avalia e os nomes das que ficam de fora."""
+
+    def evaluable(check: dict[str, Any]) -> bool:
+        parts = [check, check.get("when") or {}]
+        return all(str(p.get("field", "x")).split(".")[0] in EVALUABLE_ROOTS for p in parts if p)
+
+    usable = [c for c in checks if evaluable(c)]
+    return usable, [c["name"] for c in checks if not evaluable(c)]
+
+
 def _run_case(
     client: Client,
     agent_type: str,
@@ -84,6 +104,7 @@ def _run_case(
     tolerance: float,
     score: bool,
     dry_run: bool = False,
+    agent_checks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     document = case["input"] if isinstance(case["input"], str) else json.dumps(case["input"], ensure_ascii=False)
     dependencies = case.get("dependencies") or {}
@@ -101,12 +122,27 @@ def _run_case(
     result = response["result"]
     mismatches = compare(expected, result, fields, tolerance)
     violations = check_rules(rules, result, dependencies)
+    if agent_checks:
+        output = json.dumps(result, ensure_ascii=False)
+        facts = {
+            "result": result,
+            "output": output,
+            "output_chars": len(output),
+            "status": "success",
+            "dependencies": dependencies,
+        }
+        violations += check_rules(agent_checks, facts, dependencies)
     fields_compared = len(fields) if fields else len(flatten(expected))
     passed = not mismatches and not violations
     if score:
         try:
             client.score(
-                {"run_id": response["run_id"], "name": "eval", "value": 1 if passed else 0, "comment": f"caso {case['id']}"}
+                {
+                    "run_id": response["run_id"],
+                    "name": "eval",
+                    "value": 1 if passed else 0,
+                    "comment": f"caso {case['id']}",
+                }
             )
         except (ServiceUnavailable, ApiError):
             pass  # a nota é um extra; o relatório continua valendo
@@ -123,7 +159,9 @@ def _run_case(
     }
 
 
-def _run_all(client: Client, agent_type: str, cases: list[dict[str, Any]], concurrency: int, **options: Any) -> list[dict[str, Any]]:
+def _run_all(
+    client: Client, agent_type: str, cases: list[dict[str, Any]], concurrency: int, **options: Any
+) -> list[dict[str, Any]]:
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         return list(pool.map(lambda case: _run_case(client, agent_type, case, **options), cases))
 
@@ -141,6 +179,7 @@ def run_evaluation(
     concurrency: int = 4,
     score: bool = True,
     dry_run: bool = False,
+    agent_checks: bool = False,
 ) -> dict[str, Any]:
     """Roda o dataset e devolve `{summary, results, compare?, verdict}`.
 
@@ -151,11 +190,24 @@ def run_evaluation(
             raise EvalInputError(f"{name!r} não é um agente 'analysis' — o eval v0 compara saídas estruturadas")
 
     options = {"fields": fields, "rules": rules or [], "tolerance": tolerance, "score": score, "dry_run": dry_run}
+    skipped: list[str] = []
+    if agent_checks:
+        usable, skipped = split_agent_checks(client.get_agent(agent_type).get("checks") or [])
+        options["agent_checks"] = usable
     results = _run_all(client, agent_type, cases, concurrency, **options)
-    compare_results = _run_all(client, compare_with, cases, concurrency, **options) if compare_with else None
+    if compare_with and agent_checks:
+        # O candidato é medido pelas próprias checagens; o comparado, pelas dele.
+        usable_other, _ = split_agent_checks(client.get_agent(compare_with).get("checks") or [])
+        compare_results = _run_all(
+            client, compare_with, cases, concurrency, **{**options, "agent_checks": usable_other}
+        )
+    else:
+        compare_results = _run_all(client, compare_with, cases, concurrency, **options) if compare_with else None
 
     summary = summarize(agent_type, results)
     report: dict[str, Any] = {"summary": summary, "results": results}
+    if skipped:
+        report["skipped_checks"] = skipped
     if summary["errors"] == summary["cases"]:
         verdict = {"ok": False, "reason": "todos os casos falharam ao executar — veja `error` em cada um"}
     elif summary["policy_violations"]:
@@ -198,9 +250,17 @@ def _render(report: dict[str, Any]) -> None:
             for r in failed[:30]:
                 reasons = [r["error"]] if r["error"] else []
                 reasons += [f"{m['field']}: esperado {m['expected']!r}, veio {m['actual']!r}" for m in r["mismatches"]]
-                reasons += [f"[red]regra {v['rule']}[/] ({v['field']} {v['op']} {v['expected']!r}; veio {v['actual']!r})" for v in r["violations"]]
+                reasons += [
+                    f"[red]regra {v['rule']}[/] ({v['field']} {v['op']} {v['expected']!r}; veio {v['actual']!r})"
+                    for v in r["violations"]
+                ]
                 table.add_row(str(r["id"]), "\n".join(reasons))
             console.print(table)
+    if report.get("skipped_checks"):
+        console.print(
+            f"[dim]checagens do agente fora do eval (leem tools, latência ou metadata): "
+            f"{', '.join(report['skipped_checks'])}[/]"
+        )
     verdict = report["verdict"]
     color = "green" if verdict["ok"] else "red"
     console.print(f"\n[{color}]{'✓' if verdict['ok'] else '✗'} {verdict['reason']}[/]")
@@ -210,15 +270,28 @@ def eval_command(
     ctx: typer.Context,
     agent_type: str = typer.Argument(..., help="Agente candidato (kind='analysis'), ex.: r8-draft."),
     file: str = typer.Option(..., "--file", "-f", help="Dataset JSONL: {id, input, dependencies, expected} por linha."),
-    rules_file: str | None = typer.Option(None, "--rules", "-r", help="Regras de política (JSON) que nenhuma saída pode violar."),
-    fields: str | None = typer.Option(None, "--fields", help="Só estes campos (vírgula; caminho com ponto: acordo.qtd_parcelas)."),
-    compare_with: str | None = typer.Option(None, "--compare", help="Roda o mesmo dataset neste agente (ex.: o de produção) e compara."),
-    min_pass: float = typer.Option(0.9, "--min-pass", min=0.0, max=1.0, help="Fração mínima de casos aprovados para sair com 0."),
+    rules_file: str | None = typer.Option(
+        None, "--rules", "-r", help="Regras de política (JSON) que nenhuma saída pode violar."
+    ),
+    fields: str | None = typer.Option(
+        None, "--fields", help="Só estes campos (vírgula; caminho com ponto: acordo.qtd_parcelas)."
+    ),
+    compare_with: str | None = typer.Option(
+        None, "--compare", help="Roda o mesmo dataset neste agente (ex.: o de produção) e compara."
+    ),
+    min_pass: float = typer.Option(
+        0.9, "--min-pass", min=0.0, max=1.0, help="Fração mínima de casos aprovados para sair com 0."
+    ),
     tolerance: float = typer.Option(0.01, "--tolerance", min=0.0, help="Diferença aceita em campos numéricos."),
     concurrency: int = typer.Option(4, "--concurrency", "-c", min=1, max=16, help="Casos em paralelo."),
     no_score: bool = typer.Option(False, "--no-score", help="Não grava a nota `eval` (1/0) em cada run."),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Execução de teste: as tools recebem `X-Kuro-Dry-Run: true` e decidem o que simular."
+    ),
+    agent_checks: bool = typer.Option(
+        False,
+        "--agent-checks",
+        help="Soma as checagens do próprio agente (as que leem result, output, status e dependencies) às regras.",
     ),
 ) -> None:
     """Avalia um agente analista contra um dataset, de forma determinística.
@@ -251,6 +324,7 @@ def eval_command(
             concurrency=concurrency,
             score=not no_score,
             dry_run=dry_run,
+            agent_checks=agent_checks,
         )
     except EvalInputError as exc:
         fail(st, str(exc), EXIT_USAGE)

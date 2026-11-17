@@ -184,7 +184,9 @@ def _api_message(exc: ApiError) -> str:
     detail = exc.detail
     if isinstance(detail, list):  # erros de validação do FastAPI
         detail = "; ".join(
-            f"{'.'.join(str(p) for p in d.get('loc', [])[1:]) or 'body'}: {d.get('msg')}" if isinstance(d, dict) else str(d)
+            f"{'.'.join(str(p) for p in d.get('loc', [])[1:]) or 'body'}: {d.get('msg')}"
+            if isinstance(d, dict)
+            else str(d)
             for d in detail
         )
     elif isinstance(detail, dict):
@@ -247,7 +249,7 @@ def _extras(
         body["dry_run"] = True
 
 
-COLLECTION_FIELDS = ("label", "description", "search_mode", "max_results", "vector_weight", "reranker")
+COLLECTION_FIELDS = ("label", "description", "search_mode", "language", "max_results", "vector_weight", "reranker")
 """O que `PUT /collections/{nome}` aceita (`CollectionUpdateIn`)."""
 
 SITE_FIELDS = (
@@ -423,8 +425,12 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
 
     @server.tool(annotations=READ)
     def provider_models(
-        provider: Annotated[str, Field(description="Provedor de modelo, ex.: google, openai, anthropic. Veja providers_list.")],
-        refresh: Annotated[bool, Field(description="Ignora o cache de 15 minutos e consulta o provedor de novo.")] = False,
+        provider: Annotated[
+            str, Field(description="Provedor de modelo, ex.: google, openai, anthropic. Veja providers_list.")
+        ],
+        refresh: Annotated[
+            bool, Field(description="Ignora o cache de 15 minutos e consulta o provedor de novo.")
+        ] = False,
     ) -> dict[str, Any]:
         """Modelos que o provedor oferece agora (o que vale em `model_id`). Cada um traz
         `channel`: stable | preview | alias — não use preview/alias em produção."""
@@ -460,7 +466,10 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     def agent_get(
         agent_type: AgentType,
         editable: Annotated[
-            bool, Field(description="Só os campos aceitos por agent_apply/agent_set, sem corte: o ponto de partida para editar.")
+            bool,
+            Field(
+                description="Só os campos aceitos por agent_apply/agent_set, sem corte: o ponto de partida para editar."
+            ),
         ] = False,
     ) -> dict[str, Any]:
         """Definição de um agente. Com `editable=true`, só os campos aceitos por
@@ -481,7 +490,9 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     def agent_apply(
         definition: Annotated[
             dict[str, Any],
-            Field(description="A definição do agente: agent_type (obrigatório) e os campos de agent_get(editable=true)."),
+            Field(
+                description="A definição do agente: agent_type (obrigatório) e os campos de agent_get(editable=true)."
+            ),
         ],
         ok: Annotated[Confirmacao, Resolve(_confirm_apply)],
         dry_run: ValidateOnly = False,
@@ -500,7 +511,12 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         current = next((a for a in _call(client.list_agents) if a["agent_type"] == agent_type), None)
         if current is None:
             agent = _call(client.create_agent, definition, dry_run=dry_run)
-            return {"action": "create", "dry_run": dry_run, "changed": sorted(k for k in definition if k != "agent_type"), "agent": agent}
+            return {
+                "action": "create",
+                "dry_run": dry_run,
+                "changed": sorted(k for k in definition if k != "agent_type"),
+                "agent": agent,
+            }
         changes = {k: v for k, v in definition.items() if k != "agent_type" and current.get(k) != v}
         if not changes:
             return {"action": "unchanged", "dry_run": dry_run, "changed": [], "agent": current}
@@ -517,7 +533,10 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         agent_type: AgentType,
         changes: Annotated[
             dict[str, Any],
-            Field(description='Só os campos a mudar, ex.: {"num_history_runs": 5}. Aceitos: os de agent_get(editable=true).'),
+            Field(
+                description='Só os campos a mudar, ex.: {"num_history_runs": 5, "history_tool_calls": 3}. '
+                "Aceitos: os de agent_get(editable=true)."
+            ),
         ],
         ok: Annotated[Confirmacao, Resolve(_confirm_set)],
         dry_run: ValidateOnly = False,
@@ -536,7 +555,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     def agent_versions(
         agent_type: AgentType,
         version: Annotated[
-            int | None, Field(description="Uma versão só, com o texto inteiro das instructions. Sem ela, a lista resumida.")
+            int | None,
+            Field(description="Uma versão só, com o texto inteiro das instructions. Sem ela, a lista resumida."),
         ] = None,
     ) -> dict[str, Any]:
         """Histórico do prompt (instructions). Sem `version`, a lista resumida (versão, data,
@@ -552,14 +572,21 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         for v in versions:
             text = "\n".join(v.get("instructions") or [])
             items.append(
-                {"version": v["version"], "created_at": v.get("created_at"), "chars": len(text), "preview": _clip(text, 200)}
+                {
+                    "version": v["version"],
+                    "created_at": v.get("created_at"),
+                    "chars": len(text),
+                    "preview": _clip(text, 200),
+                }
             )
         return _fit({"items": items})
 
     @server.tool(annotations=READ)
     def agent_revisions(
         agent_type: AgentType,
-        version: Annotated[int | None, Field(description="Uma versão só (o agent_version de um run), completa.")] = None,
+        version: Annotated[
+            int | None, Field(description="Uma versão só (o agent_version de um run), completa.")
+        ] = None,
     ) -> dict[str, Any]:
         """Versões da configuração inteira (modelo, tools, schema, regras) — é o
         `agent_version` que cada run grava. Com `version`, a configuração completa dela."""
@@ -637,13 +664,17 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         if _call(client.get_agent, agent_type)["instructions"] == target["instructions"]:
             return NadaAFazer()  # nada vai mudar: não incomoda a pessoa
         preview = "\n".join(target["instructions"])
-        return _ask(ctx, f"kuro agents rollback {agent_type} {version} --yes", f"Restaurar as instructions da v{version} de {agent_type!r}? Vira uma versão nova.\n\n{_clip(preview, 1500)}")
+        return _ask(
+            ctx,
+            f"kuro agents rollback {agent_type} {version} --yes",
+            f"Restaurar as instructions da v{version} de {agent_type!r}? Vira uma versão nova.\n\n{_clip(preview, 1500)}",
+        )
 
     @server.tool(annotations=DESTRUCTIVE)
     def agent_rollback(
         agent_type: AgentType,
         version: Annotated[int, Field(description="A versão do prompt a restaurar (veja agent_versions).")],
-        ok: Annotated[Confirmacao, Resolve(_confirm_rollback)]
+        ok: Annotated[Confirmacao, Resolve(_confirm_rollback)],
     ) -> dict[str, Any]:
         """Reaplica as instructions de uma versão anterior do prompt (pede confirmação).
         Não apaga histórico: grava uma versão nova com o texto antigo."""
@@ -663,14 +694,14 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             ctx,
             f"kuro agents promote {source} --to {to} --yes",
             f"Copiar a configuração de {source!r} para {to!r}? Instructions, modelo, tools, schema e regras "
-            f"de {to!r} serão substituídos (o destino é criado se não existir). Rodou o eval antes?"
+            f"de {to!r} serão substituídos (o destino é criado se não existir). Rodou o eval antes?",
         )
 
     @server.tool(annotations=DESTRUCTIVE)
     def agent_promote(
         source: Annotated[str, Field(description="O agente de onde a configuração sai, ex.: r8-draft.")],
         to: Annotated[str, Field(description="O agente que recebe a configuração (criado se não existir), ex.: r8.")],
-        ok: Annotated[Confirmacao, Resolve(_confirm_promote)]
+        ok: Annotated[Confirmacao, Resolve(_confirm_promote)],
     ) -> dict[str, Any]:
         """Copia a configuração de um agente para outro — o fluxo draft → prod (pede
         confirmação). Para criar o draft, promova ao contrário: source=prod, to=prod-draft."""
@@ -739,7 +770,11 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         return _call(client.rollback_feedback, agent_type, version)
 
     def _confirm_clear(agent_type: str, ctx: Context) -> Elicit[Confirmacao]:
-        return _ask(ctx, f"kuro agents feedback {agent_type} --clear --yes", f"Zerar a nota de feedback de {agent_type!r}, com o histórico? Não tem volta.")
+        return _ask(
+            ctx,
+            f"kuro agents feedback {agent_type} --clear --yes",
+            f"Zerar a nota de feedback de {agent_type!r}, com o histórico? Não tem volta.",
+        )
 
     @server.tool(annotations=DESTRUCTIVE)
     def feedback_clear(agent_type: AgentType, ok: Annotated[Confirmacao, Resolve(_confirm_clear)]) -> dict[str, Any]:
@@ -788,7 +823,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         agent_type: AgentType,
         document: Annotated[str | None, Field(description="O texto a analisar (ou JSON como texto).")] = None,
         document_file: Annotated[
-            str | None, Field(description="Caminho de um arquivo de texto local. Recusado quando o MCP roda no servidor.")
+            str | None,
+            Field(description="Caminho de um arquivo de texto local. Recusado quando o MCP roda no servidor."),
         ] = None,
         dependencies: Dependencies = None,
         session_id: Annotated[
@@ -827,11 +863,14 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     def eval(
         agent_type: AgentType,
         cases_file: Annotated[
-            str | None, Field(description="Caminho de um JSONL local. Recusado quando o MCP roda no servidor: use cases.")
+            str | None,
+            Field(description="Caminho de um JSONL local. Recusado quando o MCP roda no servidor: use cases."),
         ] = None,
         cases: Annotated[
             list[dict[str, Any]] | None,
-            Field(description='Os casos: [{"id", "input": texto ou objeto, "dependencies", "expected": {campo: valor}}].'),
+            Field(
+                description='Os casos: [{"id", "input": texto ou objeto, "dependencies", "expected": {campo: valor}}].'
+            ),
         ] = None,
         rules_file: Annotated[
             str | None, Field(description="Caminho de um JSON de regras local. Recusado quando o MCP roda no servidor.")
@@ -839,7 +878,7 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         rules: Annotated[
             list[dict[str, Any]] | None,
             Field(
-                description='Regras de negócio: [{"name", "field", "op": eq|ne|in|not_in|lt|lte|gt|gte|exists|not_exists, '
+                description='Regras de negócio: [{"name", "field", "op": eq|ne|in|not_in|lt|lte|gt|gte|exists|not_exists|contains|matches, '
                 '"value" (ou {"$dep": "campo"}), "when"?}]. Violação reprova o caso.'
             ),
         ] = None,
@@ -851,6 +890,13 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         ] = None,
         min_pass: Annotated[float, Field(description="Taxa de acerto mínima (0 a 1) para verdict.ok.")] = 0.9,
         tolerance: Annotated[float, Field(description="Diferença aceita entre números (relativa).")] = 0.01,
+        agent_checks: Annotated[
+            bool,
+            Field(
+                description="Soma às regras as checagens do próprio agente que leem result, output, status e "
+                "dependencies (as que leem tools, latência ou metadata ficam fora: skipped_checks)."
+            ),
+        ] = False,
         dry_run: DryRun = True,
     ) -> dict[str, Any]:
         """Avalia um agente analista contra um dataset, campo a campo (o mesmo que
@@ -861,8 +907,10 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         try:
             if (cases_file is None) == (cases is None):
                 raise EvalInputError("informe cases_file ou cases (um dos dois)")
-            parsed = parse_cases(_read_text(cases_file, "cases"), cases_file) if cases_file else parse_cases(
-                "\n".join(json.dumps(c, ensure_ascii=False) for c in cases or []), "cases"
+            parsed = (
+                parse_cases(_read_text(cases_file, "cases"), cases_file)
+                if cases_file
+                else parse_cases("\n".join(json.dumps(c, ensure_ascii=False) for c in cases or []), "cases")
             )
             if rules_file and rules is not None:
                 raise EvalInputError("informe rules_file ou rules, não os dois")
@@ -877,6 +925,7 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
                 min_pass=min_pass,
                 tolerance=tolerance,
                 dry_run=dry_run,
+                agent_checks=agent_checks,
             )
         except (EvalInputError, ValueError) as exc:
             raise ToolError(str(exc)) from exc
@@ -891,7 +940,7 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     @server.tool(annotations=READ)
     def tools_list() -> dict[str, Any]:
         """Tools cadastradas (as que um agente pode usar em `tools`)."""
-        keys = ("tool_name", "kind", "label", "enabled", "side_effect", "is_seed")
+        keys = ("tool_name", "kind", "label", "enabled", "side_effect", "side_effect_suggested", "is_seed")
         return {"items": [{k: t.get(k) for k in keys} for t in _call(client.list_tools)]}
 
     @server.tool(annotations=READ)
@@ -1002,9 +1051,12 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             Literal["success", "error"] | None, Field(description="Só os que deram certo ou só os com erro.")
         ] = None,
         session_id: Annotated[
-            str | None, Field(description="Só os runs desta conversa (inclui os testes, qualquer que seja include_tests).")
+            str | None,
+            Field(description="Só os runs desta conversa (inclui os testes, qualquer que seja include_tests)."),
         ] = None,
-        user_id: Annotated[str | None, Field(description="Só os runs deste user_id (mcp, cli ou o de uma integração).")] = None,
+        user_id: Annotated[
+            str | None, Field(description="Só os runs deste user_id (mcp, cli ou o de uma integração).")
+        ] = None,
         agent_version: Annotated[
             int | None, Field(description="Só runs desta versão da configuração (agent_revisions).")
         ] = None,
@@ -1024,6 +1076,10 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         ] = None,
         tool_failed: Annotated[bool, Field(description="Só os em que alguma tool falhou.")] = False,
         side_effect: Annotated[bool, Field(description="Só os que chamaram tool com efeito colateral.")] = False,
+        check_failed: Annotated[
+            bool, Field(description="Só os com alguma checagem automática do agente reprovada.")
+        ] = False,
+        check: Annotated[str | None, Field(description="Só os em que esta checagem (pelo nome) reprovou.")] = None,
         feedback: Annotated[
             Literal["up", "down", "none"] | None,
             Field(description="Pelo feedback: positivo (up), negativo (down) ou sem nota (none)."),
@@ -1039,7 +1095,9 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         cursor: Annotated[str | None, Field(description="O next_cursor da página anterior.")] = None,
     ) -> dict[str, Any]:
         """Execuções mais recentes, com filtros de revisão: `complexity` (1–3),
-        `tool_failed`, `side_effect`, `feedback`, `rag`, `sample` (amostra aleatória),
+        `tool_failed`, `side_effect`, `check_failed`/`check` (checagens automáticas do agente
+        reprovadas; o resultado de cada uma vem em `checks` de cada run), `feedback`, `rag`,
+        `sample` (amostra aleatória),
         `meta` (metadata que quem chamou mandou, ex.: {"conversation_id": "98231"}).
         Para achar uma execução: `since`/`until` (o horário de um print) e `search` (um pedaço
         do id da conversa). `sort` põe as mais caras ou lentas primeiro.
@@ -1065,6 +1123,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             complexity=complexity or None,
             tool_failed=True if tool_failed else None,
             side_effect=True if side_effect else None,
+            check_failed=True if check_failed else None,
+            check=check,
             feedback=feedback,
             # Numa conversa específica o teste é o que se procura: o run que o chat acabou de criar.
             include_dry_run=None if include_tests or session_id else False,
@@ -1124,7 +1184,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         ] = None,
         user_id: Annotated[str | None, Field(description="Só as sessões deste user_id.")] = None,
         limit: Annotated[
-            int, Field(description="Quantas execuções recentes são varridas para agrupar (1 a 200) — não o nº de sessões.")
+            int,
+            Field(description="Quantas execuções recentes são varridas para agrupar (1 a 200) — não o nº de sessões."),
         ] = 100,
     ) -> dict[str, Any]:
         """Execuções agrupadas por sessão (session_id): runs, tokens, custo, erros e notas
@@ -1202,11 +1263,16 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     def run_chunk_feedback(
         run_id: RunId,
         chunk_id: Annotated[
-            str, Field(description="chunk_id do trecho, em run_show: spans search_knowledge_base, metadata.references.results.")
+            str,
+            Field(
+                description="chunk_id do trecho, em run_show: spans search_knowledge_base, metadata.references.results."
+            ),
         ],
         label: Annotated[
             Literal["relevant", "irrelevant", "wrong"],
-            Field(description="relevant (era o trecho certo), irrelevant (não respondia) ou wrong (conteúdo errado/desatualizado)."),
+            Field(
+                description="relevant (era o trecho certo), irrelevant (não respondia) ou wrong (conteúdo errado/desatualizado)."
+            ),
         ],
         comment: Annotated[str | None, Field(description="Por que essa marcação.")] = None,
         span_id: Annotated[str | None, Field(description="A span da busca, se o trecho voltou em mais de uma.")] = None,
@@ -1226,7 +1292,9 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
     @server.tool(annotations=READ)
     def chunk_feedback_flagged(
         collection: Annotated[str | None, Field(description="Só desta collection. Sem ela, todas.")] = None,
-        label: Annotated[Literal["relevant", "irrelevant", "wrong"], Field(description="Qual marcação contar.")] = "wrong",
+        label: Annotated[
+            Literal["relevant", "irrelevant", "wrong"], Field(description="Qual marcação contar.")
+        ] = "wrong",
         status: Annotated[
             Literal["open", "resolved", "dismissed", "all"], Field(description="open (padrão): as que falta corrigir.")
         ] = "open",
@@ -1242,8 +1310,12 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         content_id: Annotated[str | None, Field(description="Só deste documento.")] = None,
         collection: Annotated[str | None, Field(description="Só desta collection.")] = None,
         run_id: Annotated[str | None, Field(description="Só deste run.")] = None,
-        status: Annotated[Literal["open", "resolved", "dismissed"] | None, Field(description="Só neste estado.")] = None,
-        label: Annotated[Literal["relevant", "irrelevant", "wrong"] | None, Field(description="Só este rótulo.")] = None,
+        status: Annotated[
+            Literal["open", "resolved", "dismissed"] | None, Field(description="Só neste estado.")
+        ] = None,
+        label: Annotated[
+            Literal["relevant", "irrelevant", "wrong"] | None, Field(description="Só este rótulo.")
+        ] = None,
     ) -> dict[str, Any]:
         """Marcações de trecho, mais recentes primeiro: pergunta, documento, a revisão em que o
         trecho foi visto (document_revision), o estado e a revisão que resolveu."""
@@ -1263,7 +1335,9 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         feedback_id: Annotated[str, Field(description="O id da marcação (chunk_feedback_list).")],
         status: Annotated[
             Literal["dismissed", "resolved", "open"],
-            Field(description="dismissed: não procedia; resolved: corrigido fora daqui (ex.: na fonte do site); open: reabrir."),
+            Field(
+                description="dismissed: não procedia; resolved: corrigido fora daqui (ex.: na fonte do site); open: reabrir."
+            ),
         ],
         note: Annotated[str | None, Field(description="O motivo.")] = None,
     ) -> dict[str, Any]:
@@ -1320,20 +1394,26 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         raw: Annotated[
             bool, Field(description="O RunOutput cru do Agno (prompt, mensagens, tools e métricas de cada run).")
         ] = False,
+        limit: Annotated[int, Field(ge=1, le=200, description="Turnos por página.")] = 100,
+        cursor: Annotated[str | None, Field(description="O `next_cursor` da página anterior.")] = None,
     ) -> dict[str, Any]:
-        """Transcrição de uma conversa, compacta: por turno a fala do contato, o contexto
-        só quando mudou, cada tool numa linha e a resposta; mais o resumo da sessão e as
-        memórias do contato. `raw=true` devolve os runs crus do Agno."""
+        """A linha do tempo de uma conversa, um turno por run: os eventos e a fala nova
+        (`events`, `message`), os blocos de contexto com `changed` (e `previous_content`
+        quando mudou), cada tool em `steps` (ok, side_effect, prévia do resultado), as
+        fontes e a resposta; no topo, agentes, início, fim, turnos, tokens e custo. Turno
+        sem entrada estruturada vem com `structured: false` e o texto em `raw_input`.
+        Pagina com `next_cursor`. `raw=true` devolve os runs crus do Agno."""
         try:
             if raw:
                 return _fit({"items": client.session_runs(session_id, user_id)})
-            return _fit(client.session_transcript(session_id, user_id), paginated=True)
+            timeline = client.session_timeline(session_id, user_id, limit=limit, cursor=cursor)
         except ApiError as exc:
             if exc.status == 404:
                 raise ToolError(f"{_api_message(exc)}.{_session_hint(session_id, user_id)}") from exc
             raise _tool_error(exc) from exc
         except ServiceUnavailable as exc:
             raise _tool_error(exc) from exc
+        return _fit(timeline, paginated=True)
 
     def _session_hint(session_id: str, user_id: str | None) -> str:
         """Por que a conversa não apareceu: é de outro dono, ou o id está um pouco diferente."""
@@ -1397,7 +1477,11 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         return _fit(report)
 
     def _confirm_delete_session(session_id: str, ctx: Context) -> Elicit[Confirmacao]:
-        return _ask(ctx, f"kuro sessions delete {session_id} --yes", f"Apagar a conversa {session_id!r}? Não tem volta (o registro em runs continua).")
+        return _ask(
+            ctx,
+            f"kuro sessions delete {session_id} --yes",
+            f"Apagar a conversa {session_id!r}? Não tem volta (o registro em runs continua).",
+        )
 
     @server.tool(annotations=DESTRUCTIVE)
     def session_delete(
@@ -1430,7 +1514,9 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
 
     @server.tool(annotations=WRITE)
     def collection_create(
-        name: Annotated[str, Field(description="Slug estável da collection: minúsculas, números, - ou _, ex.: manuais.")],
+        name: Annotated[
+            str, Field(description="Slug estável da collection: minúsculas, números, - ou _, ex.: manuais.")
+        ],
         label: Annotated[str, Field(description='O nome que aparece no console, ex.: "Manuais do produto".')],
         description: Annotated[str | None, Field(description="Para que serve a base (até 1000 caracteres).")] = None,
         embedder: Annotated[
@@ -1448,22 +1534,25 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         ] = None,
         search_mode: Annotated[
             Literal["vector", "hybrid"] | None,
-            Field(description="vector (padrão): só similaridade; hybrid: vetor + full-text do Postgres (bom para "
-                  "códigos, siglas e nomes exatos)."),
+            Field(
+                description="vector (padrão): só similaridade; hybrid: vetor + full-text do Postgres (bom para "
+                "códigos, siglas e nomes exatos)."
+            ),
         ] = None,
         language: Annotated[
             str | None,
-            Field(description="Dicionário do full-text do Postgres, ex.: portuguese (padrão), english, simple. "
-                  "Definitivo, como o embedder."),
+            Field(
+                description="Dicionário do full-text do Postgres, ex.: portuguese (padrão), english, simple. "
+                "Muda depois com collection_set."
+            ),
         ] = None,
         max_results: Annotated[int | None, Field(description="Trechos por busca, o k (1 a 50; padrão 10).")] = None,
         vector_weight: Annotated[
             float | None, Field(description="No hybrid, o peso do vetor de 0 a 1 (o resto é do texto; padrão 0.5).")
         ] = None,
     ) -> dict[str, Any]:
-        """Cria uma base de conhecimento vazia. O embedder e o idioma são escolhidos aqui e NÃO
-        mudam depois (a tabela de vetores é de um embedder só). Modo, k e peso mudam com
-        collection_set. Depois: collection_add ou collection_add_site para indexar, e
+        """Cria uma base de conhecimento vazia. O embedder é escolhido aqui e NÃO muda depois (a
+        tabela de vetores é de um embedder só). Modo, idioma, k e peso mudam com collection_set. Depois: collection_add ou collection_add_site para indexar, e
         agent_set(knowledge_collection=name) no agente."""
         payload = {
             "name": name,
@@ -1485,23 +1574,28 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         changes: Annotated[
             dict[str, Any],
             Field(
-                description="label, description e a busca: search_mode (vector|hybrid), max_results (k), "
-                'vector_weight (0–1), reranker. Ex.: {"search_mode": "hybrid", "vector_weight": 0.7}; null volta ao padrão.'
+                description="label, description e a busca: search_mode (vector|hybrid), language (dicionário do "
+                "full-text, ex.: portuguese; sem reindexar), max_results (k), vector_weight (0–1), reranker. "
+                'Ex.: {"search_mode": "hybrid", "vector_weight": 0.7}; null volta ao padrão (menos language).'
             ),
         ],
     ) -> dict[str, Any]:
         """Altera o rótulo, a descrição ou a configuração de busca de uma collection. Mudar a
-        busca gera uma versão nova (collection_versions), que os runs gravam. O embedder e o
-        idioma não mudam: para outros, crie uma collection nova e reindexe."""
-        if {"embedder", "embedder_provider", "embedder_model", "embedder_dimensions", "language"} & set(changes):
-            raise ToolError("o embedder e o idioma de uma collection não mudam: crie outra (collection_create) e reindexe")
+        busca gera uma versão nova (collection_versions), que os runs gravam. O embedder não
+        muda: para outro, crie uma collection nova e reindexe. Uma collection com
+        `search.language_legacy` verdadeiro (o inglês de antes da coluna) mostra um aviso em
+        `warnings`; language=portuguese resolve e não exige reindexar."""
+        if {"embedder", "embedder_provider", "embedder_model", "embedder_dimensions"} & set(changes):
+            raise ToolError("o embedder de uma collection não muda: crie outra (collection_create) e reindexe")
         _fields_only(changes, COLLECTION_FIELDS)
         return _call(client.update_collection, name, changes)
 
     @server.tool(annotations=READ)
     def collection_versions(
         name: CollectionName,
-        version: Annotated[int | None, Field(description="Uma versão: devolve só ela, com a configuração completa.")] = None,
+        version: Annotated[
+            int | None, Field(description="Uma versão: devolve só ela, com a configuração completa.")
+        ] = None,
     ) -> dict[str, Any]:
         """Histórico da configuração de busca da collection (embedder, modo, idioma, k, peso),
         mais recente primeiro. Cada run grava `collection_version`: um agente na mesma versão
@@ -1531,7 +1625,8 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         name: CollectionName,
         text: Annotated[str | None, Field(description="O conteúdo a indexar.")] = None,
         file: Annotated[
-            str | None, Field(description="Caminho de um arquivo local. Recusado quando o MCP roda no servidor: use text.")
+            str | None,
+            Field(description="Caminho de um arquivo local. Recusado quando o MCP roda no servidor: use text."),
         ] = None,
         title: Annotated[str | None, Field(description="O título do documento na base.")] = None,
     ) -> dict[str, Any]:
@@ -1595,13 +1690,17 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         return {"documents": rows, "rechunked": sum(1 for r in rows if r["status"] == "rechunked")}
 
     def _confirm_rm_doc(name: str, content_id: str, ctx: Context) -> Elicit[Confirmacao]:
-        return _ask(ctx, f"kuro collections rm-doc {name} {content_id} --yes", f"Tirar o documento {content_id!r} da collection {name!r}? Não tem volta.")
+        return _ask(
+            ctx,
+            f"kuro collections rm-doc {name} {content_id} --yes",
+            f"Tirar o documento {content_id!r} da collection {name!r}? Não tem volta.",
+        )
 
     @server.tool(annotations=DESTRUCTIVE)
     def collection_rm_doc(
         name: CollectionName,
         content_id: Annotated[str, Field(description="O documento (content_id), como collection_docs devolve.")],
-        ok: Annotated[Confirmacao, Resolve(_confirm_rm_doc)]
+        ok: Annotated[Confirmacao, Resolve(_confirm_rm_doc)],
     ) -> dict[str, Any]:
         """Tira um documento da collection (pede confirmação)."""
         if not ok.confirmar:
@@ -1623,11 +1722,15 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
             list[str] | None, Field(description='Só URLs com estes trechos de caminho, ex.: ["/guia/"].')
         ] = None,
         exclude: Annotated[list[str] | None, Field(description="Pula URLs com estes trechos de caminho.")] = None,
-        format: Annotated[bool, Field(description="Um agente organiza o texto de cada página (sem reescrever).")] = True,
+        format: Annotated[
+            bool, Field(description="Um agente organiza o texto de cada página (sem reescrever).")
+        ] = True,
         include_files: Annotated[
             bool | None,
-            Field(description="Indexar também os PDF/DOCX/PPTX/XLSX linkados no escopo, sem formatador "
-                  "(padrão: sim; contam em max_pages)."),
+            Field(
+                description="Indexar também os PDF/DOCX/PPTX/XLSX linkados no escopo, sem formatador "
+                "(padrão: sim; contam em max_pages)."
+            ),
         ] = None,
         refresh: Annotated[
             Literal["never", "daily", "weekly", "monthly"], Field(description="Ressincronização automática.")
@@ -1637,9 +1740,17 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         da URL, `sitemap` usa o sitemap, `page` só a URL. Cada página passa por um agente que
         organiza o texto sem reescrever (`format=false` pula); os arquivos linkados (PDF, DOCX...)
         entram lidos direto, com o número da página. Acompanhe com `collection_sources`."""
-        payload = {"url": url, "mode": mode, "max_pages": max_pages, "max_depth": max_depth,
-                   "include": include, "exclude": exclude, "format": format, "include_files": include_files,
-                   "refresh": refresh}
+        payload = {
+            "url": url,
+            "mode": mode,
+            "max_pages": max_pages,
+            "max_depth": max_depth,
+            "include": include,
+            "exclude": exclude,
+            "format": format,
+            "include_files": include_files,
+            "refresh": refresh,
+        }
         return _call(client.create_source, name, {k: v for k, v in payload.items() if v is not None})
 
     @server.tool(annotations=READ)
@@ -1659,7 +1770,11 @@ def build_server(client: Client, local_files: bool = True) -> MCPServer:
         return _call(client.sync_source, name, source_id)
 
     def _confirm_rm_site(name: str, source_id: str, ctx: Context) -> Elicit[Confirmacao]:
-        return _ask(ctx, f"kuro collections rm-site {name} {source_id} --yes", f"Remover o site {source_id!r} e as páginas dele da collection {name!r}?")
+        return _ask(
+            ctx,
+            f"kuro collections rm-site {name} {source_id} --yes",
+            f"Remover o site {source_id!r} e as páginas dele da collection {name!r}?",
+        )
 
     @server.tool(annotations=DESTRUCTIVE)
     def collection_rm_site(

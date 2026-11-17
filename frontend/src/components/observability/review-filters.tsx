@@ -22,6 +22,8 @@ export interface ReviewState {
   sideEffect: boolean;
   hideShort: boolean;
   feedbackDown: boolean;
+  /** Alguma checagem automática do agente reprovou (`checks` do agente). */
+  checkFailed: boolean;
   includeTests: boolean;
   /** Quando preenchido, a lista é uma amostra aleatória (o número muda para sortear de novo). */
   sampleSeed: number | null;
@@ -33,6 +35,7 @@ export const EMPTY_REVIEW: ReviewState = {
   sideEffect: false,
   hideShort: false,
   feedbackDown: false,
+  checkFailed: false,
   includeTests: false,
   sampleSeed: null,
 };
@@ -48,6 +51,7 @@ export function reviewParams(review: ReviewState): Record<string, string | strin
   if (review.sideEffect) p.side_effect = "true";
   if (review.hideShort) p.min_message_chars = String(SHORT_MESSAGE_CHARS);
   if (review.feedbackDown) p.feedback = "down";
+  if (review.checkFailed) p.check_failed = "true";
   if (!review.includeTests) p.include_dry_run = "false";
   if (review.sampleSeed != null) {
     p.sample = String(SAMPLE_SIZE);
@@ -80,7 +84,7 @@ function Chip({
       title={title}
       onClick={onClick}
       className={cn(
-        "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors",
+        "inline-flex h-10 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors md:h-8",
         active ? "border-primary bg-primary-soft font-medium text-foreground" : "border-border text-muted-foreground hover:text-foreground"
       )}
     >
@@ -140,6 +144,13 @@ export function ReviewFilters({ review, onChange }: { review: ReviewState; onCha
           👎 Feedback negativo
         </Chip>
         <Chip
+          active={review.checkFailed}
+          onClick={() => set({ checkFailed: !review.checkFailed })}
+          title="Alguma checagem automática do agente reprovou (configure em Agentes, seção Checagens)"
+        >
+          Checagem reprovada
+        </Chip>
+        <Chip
           active={review.hideShort}
           onClick={() => set({ hideShort: !review.hideShort })}
           title={`Esconde mensagens com menos de ${SHORT_MESSAGE_CHARS} caracteres ("ok", "oi")`}
@@ -157,14 +168,14 @@ export function ReviewFilters({ review, onChange }: { review: ReviewState; onCha
         <Button
           variant={review.sampleSeed != null ? "secondary" : "ghost"}
           size="sm"
-          className="h-8"
+          className="h-10 md:h-8"
           onClick={() => set({ sampleSeed: Date.now() })}
           title="Sorteia execuções do recorte atual — o erro silencioso não aparece em filtro nenhum"
         >
           <Dices /> {review.sampleSeed != null ? "Sortear de novo" : `Amostra de ${SAMPLE_SIZE}`}
         </Button>
         {review.sampleSeed != null && (
-          <Button variant="ghost" size="sm" className="h-8" onClick={() => set({ sampleSeed: null })}>
+          <Button variant="ghost" size="sm" className="h-10 md:h-8" onClick={() => set({ sampleSeed: null })}>
             Voltar às mais recentes
           </Button>
         )}

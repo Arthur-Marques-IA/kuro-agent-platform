@@ -44,7 +44,9 @@ def _credentials(provider: str, credential_id: str | None) -> tuple[str | None, 
         api_key = store.get_decrypted_api_key(credential["id"])
     except EncryptionNotConfiguredError as exc:
         # Sem isto, a falha de cifragem subia crua e virava um 500 sem explicação.
-        raise ProviderNotConfiguredError(f"{provider}: a credencial {credential['label']!r} não pôde ser lida — {exc}") from exc
+        raise ProviderNotConfiguredError(
+            f"{provider}: a credencial {credential['label']!r} não pôde ser lida — {exc}"
+        ) from exc
     return api_key, credential["base_url"]
 
 

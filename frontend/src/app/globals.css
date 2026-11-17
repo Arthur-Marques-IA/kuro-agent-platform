@@ -24,10 +24,12 @@
   --primary: #0e7490;
   --primary-foreground: #ffffff;
   --primary-soft: #e0f3f6;
-  --destructive: #dc2626;
+  /* Vermelho, verde e âmbar escurecidos para passar 4,5:1 também como texto de 11 px num
+     badge (`bg-x/10`) sobre o cartão e a barra lateral — conferido em lib/contrast.test.ts. */
+  --destructive: #b91c1c;
   --destructive-foreground: #ffffff;
-  --success: #047857;
-  --warning: #b45309;
+  --success: #046c4f;
+  --warning: #92400e;
   --ring: #0891b2;
   /* Cores de status dos gráficos (Logs): as mesmas nos dois temas, validadas
      como trio adjacente (verde · âmbar · vermelho) contra daltonismo. O âmbar
@@ -62,8 +64,10 @@
   --primary: #22d3ee;
   --primary-foreground: #062a33;
   --primary-soft: #113640;
-  --destructive: #ef4444;
-  --destructive-foreground: #ffffff;
+  /* Mais claro que o vermelho da TUI: o #ef4444 ficava em 4,49:1 num badge de 11 px sobre o
+     cartão. Com o vermelho claro, o texto do botão destrutivo vira escuro (branco dava 2,8:1). */
+  --destructive: #f87171;
+  --destructive-foreground: #450a0a;
   --success: #22c55e;
   --warning: #f59e0b;
   --ring: #67e8f9;
@@ -172,6 +176,23 @@
 
   ::selection {
     background: color-mix(in oklab, var(--primary) 24%, transparent);
+  }
+}
+
+/* Área de toque de 40 px em tela de toque ou estreita, sem mudar o tamanho visual: um
+   ::after invisível centrado no alvo. O alvo precisa ser posicionado (`relative`), e não pode
+   ter `overflow: hidden` (o ::after seria cortado) — num link com `truncate`, use padding. */
+@utility touch-target {
+  @media (pointer: coarse), (max-width: 767px) {
+    &::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 40px);
+      height: max(100%, 40px);
+      transform: translate(-50%, -50%);
+    }
   }
 }
 

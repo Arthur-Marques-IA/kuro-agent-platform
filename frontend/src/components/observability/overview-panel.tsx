@@ -1,10 +1,11 @@
 "use client";
 
-import { Fragment, useEffect, useId, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, ChevronDown, ChevronRight, Table2, Wrench } from "lucide-react";
 import { errorMessage, requestJson } from "@/lib/http";
 import { formatCost, formatMs, formatNumber, formatRelativeTime } from "@/lib/format";
+import { formatPercent } from "@/lib/prompt-composition";
 import { TOOL_FAILURE_META } from "@/lib/tool-failures";
 import { FEW_RUNS, STACK_KEYS, bucketRate, niceMax, periodFailureRate, rateScale } from "@/lib/trend";
 import { apiSearchParams, type LogsQuery } from "@/lib/logs-query";
@@ -34,13 +35,19 @@ export function useOverview(params: Record<string, string | string[]>, enabled =
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const key = JSON.stringify(params);
+  // A atualização automática é silenciosa: nem a opacidade de "carregando" muda, e um erro dela não
+  // apaga o que está na tela (a próxima volta tenta de novo).
+  const silent = useRef(false);
+  const busy = useRef(false);
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
+    const quiet = silent.current;
+    silent.current = false;
+    busy.current = true;
     // Recarregar mantém o desenho anterior (com opacidade menor): sem esqueleto piscando.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setState("loading");
+    if (!quiet) setState("loading");
     requestJson<Overview>(`/api/observability/overview?${apiSearchParams({ tz: TIMEZONE, ...params })}`, {
       fallbackError: "Falha ao carregar o panorama",
     })
@@ -51,23 +58,46 @@ export function useOverview(params: Record<string, string | string[]>, enabled =
         setState("ready");
       })
       .catch((err) => {
-        if (cancelled) return;
+        if (cancelled || quiet) return;
         setError(errorMessage(err));
         setState("error");
+      })
+      .finally(() => {
+        if (!cancelled) busy.current = false;
       });
     return () => {
       cancelled = true;
+      busy.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, nonce, enabled]);
 
-  return { data, state, error, reload: () => setNonce((n) => n + 1) };
+  return {
+    data,
+    state,
+    error,
+    reload: () => setNonce((n) => n + 1),
+    refresh: () => {
+      if (busy.current) return;
+      silent.current = true;
+      setNonce((n) => n + 1);
+    },
+  };
 }
 
 /** O link para a lista de execuções com um recorte a mais (agente, versão, tool falhando). */
 type RunsHref = (drill: Partial<LogsQuery>) => string;
 
-export function OverviewPanel({ overview, runsHref }: { overview: ReturnType<typeof useOverview>; runsHref: RunsHref }) {
+export function OverviewPanel({
+  overview,
+  runsHref,
+  emptyAction,
+}: {
+  overview: ReturnType<typeof useOverview>;
+  runsHref: RunsHref;
+  /** Ação no estado vazio (o "Incluir testes" quando só há testes no período). */
+  emptyAction?: ReactNode;
+}) {
   const { data, state, error } = overview;
 
   if (!data) {
@@ -90,7 +120,14 @@ export function OverviewPanel({ overview, runsHref }: { overview: ReturnType<typ
           <EmptyState
             icon={Table2}
             title="Nenhuma execução no período"
-            description={data.include_dry_run ? undefined : "Os testes do Playground (dry_run) estão de fora — marque “Incluir testes” para vê-los."}
+            description={
+              data.include_dry_run
+                ? undefined
+                : emptyAction
+                  ? "Só há execuções de teste (Playground, dry_run) neste recorte, e elas ficam fora das métricas por padrão."
+                  : "Os testes do Playground (dry_run) ficam de fora das métricas por padrão."
+            }
+            action={data.include_dry_run ? undefined : emptyAction}
           />
         </Card>
       ) : (
@@ -200,6 +237,7 @@ function KpiRow({ totals, previous, runsHref }: { totals: OverviewTotals; previo
           ? `${formatCost(((totals.cost_usd ?? 0) - (totals.ingestion_cost_usd ?? 0)) / totals.sessions)} por conversa`
           : null,
         totals.ingestion_cost_usd ? `inclui ${formatCost(totals.ingestion_cost_usd)} da coleta de sites` : null,
+        totals.cache_fraction ? `${formatPercent(totals.cache_fraction * 100)} da entrada veio do cache` : null,
       ]
         .filter(Boolean)
         .join(" · ") || "—",
@@ -941,6 +979,12 @@ function AgentsCard({ overview, runsHref }: { overview: Overview; runsHref: Runs
               <th className="py-2 pr-3 text-right font-medium">Tool falhando</th>
               <th className="py-2 pr-3 text-right font-medium">Custo</th>
               <th className="py-2 pr-3 text-right font-medium">Por conversa</th>
+              <th className="py-2 pr-3 text-right font-medium" title="Parte dos tokens de entrada lida do cache de prompt">
+                Cache
+              </th>
+              <th className="py-2 pr-3 text-right font-medium" title="Tamanho médio do prompt (caracteres) e quanto dele é histórico">
+                Prompt
+              </th>
               <th className="py-2 pr-3 text-right font-medium">p95</th>
               <th className="py-2 pr-3 text-right font-medium">Feedback</th>
               <th className="py-2 pr-3 font-medium">Versão atual</th>
@@ -983,6 +1027,16 @@ function AgentsCard({ overview, runsHref }: { overview: Overview; runsHref: Runs
                     <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{formatRate(rate(t.tool_failure_runs, t.runs))}</td>
                     <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{formatCost(t.cost_usd)}</td>
                     <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{formatCost(agent.cost_per_session_usd)}</td>
+                    <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">
+                      {t.cache_fraction == null ? "—" : formatPercent(t.cache_fraction * 100)}
+                    </td>
+                    <td className="whitespace-nowrap py-2 pr-3 text-right text-xs tabular-nums">
+                      {t.avg_prompt_chars == null
+                        ? "—"
+                        : `${formatNumber(Math.round(t.avg_prompt_chars))} car.${
+                            t.avg_history_fraction == null ? "" : ` · ${formatPercent(t.avg_history_fraction * 100)} histórico`
+                          }`}
+                    </td>
                     <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{formatMs(t.p95_latency_ms)}</td>
                     <td className="whitespace-nowrap py-2 pr-3 text-right text-xs tabular-nums">
                       {t.feedback_up + t.feedback_down ? `👍 ${t.feedback_up} · 👎 ${t.feedback_down}` : "—"}
@@ -996,7 +1050,7 @@ function AgentsCard({ overview, runsHref }: { overview: Overview; runsHref: Runs
                   </tr>
                   {expanded && (
                     <tr className="border-b border-border bg-muted/30">
-                      <td colSpan={10} className="px-3 py-3">
+                      <td colSpan={12} className="px-3 py-3">
                         <VersionsTable agent={agent} runsHref={runsHref} />
                       </td>
                     </tr>

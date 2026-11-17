@@ -50,7 +50,18 @@
 #
 # Deixe no default se você não vai expor o console: aí ele só responde pelo
 # nome local, com certificado interno, e o Let's Encrypt nem é acionado.
+#
+# O console não tem login próprio e o BFF dele chama a API com a chave admin:
+# sem barreira aqui, quem alcançasse o domínio teria acesso total. O basic_auth
+# vale só para este bloco — a API acima continua com a autenticação por chave
+# dela (ADMIN_API_KEY/RUNTIME_API_KEY), sem senha de navegador no caminho de
+# quem integra. Usuário e hash (bcrypt, `caddy hash-password`) vêm do .env;
+# o `caddy-tls.sh` recusa subir sem eles. Como gerar: docs/operacao.md.
 {$KURO_CONSOLE_DOMAIN:console.localhost} {
+	basic_auth {
+		{$CONSOLE_BASIC_AUTH_USER} {$CONSOLE_BASIC_AUTH_HASH}
+	}
+
 	reverse_proxy frontend:3000 {
 		flush_interval -1
 	}

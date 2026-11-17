@@ -48,7 +48,9 @@ STAGES = [
     {
         "id": "problema",
         "goal": "Entender o problema",
-        "fields": [{"name": "categoria", "type": "string", "label": "Categoria", "required": True, "enum": ["internet", "tv"]}],
+        "fields": [
+            {"name": "categoria", "type": "string", "label": "Categoria", "required": True, "enum": ["internet", "tv"]}
+        ],
     },
     {"id": "confirmacao", "type": "confirm"},
     {"id": "abrir", "type": "action", "tool": "abrir_chamado_teste"},
@@ -68,10 +70,19 @@ def stages():
     [
         ([], "ao menos uma etapa"),
         ([{"id": "a", "fields": [{"name": "x", "required": True}]}, {"id": "a", "type": "confirm"}], "repetido"),
-        ([{"id": "a", "fields": [{"name": "x", "required": True}]}, {"id": "b", "fields": [{"name": "x", "required": True}]}], "cada campo"),
+        (
+            [
+                {"id": "a", "fields": [{"name": "x", "required": True}]},
+                {"id": "b", "fields": [{"name": "x", "required": True}]},
+            ],
+            "cada campo",
+        ),
         ([{"id": "a", "fields": [{"name": "x"}]}], "obrigatório"),
         ([{"id": "c", "type": "confirm"}], "depois de uma etapa de coleta"),
-        ([{"id": "a", "fields": [{"name": "x", "required": True}]}, {"id": "b", "type": "action", "tool": "t"}], "confirm antes"),
+        (
+            [{"id": "a", "fields": [{"name": "x", "required": True}]}, {"id": "b", "type": "action", "tool": "t"}],
+            "confirm antes",
+        ),
         ([{"id": "a", "fields": [{"name": "x", "required": True, "pattern": "("}]}], "pattern inválido"),
         ([{"id": "a", "fields": [{"name": "confirmacao", "required": True}]}], "reservado"),
         ([{"id": "A B", "fields": [{"name": "x", "required": True}]}], "id inválido"),
@@ -197,8 +208,14 @@ def tool_de_acao():
             "parameters": [
                 {"name": "cpf", "type": "string", "location": "body", "required": True},
                 {"name": "categoria", "type": "string", "location": "body", "required": True},
-                {"name": "chave", "type": "string", "location": "header", "required": True,
-                 "source": "dependency", "dependency": "idempotency_key"},
+                {
+                    "name": "chave",
+                    "type": "string",
+                    "location": "header",
+                    "required": True,
+                    "source": "dependency",
+                    "dependency": "idempotency_key",
+                },
             ],
         },
     )
@@ -270,7 +287,9 @@ def test_stages_entram_na_versao_so_do_procedural(agente):
     assert effective_config(definition)["stages"][0]["id"] == "identificacao"
     conversational = {**definition, "kind": "conversational", "stages": []}
     assert "stages" not in effective_config(conversational)
-    assert config_hash(effective_config(definition)) != config_hash(effective_config({**definition, "stages": STAGES[:1]}))
+    assert config_hash(effective_config(definition)) != config_hash(
+        effective_config({**definition, "stages": STAGES[:1]})
+    )
 
 
 def test_contrato_de_integracao_mostra_etapas_e_onde_ler_o_estado(agente):
@@ -538,8 +557,15 @@ def test_confirmacao_entra_na_sessao_do_agno():
                 raise Exception("Session not found")
             return AgentSession(session_id=session_id, agent_id=self.id, user_id=user_id)
 
-    run = RunContext(endpoint="chat", agent_type="proc", agent_name="Proc", prompt_version=1,
-                     user_id="u", session_id="s1", message="dados")
+    run = RunContext(
+        endpoint="chat",
+        agent_type="proc",
+        agent_name="Proc",
+        prompt_version=1,
+        user_id="u",
+        session_id="s1",
+        message="dados",
+    )
 
     nova = AgenteFalso(existe=False)
     procedure_runner._append_to_session(nova, run, "Confira:\n\n- CPF: 1")

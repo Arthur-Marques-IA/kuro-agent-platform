@@ -58,7 +58,7 @@ def validate_model_params(params: Any, provider: str | None) -> dict[str, Any] |
     if params is None or params == {}:
         return None
     if not isinstance(params, dict):
-        raise ModelParamsError("model_params deve ser um objeto, ex.: {\"temperature\": 0.3}")
+        raise ModelParamsError('model_params deve ser um objeto, ex.: {"temperature": 0.3}')
     normalized: dict[str, Any] = {}
     for name, value in params.items():
         if name == "reasoning":
@@ -89,7 +89,11 @@ def validate_model_params(params: Any, provider: str | None) -> dict[str, Any] |
         if value is None:
             continue
         kind, low, high = PARAM_RANGES[name]
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or (kind is int and not float(value).is_integer()):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or (kind is int and not float(value).is_integer())
+        ):
             raise ModelParamsError(f"model_params.{name} deve ser {'inteiro' if kind is int else 'número'}")
         if not low <= value <= high:
             raise ModelParamsError(f"model_params.{name} deve estar entre {low:g} e {high:g}")

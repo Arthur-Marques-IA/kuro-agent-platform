@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CircleCheck, CircleX, Cpu, Ellipsis, Play, Plus, Settings2 } from "lucide-react";
+import { CircleCheck, CircleX, Cpu, Ellipsis, Info, Play, Plus, Settings2 } from "lucide-react";
 import { errorMessage, requestJson } from "@/lib/http";
+import { MODEL_CREDENTIALS_TITLE } from "@/lib/model-credentials";
 import type { ModelCredential } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,33 @@ import { useToast } from "@/components/ui/toast";
 import { PageBody, PageHeader } from "@/components/workspace/page-header";
 import { useWorkspace } from "@/components/workspace/workspace-provider";
 import { CredentialDialog } from "@/components/models/credential-dialog";
+
+/**
+ * A chave que o serviço lê do próprio ambiente (ex.: `GOOGLE_API_KEY`). Somente
+ * leitura: não dá para testar, editar nem excluir daqui, e o valor nunca chega
+ * ao console — só o nome da variável.
+ */
+function EnvCredentialRow({ variable, inUse }: { variable: string; inUse: boolean }) {
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-mono text-sm font-medium">{variable}</span>
+            <Badge variant="secondary">variável de ambiente</Badge>
+            {inUse ? <Badge variant="success">em uso</Badge> : <Badge variant="outline">reserva</Badge>}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Definida no ambiente do serviço (.env / docker compose); somente leitura aqui.{" "}
+            {inUse
+              ? "Nenhuma chave cadastrada resolve este provedor, então é esta que os agentes sem credencial fixa usam."
+              : "Usada só quando nenhuma chave cadastrada habilitada resolve este provedor."}
+          </p>
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 export function ModelsIndex() {
   const router = useRouter();
@@ -80,27 +108,40 @@ export function ModelsIndex() {
     </Button>
   );
 
+  // A credencial do ambiente (ex.: GOOGLE_API_KEY) também responde pelos agentes:
+  // com ela, a tela não pode dizer que não há nada configurado.
+  const hasEnvCredential = modelProviders.some((p) => p.env_credential);
+  const hasAnything = modelCredentials.length > 0 || hasEnvCredential;
+
   return (
     <>
       <PageHeader
-        title="Chaves de API"
-        description="Chaves de LLM usadas pelos agentes. O mesmo provedor pode ter várias; na configuração de cada agente você define qual ele usa."
-        actions={backendReachable && modelCredentials.length > 0 ? newKeyButton : undefined}
+        title={MODEL_CREDENTIALS_TITLE}
+        description="Chaves dos provedores de LLM (Google, OpenAI, Anthropic, Ollama) que os agentes usam para chamar o modelo. O mesmo provedor pode ter várias; na configuração de cada agente você define qual ele usa."
+        actions={backendReachable && hasAnything ? newKeyButton : undefined}
       />
       <PageBody className="flex flex-col gap-6">
+        <p className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-4 py-3 text-[13px] text-muted-foreground">
+          <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <span>
+            Estas não são as chaves de acesso ao Kuro. Quem chama a API do serviço (console, CLI, outros sistemas) usa a{" "}
+            <code className="font-mono text-xs">ADMIN_API_KEY</code> ou a{" "}
+            <code className="font-mono text-xs">RUNTIME_API_KEY</code>, definidas no ambiente do serviço e que não aparecem aqui.
+          </span>
+        </p>
         {!backendReachable ? (
           <Card>
             <EmptyState
               icon={Cpu}
               title="agent-service indisponível"
-              description="Não foi possível carregar as chaves. Verifique se o backend está rodando e recarregue a página."
+              description="Não foi possível carregar as credenciais. Verifique se o backend está rodando e recarregue a página."
             />
           </Card>
-        ) : modelCredentials.length === 0 ? (
+        ) : !hasAnything ? (
           <Card>
             <EmptyState
               icon={Cpu}
-              title="Nenhuma chave cadastrada ainda"
+              title="Nenhuma credencial de modelo ainda"
               description="Cadastre a primeira chave de um provedor (Google, OpenAI, Anthropic ou Ollama) para os agentes poderem usá-la."
               action={newKeyButton}
             />
@@ -108,23 +149,25 @@ export function ModelsIndex() {
         ) : (
           modelProviders.map((provider) => {
             const credentials = modelCredentials.filter((c) => c.provider === provider.provider);
+            const env = provider.env_credential;
+            const counts = [
+              credentials.length > 0 && `${credentials.length} ${credentials.length === 1 ? "chave cadastrada" : "chaves cadastradas"}`,
+              env && "variável de ambiente",
+            ].filter(Boolean);
             return (
               <div key={provider.provider} className="flex flex-col gap-3">
                 <SectionHeading
                   title={provider.label}
-                  description={
-                    credentials.length === 0
-                      ? "Nenhuma chave cadastrada"
-                      : `${credentials.length} ${credentials.length === 1 ? "chave" : "chaves"}`
-                  }
+                  description={counts.length === 0 ? "Nenhuma chave cadastrada" : counts.join(" · ")}
                   action={
                     <Button variant="outline" size="sm" onClick={() => setEditing({ newForProvider: provider.provider })}>
                       <Plus /> Chave para {provider.label}
                     </Button>
                   }
                 />
+                {env && <EnvCredentialRow variable={env.variable} inUse={env.in_use} />}
                 {credentials.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-border px-4 py-3 text-[13px] text-muted-foreground">
+                  env ? null : <p className="rounded-lg border border-dashed border-border px-4 py-3 text-[13px] text-muted-foreground">
                     Nenhuma chave para {provider.label} ainda.{" "}
                     <button
                       type="button"

@@ -92,12 +92,48 @@ def session_turns(client: Client, session_id: str) -> list[dict[str, Any]]:
             "run_id": run["run_id"],
             "agent_type": run.get("agent_type"),
             "message": detail.get("message") or run.get("message") or "",
+            # Entrada estruturada: os eventos e o contexto como chegaram, para reenviar nos mesmos
+            # campos. `None` nos dois = turno só com `message` (ou gravado antes da 0.3.0).
+            "input_message": detail.get("input_message"),
+            "events": trace.get("input_events"),
+            "context": trace.get("input_context"),
             "dependencies": _dependencies(trace),
             "tools": _tool_calls(trace),
             "output": detail.get("output") or "",
             "error": detail.get("status_message"),
         })
     return turns
+
+
+def turn_input(turn: dict[str, Any]) -> dict[str, Any]:
+    """Os campos de entrada do `/chat` para reenviar um turno. Turno estruturado volta em
+    `events` e `context`, como chegou: mandar o texto de `runs.message` perderia o contexto (que
+    não entra mais na mensagem) e viraria uma fala só. O `agent_sent` marcado como `echo` fica de
+    fora: ele repetia a resposta do agente na conversa original, e no replay a resposta é outra."""
+    events, context = turn.get("events"), turn.get("context")
+    if events is None and context is None:
+        return {"message": turn["message"]}
+    sent = [
+        {k: e[k] for k in ("role", "content", "at", "kind", "attachments") if e.get(k) not in (None, [])}
+        for e in events or []
+        if isinstance(e, dict) and not e.get("echo")
+    ]
+    body: dict[str, Any] = {
+        "context": [
+            {"key": b.get("key"), "title": b.get("title"), "content": b.get("content"), "volatile": bool(b.get("volatile"))}
+            for b in context or []
+            if isinstance(b, dict)
+        ]
+    }
+    if sent:
+        body["events"] = sent
+    message = turn.get("input_message")
+    if message:
+        body["message"] = message
+    elif not any(e["role"] == "contact" for e in sent):
+        # Sem fala do contato nem `message`, o /chat recusa (422): vai o texto do turno.
+        body["message"] = turn["message"]
+    return body
 
 
 def _trace(client: Client, run_id: str, wait: float = 15.0) -> dict[str, Any]:
@@ -194,7 +230,7 @@ def replay(
             {
                 "turn": i + 1,
                 "run_id": t["run_id"],
-                "message": _short(t["message"]),
+                "message": _short(t.get("input_message") or t["message"]),
                 "decision": decision(t["tools"], focus),
                 "output": _short(t["output"]),
             }
@@ -213,7 +249,7 @@ def replay(
                     "agent_type": name,
                     "user_id": user_id,
                     "session_id": sid,
-                    "message": turn["message"],
+                    **turn_input(turn),
                     "dependencies": deps or None,
                     "dry_run": True,
                     "metadata": {"replay_of": session_id, "replay_turn": str(i + 1)},

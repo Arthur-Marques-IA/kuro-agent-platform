@@ -30,21 +30,51 @@ def agente() -> str:
     return f"painel-{uuid4().hex[:8]}"
 
 
-def gravar(agent_type, started_at, *, status="success", version=1, latency_ms=1000.0, cost=0.01,
-           session=None, tool_failures=0, tools=(), metadata=None) -> str:
+def gravar(
+    agent_type,
+    started_at,
+    *,
+    status="success",
+    version=1,
+    latency_ms=1000.0,
+    cost=0.01,
+    session=None,
+    tool_failures=0,
+    tools=(),
+    metadata=None,
+) -> str:
     run_id = str(uuid4())
     spans = [
-        SpanRecord(type="TOOL", name=name, started_at=started_at,
-                   level="ERROR" if i < tool_failures else "DEFAULT",
-                   metadata={"failure": "unavailable", "http_status": 500} if i < tool_failures else {})
+        SpanRecord(
+            type="TOOL",
+            name=name,
+            started_at=started_at,
+            level="ERROR" if i < tool_failures else "DEFAULT",
+            metadata={"failure": "unavailable", "http_status": 500} if i < tool_failures else {},
+        )
         for i, name in enumerate(tools)
     ]
-    run_store._write_run(RunRecord(
-        run_id=run_id, trace_id=run_id.replace("-", ""), agent_type=agent_type, agent_name=agent_type.upper(),
-        prompt_version=1, endpoint="chat", user_id="u", session_id=session or f"s-{uuid4().hex[:6]}",
-        message="oi", started_at=started_at, ended_at=started_at + timedelta(milliseconds=latency_ms),
-        status=status, cost_usd=cost, total_tokens=100, agent_version=version, spans=spans, metadata=metadata or {},
-    ))
+    run_store._write_run(
+        RunRecord(
+            run_id=run_id,
+            trace_id=run_id.replace("-", ""),
+            agent_type=agent_type,
+            agent_name=agent_type.upper(),
+            prompt_version=1,
+            endpoint="chat",
+            user_id="u",
+            session_id=session or f"s-{uuid4().hex[:6]}",
+            message="oi",
+            started_at=started_at,
+            ended_at=started_at + timedelta(milliseconds=latency_ms),
+            status=status,
+            cost_usd=cost,
+            total_tokens=100,
+            agent_version=version,
+            spans=spans,
+            metadata=metadata or {},
+        )
+    )
     return run_id
 
 
@@ -170,10 +200,27 @@ def test_rota_recusa_datas_implausiveis_sem_estourar():
 def listar(agente, **filtros):
     from agent_service.api.observability_routes import list_runs
 
-    base = dict(agent_type=agente, prompt_version=None, status=None, user_id=None, session_id=None,
-                since=None, until=None, limit=50, cursor=None, agent_version=None, meta=None, search=None,
-                complexity=None, tool_failed=None, side_effect=None, min_message_chars=None, feedback=None,
-                include_dry_run=True, sample=None)
+    base = dict(
+        agent_type=agente,
+        prompt_version=None,
+        status=None,
+        user_id=None,
+        session_id=None,
+        since=None,
+        until=None,
+        limit=50,
+        cursor=None,
+        agent_version=None,
+        meta=None,
+        search=None,
+        complexity=None,
+        tool_failed=None,
+        side_effect=None,
+        min_message_chars=None,
+        feedback=None,
+        include_dry_run=True,
+        sample=None,
+    )
     return {r.run_id for r in list_runs(**{**base, **filtros}).items}
 
 
@@ -185,15 +232,32 @@ def test_fila_de_revisao(agente):
     falhou = gravar(agente, t, tools=("grava_ficha",), tool_failures=1)
     complexo = gravar(agente, t, tools=("grava_ficha", "consulta", "outra"))
     teste = gravar(agente, t, metadata={"dry_run": "true"})
-    run_store._write_run(RunRecord(
-        run_id=(longo := str(uuid4())), trace_id="x", agent_type=agente, agent_name=None, prompt_version=1,
-        endpoint="chat", user_id="u", session_id="s", message="quero parcelar a mensalidade em 6 vezes",
-        started_at=t, status="success",
-    ))
+    run_store._write_run(
+        RunRecord(
+            run_id=(longo := str(uuid4())),
+            trace_id="x",
+            agent_type=agente,
+            agent_name=None,
+            prompt_version=1,
+            endpoint="chat",
+            user_id="u",
+            session_id="s",
+            message="quero parcelar a mensalidade em 6 vezes",
+            started_at=t,
+            status="success",
+        )
+    )
     save_score(run_id=longo, name="feedback", value=0, user_id="avaliador")
 
-    create_tool(ToolIn(tool_name="grava_ficha", kind="api", label="Grava", side_effect=True,
-                       config={"method": "POST", "url": "https://exemplo.test/ficha", "parameters": []}))
+    create_tool(
+        ToolIn(
+            tool_name="grava_ficha",
+            kind="api",
+            label="Grava",
+            side_effect=True,
+            config={"method": "POST", "url": "https://exemplo.test/ficha", "parameters": []},
+        )
+    )
     try:
         assert listar(agente, complexity=[3]) == {complexo}
         assert listar(agente, complexity=[2, 3]) == {falhou, complexo}
@@ -236,10 +300,24 @@ def test_coleta_de_sites_entra_no_custo_do_panorama_geral(agente):
     # Uma janela só deste teste: o panorama geral soma o banco inteiro.
     inicio = datetime(2033, 5, 1, 12, tzinfo=UTC)
     gravar(agente, inicio + timedelta(days=1), cost=0.01)
-    sources_store.record_sync_cost(source_id="s1", collection="docs", model="gemini-2.5-flash", input_tokens=200,
-                                   output_tokens=100, cost_usd=0.002, ended_at=inicio + timedelta(days=2))
-    sources_store.record_sync_cost(source_id="s1", collection="docs", model="gemini-2.5-flash", input_tokens=10,
-                                   output_tokens=5, cost_usd=0.004, ended_at=inicio - timedelta(days=3))
+    sources_store.record_sync_cost(
+        source_id="s1",
+        collection="docs",
+        model="gemini-2.5-flash",
+        input_tokens=200,
+        output_tokens=100,
+        cost_usd=0.002,
+        ended_at=inicio + timedelta(days=2),
+    )
+    sources_store.record_sync_cost(
+        source_id="s1",
+        collection="docs",
+        model="gemini-2.5-flash",
+        input_tokens=10,
+        output_tokens=5,
+        cost_usd=0.004,
+        ended_at=inicio - timedelta(days=3),
+    )
 
     geral = build_overview(since=inicio, until=inicio + timedelta(days=7))
     assert geral.totals.cost_usd == pytest.approx(0.012)

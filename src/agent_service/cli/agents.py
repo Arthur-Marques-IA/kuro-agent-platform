@@ -44,18 +44,20 @@ EDITABLE_FIELDS = (
     "session_summary",
     "plain_text",
     "num_history_runs",
+    "history_tool_calls",
     "kind",
     "response_schema",
     "stages",
     "model_params",
     "timeout_seconds",
+    "checks",
 )
 
 
 # Num agente `analysis` estes campos não têm efeito (ele é one-shot, sem sessão
 # nem memória) e a API recusa configurá-los — oferecê-los no JSON editável seria
 # convidar a mexer num campo que só devolve 422.
-INERTES_EM_ANALYSIS = ("num_history_runs", "memory_backend", "session_summary")
+INERTES_EM_ANALYSIS = ("num_history_runs", "history_tool_calls", "memory_backend", "session_summary")
 
 
 def editable(definition: dict[str, Any]) -> dict[str, Any]:
@@ -95,7 +97,9 @@ def _render_agent(a: dict[str, Any]) -> None:
         f"[bold]{a['name']}[/] [dim]({a['agent_type']}{' · seed' if a['is_seed'] else ''} · {kind})[/]",
         f"modelo: {a['model_provider'] or 'padrão'} / {a['model_id'] or 'padrão'}"
         f" · credencial: {a.get('model_credential_id') or 'padrão do provedor'}",
-        f"memória: {a['memory_backend']} · histórico: {a['num_history_runs']} runs · prompt v{a['prompt_version']}",
+        f"memória: {a['memory_backend']} · histórico: {a['num_history_runs']} runs"
+        + (f" (até {a['history_tool_calls']} tools antigas)" if a.get("history_tool_calls") is not None else "")
+        + f" · prompt v{a['prompt_version']}",
         f"tools: {', '.join(a['tools']) or '—'}",
         f"base de conhecimento: {a.get('knowledge_collection') or '—'}",
     ]
@@ -105,6 +109,11 @@ def _render_agent(a: dict[str, Any]) -> None:
     if kind == "analysis" and a.get("response_schema"):
         campos = ", ".join(f"{f['name']}:{f['type']}{'*' if f['required'] else ''}" for f in a["response_schema"])
         lines.append(f"response_schema: {campos}  [dim](* obrigatório)[/]")
+    if a.get("checks"):
+        lines.append(
+            "checagens: "
+            + ", ".join(f"{c['name']} ({c['field']} {c['op']}, {c.get('severity', 'fail')})" for c in a["checks"])
+        )
     lines.append("\n[bold]instructions[/]")
     lines += [f"  {i + 1}. {text}" for i, text in enumerate(a["instructions"])]
     console.print(Panel("\n".join(lines), expand=False))
@@ -155,7 +164,9 @@ def get_agent(
         emit(st, definition, _render_agent)
 
 
-def _apply_one(st: State, body: dict[str, Any], source: str, existing: dict[str, dict[str, Any]], dry_run: bool) -> dict[str, Any]:
+def _apply_one(
+    st: State, body: dict[str, Any], source: str, existing: dict[str, dict[str, Any]], dry_run: bool
+) -> dict[str, Any]:
     agent_type = body.get("agent_type")
     if not isinstance(agent_type, str) or not agent_type:
         fail(st, f"{source}: precisa do campo agent_type", EXIT_USAGE)
@@ -166,7 +177,12 @@ def _apply_one(st: State, body: dict[str, Any], source: str, existing: dict[str,
     current = existing.get(agent_type)
     if current is None:
         result = call(st, st.client.create_agent, body, dry_run=dry_run)
-        return {"agent_type": agent_type, "action": "create", "changed": sorted(k for k in body if k != "agent_type"), "agent": result}
+        return {
+            "agent_type": agent_type,
+            "action": "create",
+            "changed": sorted(k for k in body if k != "agent_type"),
+            "agent": result,
+        }
     changes = {k: v for k, v in body.items() if k != "agent_type" and current.get(k) != v}
     if not changes:
         return {"agent_type": agent_type, "action": "unchanged", "changed": [], "agent": current}
@@ -180,8 +196,12 @@ def _render_apply(report: dict[str, Any]) -> None:
         if item["action"] == "unchanged":
             console.print(f"{prefix}[dim]= {item['agent_type']} sem mudanças[/]")
         else:
-            verb = "criaria" if report["dry_run"] and item["action"] == "create" else (
-                "atualizaria" if report["dry_run"] else ("criado" if item["action"] == "create" else "atualizado")
+            verb = (
+                "criaria"
+                if report["dry_run"] and item["action"] == "create"
+                else (
+                    "atualizaria" if report["dry_run"] else ("criado" if item["action"] == "create" else "atualizado")
+                )
             )
             console.print(f"{prefix}[green]✓[/] {item['agent_type']} {verb}: {', '.join(item['changed'])}")
 
@@ -247,7 +267,11 @@ def export_agents(
             json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
         written.append(agent["agent_type"])
-    emit(st, {"output": str(target), "agents": written}, lambda r: console.print(f"[green]✓[/] {len(r['agents'])} agente(s) em {r['output']}"))
+    emit(
+        st,
+        {"output": str(target), "agents": written},
+        lambda r: console.print(f"[green]✓[/] {len(r['agents'])} agente(s) em {r['output']}"),
+    )
 
 
 @app.command("set")
@@ -267,7 +291,9 @@ def set_fields(
     if isinstance(changes.get("instructions"), str):
         changes["instructions"] = [changes["instructions"]]
     result = call(st, st.client.update_agent, agent_type, changes)
-    emit(st, result, lambda a: console.print(f"[green]✓[/] {a['agent_type']} atualizado (prompt v{a['prompt_version']})"))
+    emit(
+        st, result, lambda a: console.print(f"[green]✓[/] {a['agent_type']} atualizado (prompt v{a['prompt_version']})")
+    )
 
 
 @app.command("edit")
@@ -333,7 +359,11 @@ def revisions(
     É o `agent_version` que cada run grava. `agents versions` mostra só o prompt."""
     st = state(ctx)
     if version is not None:
-        emit(st, call(st, st.client.agent_revision, agent_type, version), lambda r: console.print_json(json.dumps(r, default=str)))
+        emit(
+            st,
+            call(st, st.client.agent_revision, agent_type, version),
+            lambda r: console.print_json(json.dumps(r, default=str)),
+        )
         return
     emit(st, call(st, st.client.agent_revisions, agent_type), _render_revisions)
 
@@ -360,10 +390,14 @@ def promote(
 
     def render(r: dict[str, Any]) -> None:
         if r["unchanged"]:
-            console.print(f"[dim]{to} já está na mesma configuração de {agent_type} (v{r['agent_version']}) — nada a fazer[/]")
+            console.print(
+                f"[dim]{to} já está na mesma configuração de {agent_type} (v{r['agent_version']}) — nada a fazer[/]"
+            )
             return
         before = f"v{r['previous_version']}" if r["previous_version"] else "novo"
-        console.print(f"[green]✓[/] {to}: {before} → v{r['agent_version']} (configuração de {agent_type} v{r['source_version']})")
+        console.print(
+            f"[green]✓[/] {to}: {before} → v{r['agent_version']} (configuração de {agent_type} v{r['source_version']})"
+        )
 
     emit(st, result, render)
 
@@ -391,7 +425,9 @@ def rollback(
         emit(
             st,
             {"agent_type": agent_type, "unchanged": True, "prompt_version": atual["prompt_version"]},
-            lambda _: console.print(f"[dim]v{version} é igual ao prompt atual (v{atual['prompt_version']}) — nada a fazer[/]"),
+            lambda _: console.print(
+                f"[dim]v{version} é igual ao prompt atual (v{atual['prompt_version']}) — nada a fazer[/]"
+            ),
         )
         return
 
@@ -405,7 +441,9 @@ def rollback(
     emit(
         st,
         updated,
-        lambda a: console.print(f"[green]✓[/] {agent_type} voltou ao texto da v{version} (agora prompt v{a['prompt_version']})"),
+        lambda a: console.print(
+            f"[green]✓[/] {agent_type} voltou ao texto da v{version} (agora prompt v{a['prompt_version']})"
+        ),
     )
 
 
@@ -536,7 +574,9 @@ def _edit(st: State, definition: dict[str, Any]) -> None:
         try:
             edited_text = click.edit(text, extension=".json")
         except click.ClickException as exc:
-            console.print(f"[red]não consegui abrir o editor:[/] {exc.format_message()} (defina EDITOR, ex.: EDITOR=\"code --wait\")")
+            console.print(
+                f'[red]não consegui abrir o editor:[/] {exc.format_message()} (defina EDITOR, ex.: EDITOR="code --wait")'
+            )
             return
         if edited_text is None:  # fechou sem salvar
             console.print("[dim]nada alterado[/]")
@@ -628,8 +668,7 @@ def _rollback_menu(st: State, agent_type: str, definition: dict[str, Any]) -> No
         console.print("[dim]não há uma versão diferente da atual para restaurar[/]")
         return
     choices = [
-        questionary.Choice(f"v{v['version']}  —  {v['instructions'][0][:60]}", value=v["version"])
-        for v in anteriores
+        questionary.Choice(f"v{v['version']}  —  {v['instructions'][0][:60]}", value=v["version"]) for v in anteriores
     ]
     choices.append(questionary.Choice("← voltar", value=BACK))
     escolhida = questionary.select("Restaurar qual versão?", choices=choices).ask()
@@ -674,6 +713,11 @@ def _render_integration(c: dict[str, Any]) -> None:
 
     console.print("\n[bold]exemplo[/]")
     console.print(c["curl"], highlight=False)
+    if c.get("structured_request_example"):
+        console.print(
+            "[dim]entrada estruturada (events + context em vez de tudo em message): "
+            "structured_request_example no --json; guia em docs/integracao.md[/]"
+        )
     if c.get("errors"):
         console.print("\n[bold]erros[/]")
         for erro in c["errors"]:

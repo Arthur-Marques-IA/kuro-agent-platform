@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Gerado (npm run gen:types) e artefatos do Playwright.
+    "src/lib/api-types.gen.ts",
+    "test-results/**",
+    "playwright-report/**",
   ]),
 ]);
 

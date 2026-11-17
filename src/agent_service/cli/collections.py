@@ -19,7 +19,7 @@ app = typer.Typer(help="Collections de documentos (RAG): listar, criar, alimenta
 
 def _render_list(rows: list[dict[str, Any]]) -> None:
     if not rows:
-        console.print("Nenhuma collection. Crie uma com `kuro collections create <nome> --label \"Manuais\"`.")
+        console.print('Nenhuma collection. Crie uma com `kuro collections create <nome> --label "Manuais"`.')
         return
     table = Table(show_edge=False, header_style="bold")
     for column in ("name", "nome", "embedder", "busca", "descrição", "agentes"):
@@ -44,7 +44,8 @@ def _search_label(c: dict[str, Any]) -> str:
         return "—"
     modo = f"hybrid (vetor {s['vector_weight']:g})" if s["search_mode"] == "hybrid" else "vector"
     versao = f" [dim]v{c['version']}[/]" if c.get("version") else ""
-    return f"{modo}, k={s['max_results']}, {s['language']}{versao}"
+    idioma = f"{s['language']} [yellow](legado: nunca escolhido)[/]" if s.get("language_legacy") else s["language"]
+    return f"{modo}, k={s['max_results']}, {idioma}{versao}"
 
 
 @app.callback(invoke_without_command=True)
@@ -75,18 +76,20 @@ def create_collection(
     ),
     mode: str | None = typer.Option(None, "--mode", help="vector (padrão) ou hybrid (vetor + full-text do Postgres)."),
     language: str | None = typer.Option(
-        None, "--language", help="Dicionário do full-text do Postgres (padrão portuguese). Não muda depois."
+        None, "--language", help="Dicionário do full-text do Postgres (padrão portuguese). Muda depois com `set`."
     ),
-    max_results: int | None = typer.Option(None, "--k", "--max-results", min=1, max=50, help="Trechos por busca (padrão 10)."),
+    max_results: int | None = typer.Option(
+        None, "--k", "--max-results", min=1, max=50, help="Trechos por busca (padrão 10)."
+    ),
     vector_weight: float | None = typer.Option(
         None, "--vector-weight", min=0.0, max=1.0, help="No hybrid, o peso do vetor; o resto é do texto (padrão 0.5)."
     ),
 ) -> None:
     """Cria uma collection (a tabela de vetores nasce na primeira ingestão).
 
-    O embedder e o idioma ficam fixos: a tabela `knowledge_<nome>` guarda vetores
-    de um embedder só, e o idioma decide quais trechos o full-text casa. Para
-    trocar, crie outra collection e reindexe. Modo, k e peso mudam com `set`."""
+    O embedder fica fixo: a tabela `knowledge_<nome>` guarda vetores de um embedder
+    só. Para trocar, crie outra collection e reindexe. Modo, idioma, k e peso mudam
+    com `set`."""
     st = state(ctx)
     created = call(
         st,
@@ -132,17 +135,20 @@ def set_fields(
     ctx: typer.Context,
     name: str,
     pairs: list[str] = typer.Argument(
-        ..., help="campo=valor. Editáveis: label, description, search_mode, max_results, vector_weight, reranker."
+        ...,
+        help="campo=valor. Editáveis: label, description, search_mode, language, max_results, vector_weight, reranker.",
     ),
 ) -> None:
     """Altera só os campos informados. Mudar a busca gera uma versão nova da collection
-    (`kuro collections versions`); `campo=null` volta ao padrão. O embedder e o
-    idioma não mudam (ver `create`).
+    (`kuro collections versions`); `campo=null` volta ao padrão (menos `language`, que
+    não aceita null). O embedder não muda (ver `create`). `language` troca o dicionário do
+    full-text sem reindexar: só muda quais trechos casam no modo hybrid.
 
-    Ex.: `kuro collections set manuais search_mode=hybrid vector_weight=0.7 max_results=8`."""
+    Ex.: `kuro collections set manuais search_mode=hybrid vector_weight=0.7 max_results=8`
+    ou `kuro collections set general language=portuguese`."""
     st = state(ctx)
     changes = parse_pairs(st, pairs, "campo")
-    editaveis = {"label", "description", "search_mode", "max_results", "vector_weight", "reranker"}
+    editaveis = {"label", "description", "search_mode", "language", "max_results", "vector_weight", "reranker"}
     desconhecidos = sorted(set(changes) - editaveis)
     if desconhecidos:
         fail(st, f"campos não editáveis: {', '.join(desconhecidos)} (use: {', '.join(sorted(editaveis))})", EXIT_USAGE)
@@ -316,7 +322,9 @@ def edit_document(
     ctx: typer.Context,
     name: str,
     content_id: str,
-    text: str | None = typer.Option(None, "--text", "-t", help="Texto corrigido; sem isto (e sem --file), lê de stdin."),
+    text: str | None = typer.Option(
+        None, "--text", "-t", help="Texto corrigido; sem isto (e sem --file), lê de stdin."
+    ),
     file: str | None = typer.Option(None, "--file", "-f", help="Arquivo corrigido (PDF, DOCX, CSV, TXT, MD...)."),
     note: str | None = typer.Option(None, "--note", "-m", help="O que mudou nesta revisão."),
     resolve: list[str] | None = typer.Option(
@@ -412,7 +420,9 @@ def reindex_collection(
     def render(rows: list[dict[str, Any]]) -> None:
         for r in rows:
             if r["status"] == "rechunked":
-                console.print(f"[green]✓[/] {r['content_id']} rev {r['revision']}: {r['chunks_before']} → {r['chunks_after']} trechos")
+                console.print(
+                    f"[green]✓[/] {r['content_id']} rev {r['revision']}: {r['chunks_before']} → {r['chunks_after']} trechos"
+                )
             else:
                 console.print(f"[yellow]•[/] {r['content_id']} {r['status']}: {r.get('reason') or ''}")
 
@@ -547,7 +557,8 @@ def add_site(
     exclude: list[str] = typer.Option([], "--exclude", help="Glob de caminho que fica fora, ex. '/blog/*'. Repetível."),
     no_format: bool = typer.Option(False, "--no-format", help="Sem o agente formatador: indexa o texto extraído."),
     files: bool | None = typer.Option(
-        None, "--files/--no-files",
+        None,
+        "--files/--no-files",
         help="Indexar também os PDF, DOCX, PPTX e XLSX linkados no escopo (padrão: sim; contam no --max-pages).",
     ),
     formatter_provider: str | None = typer.Option(None, "--formatter-provider", help="Provedor do formatador."),

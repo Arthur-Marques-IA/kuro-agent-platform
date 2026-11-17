@@ -8,6 +8,9 @@ import { cn } from "@/lib/cn";
 import { formatNumber } from "@/lib/format";
 import { MEMORY_BACKENDS, modelLabel } from "@/lib/agent-meta";
 import type { AgentDefinition, ProcedureState } from "@/lib/types";
+import type { BlocksValidation, ContextBlockDraft } from "@/lib/chat-request";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ContextBlocksEditor } from "@/components/chat/context-blocks-editor";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
 import { DependenciesForm } from "@/components/schema/dependencies-form";
@@ -31,6 +34,11 @@ export function ChatInspector({
   onDependenciesReset,
   dependenciesError,
   dependenciesCount,
+  contextTab,
+  onContextTabChange,
+  blocks,
+  blocksValidation,
+  onBlocksChange,
   dryRun,
   onDryRunChange,
   procedureState,
@@ -51,6 +59,12 @@ export function ChatInspector({
   onDependenciesReset: () => void;
   dependenciesError: string | null;
   dependenciesCount: number;
+  /** Aba aberta no painel "Contexto": `dependencies` ou `blocks`. */
+  contextTab: string;
+  onContextTabChange: (tab: string) => void;
+  blocks: ContextBlockDraft[];
+  blocksValidation: BlocksValidation;
+  onBlocksChange: (blocks: ContextBlockDraft[]) => void;
   dryRun: boolean;
   onDryRunChange: (value: boolean) => void;
   /** Só em agente procedural: o estado da conversa (`null` antes da 1ª resposta). */
@@ -65,6 +79,50 @@ export function ChatInspector({
   const pinnedCredential = agent?.model_credential_id
     ? modelCredentials.find((c) => c.id === agent.model_credential_id)
     : undefined;
+
+  const procedural = agent?.kind === "procedural";
+  const dependenciesEditor = (
+    <>
+      <DependenciesForm
+        fields={agent?.dependency_fields ?? NO_FIELDS}
+        value={dependenciesText}
+        onChange={onDependenciesChange}
+        invalid={Boolean(dependenciesError)}
+        placeholder={DEPENDENCIES_EXAMPLE}
+      />
+      <div className="mt-2 flex items-start justify-between gap-2">
+        <p
+          id={`${id}-deps-status`}
+          className={cn(
+            "min-w-0 text-xs",
+            dependenciesError ? "text-destructive" : dependenciesCount > 0 ? "text-success" : "text-muted-foreground"
+          )}
+        >
+          {dependenciesError ??
+            (dependenciesCount > 0
+              ? `${dependenciesCount} ${dependenciesCount === 1 ? "campo será enviado" : "campos serão enviados"}`
+              : "Vazio — nada é enviado.")}
+        </p>
+        <div className="flex shrink-0 flex-wrap justify-end gap-1">
+          {presetText && dependenciesText !== presetText && (
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onDependenciesReset}>
+              Valores de teste
+            </Button>
+          )}
+          {!presetText && !dependenciesText && (
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => onDependenciesChange(DEPENDENCIES_EXAMPLE)}>
+              Exemplo
+            </Button>
+          )}
+          {dependenciesText && (
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => onDependenciesChange("")}>
+              Limpar
+            </Button>
+          )}
+        </div>
+      </div>
+    </>
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -157,51 +215,47 @@ export function ChatInspector({
         <InspectorSection
           title="Contexto"
           description={
-            <>
-              Objeto <code className="font-mono">dependencies</code> enviado com cada mensagem — o agente o recebe
-              como contexto estruturado (ex.: dados do cliente).
-              {presetText && " Pré-preenchido com valores fictícios — não atingem clientes reais."}
-            </>
+            procedural ? (
+              <>
+                Objeto <code className="font-mono">dependencies</code> enviado com cada mensagem: os dados que você já
+                tem preenchem as etapas de coleta.
+                {presetText && " Pré-preenchido com valores fictícios — não atingem clientes reais."}
+              </>
+            ) : (
+              <>
+                <code className="font-mono">dependencies</code> são valores tipados para as tools (ex.: CPF);{" "}
+                <code className="font-mono">context</code> são blocos de texto para o modelo ler. Os dois vão com cada
+                mensagem.
+                {presetText && " As dependencies vêm pré-preenchidas com valores fictícios — não atingem clientes reais."}
+              </>
+            )
           }
         >
-          <DependenciesForm
-            fields={agent?.dependency_fields ?? NO_FIELDS}
-            value={dependenciesText}
-            onChange={onDependenciesChange}
-            invalid={Boolean(dependenciesError)}
-            placeholder={DEPENDENCIES_EXAMPLE}
-          />
-          <div className="mt-2 flex items-start justify-between gap-2">
-            <p
-              id={`${id}-deps-status`}
-              className={cn(
-                "min-w-0 text-xs",
-                dependenciesError ? "text-destructive" : dependenciesCount > 0 ? "text-success" : "text-muted-foreground"
-              )}
-            >
-              {dependenciesError ??
-                (dependenciesCount > 0
-                  ? `${dependenciesCount} ${dependenciesCount === 1 ? "campo será enviado" : "campos serão enviados"}`
-                  : "Vazio — nada é enviado.")}
-            </p>
-            <div className="flex shrink-0 flex-wrap justify-end gap-1">
-              {presetText && dependenciesText !== presetText && (
-                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onDependenciesReset}>
-                  Valores de teste
-                </Button>
-              )}
-              {!presetText && !dependenciesText && (
-                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => onDependenciesChange(DEPENDENCIES_EXAMPLE)}>
-                  Exemplo
-                </Button>
-              )}
-              {dependenciesText && (
-                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => onDependenciesChange("")}>
-                  Limpar
-                </Button>
-              )}
-            </div>
-          </div>
+          {procedural ? (
+            <>
+              {dependenciesEditor}
+              <p className="mt-3 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                Agente procedural não aceita <code className="font-mono">context</code> nem{" "}
+                <code className="font-mono">events</code> (o servidor responde 422): a extração pegaria dados do contexto
+                como se a pessoa os tivesse dito.
+              </p>
+            </>
+          ) : (
+            <Tabs value={contextTab} onValueChange={onContextTabChange} variant="pill">
+              <TabsList className="mb-3 w-full">
+                <TabsTrigger value="dependencies" className="flex-1" count={dependenciesCount || undefined}>
+                  dependencies
+                </TabsTrigger>
+                <TabsTrigger value="blocks" className="flex-1" count={blocksValidation.blocks.length || undefined}>
+                  Blocos de contexto
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="dependencies">{dependenciesEditor}</TabsContent>
+              <TabsContent value="blocks">
+                <ContextBlocksEditor blocks={blocks} validation={blocksValidation} onChange={onBlocksChange} />
+              </TabsContent>
+            </Tabs>
+          )}
           <div className="mt-3">
             <DryRunToggle checked={dryRun} onChange={onDryRunChange} />
           </div>

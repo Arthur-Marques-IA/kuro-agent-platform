@@ -161,8 +161,9 @@ class Crow(Widget):
     DEFAULT_CSS = "Crow { width: 16; height: 6; }"
     TICK = 0.3
 
-    def __init__(self, mood_source: Callable[[], str], animate: Callable[[], bool], *, rng: random.Random | None = None,
-                 **kwargs) -> None:
+    def __init__(
+        self, mood_source: Callable[[], str], animate: Callable[[], bool], *, rng: random.Random | None = None, **kwargs
+    ) -> None:
         super().__init__(**kwargs)
         self.mood_source = mood_source
         self.animate = animate

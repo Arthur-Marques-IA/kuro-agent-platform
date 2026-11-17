@@ -123,8 +123,12 @@ def resolve_dependencies(st: State, definition: dict[str, Any], given: dict[str,
     missing = [f for f in fields if f["required"] and deps.get(f["name"]) is None]
     if missing and not st.interactive:
         names = ", ".join(f"{f['name']} ({f['type']})" for f in missing)
-        fail(st, f"dependencies obrigatórias ausentes: {names}. Use --dep nome=valor", EXIT_USAGE,
-             missing=[f["name"] for f in missing])
+        fail(
+            st,
+            f"dependencies obrigatórias ausentes: {names}. Use --dep nome=valor",
+            EXIT_USAGE,
+            missing=[f["name"] for f in missing],
+        )
     for field in missing:
         label = field["label"] or field["name"]
         hint = f" — {field['description']}" if field.get("description") else ""
@@ -249,7 +253,10 @@ def chat(
         st,
         agent_type,
         message=message,
-        deps={**(parse_json_object(st, deps_json, "--deps-json") if deps_json else {}), **parse_pairs(st, dep, "--dep")},
+        deps={
+            **(parse_json_object(st, deps_json, "--deps-json") if deps_json else {}),
+            **parse_pairs(st, dep, "--dep"),
+        },
         session_id=session_id,
         new_session=new_session,
         user_id=user_id,

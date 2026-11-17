@@ -95,8 +95,12 @@ def upgrade() -> None:
     )
 
     # As tools de exemplo do seed só leem.
-    seed = sa.table("tool_definitions", sa.column("tool_name", sa.String), sa.column("is_seed", sa.Boolean),
-                    sa.column("side_effect", sa.Boolean))
+    seed = sa.table(
+        "tool_definitions",
+        sa.column("tool_name", sa.String),
+        sa.column("is_seed", sa.Boolean),
+        sa.column("side_effect", sa.Boolean),
+    )
     conn.execute(
         seed.update()
         .where(seed.c.is_seed.is_(True), seed.c.tool_name.in_(["calculator", "hackernews", "cat_fact"]))
@@ -130,7 +134,11 @@ def upgrade() -> None:
                     .values(
                         level="WARNING" if kind in _NOT_COUNTED else "ERROR",
                         status_message=span.output[:500],
-                        metadata={**(span.metadata or {}), "failure": kind, **({"http_status": http_status} if http_status else {})},
+                        metadata={
+                            **(span.metadata or {}),
+                            "failure": kind,
+                            **({"http_status": http_status} if http_status else {}),
+                        },
                     )
                 )
                 failed = kind not in _NOT_COUNTED

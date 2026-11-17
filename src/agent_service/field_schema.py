@@ -71,9 +71,7 @@ def _validate_field(raw: Any, *, path: str, depth: int) -> dict[str, Any]:
         raise FieldSchemaError(f"{path}: cada campo deve ser um objeto")
     field_type = raw.get("type", "string")
     if field_type not in ALL_TYPES:
-        raise FieldSchemaError(
-            f"{path}: tipo inválido {field_type!r} em {raw.get('name')!r} (use {sorted(ALL_TYPES)})"
-        )
+        raise FieldSchemaError(f"{path}: tipo inválido {field_type!r} em {raw.get('name')!r} (use {sorted(ALL_TYPES)})")
     if field_type in LEAF_TYPES:
         return _leaf(raw, path=path)
     base = _composite_base(raw, path=path)

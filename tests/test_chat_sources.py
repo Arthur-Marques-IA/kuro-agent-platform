@@ -37,7 +37,9 @@ class BaseFalsa:
         return self.documentos
 
 
-def trecho(chunk: int, score: float, *, content_id: str = "doc-1", name: str = "Manual de garantia", **meta) -> Document:
+def trecho(
+    chunk: int, score: float, *, content_id: str = "doc-1", name: str = "Manual de garantia", **meta
+) -> Document:
     return Document(
         id=f"{content_id}-chunk-{chunk}",
         name=name,
@@ -75,8 +77,15 @@ BASE = [
 
 
 def _run(endpoint: str = "chat") -> RunContext:
-    return RunContext(endpoint=endpoint, agent_type=f"agente-{uuid4().hex[:8]}", agent_name="t", prompt_version=1,
-                      user_id="u", session_id="s", message="qual a garantia?")
+    return RunContext(
+        endpoint=endpoint,
+        agent_type=f"agente-{uuid4().hex[:8]}",
+        agent_name="t",
+        prompt_version=1,
+        user_id="u",
+        session_id="s",
+        message="qual a garantia?",
+    )
 
 
 def _agente(queries: list[str]) -> AgenteQueBusca:
@@ -89,16 +98,28 @@ def _request() -> ChatRequest:
 
 def test_sources_from_deduplica_por_documento_e_ordena_por_score():
     buscas = [
-        {"collection": "manuais", "results": [
-            {"document": "Manual", "content_id": "doc-1", "chunk_id": "c3", "score": 0.72},
-            {"document": "Manual", "content_id": "doc-1", "chunk_id": "c4", "score": 0.91},
-            {"document": "site", "source_url": "https://ex.com/a", "page_title": "A", "chunk_id": "c9", "score": None},
-        ]},
+        {
+            "collection": "manuais",
+            "results": [
+                {"document": "Manual", "content_id": "doc-1", "chunk_id": "c3", "score": 0.72},
+                {"document": "Manual", "content_id": "doc-1", "chunk_id": "c4", "score": 0.91},
+                {
+                    "document": "site",
+                    "source_url": "https://ex.com/a",
+                    "page_title": "A",
+                    "chunk_id": "c9",
+                    "score": None,
+                },
+            ],
+        },
         # A mesma busca de novo: os trechos não se repetem.
-        {"collection": "manuais", "results": [
-            {"document": "Manual", "content_id": "doc-1", "chunk_id": "c3", "score": 0.72},
-            {"document": "Guia", "content_id": "doc-2", "chunk_id": "g1", "score": 0.8},
-        ]},
+        {
+            "collection": "manuais",
+            "results": [
+                {"document": "Manual", "content_id": "doc-1", "chunk_id": "c3", "score": 0.72},
+                {"document": "Guia", "content_id": "doc-2", "chunk_id": "g1", "score": 0.8},
+            ],
+        },
     ]
     fontes = retrieval.sources_from(buscas)
     assert [f["title"] for f in fontes] == ["Manual", "Guia", "A"]  # sem score vai para o fim

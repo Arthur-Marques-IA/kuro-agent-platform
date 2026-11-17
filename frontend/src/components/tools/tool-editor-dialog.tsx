@@ -343,7 +343,12 @@ export function ToolEditorDialog({
           )}
         </div>
 
-        {submitError && <p className="text-[13px] text-destructive">{submitError}</p>}
+        {/* role="alert": num diálogo modal, a região viva de fora pode ser ignorada pelo leitor de tela. */}
+        {submitError && (
+          <p role="alert" className="text-[13px] text-destructive">
+            {submitError}
+          </p>
+        )}
       </DialogBody>
       <DialogFooter>
         <Button variant="outline" onClick={() => onOpenChange(false)}>
